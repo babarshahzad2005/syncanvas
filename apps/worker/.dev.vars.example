@@ -1,9 +1,7 @@
 # Copy this file to .dev.vars (same folder) and fill in the values.
 # .dev.vars is gitignored. Never paste these values into a chat or commit them.
 
-# Ticket 05: Neon Postgres connection string (Neon dashboard → Connect, pooling OFF).
-# Wrangler uses it as the local stand-in for the Hyperdrive binding.
-CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=
+# The Neon connection string goes in apps/web/.env instead (see apps/web/.env.example).
 
 # Ticket 05: Better Auth. Generate a random secret with: pnpm --filter @syncanvas/worker gen:secret
 BETTER_AUTH_SECRET=
