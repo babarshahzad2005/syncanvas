@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest"
 import * as Y from "yjs"
-import { elementsOf, isPaletteColor, readElement, validateBoardDoc } from "./index"
+import {
+  addRect,
+  deleteElements,
+  elementsOf,
+  isPaletteColor,
+  listElements,
+  moveElement,
+  readElement,
+  recolorElement,
+  validateBoardDoc,
+} from "./index"
 
 function rect(fields: Record<string, unknown> = {}) {
   const m = new Y.Map<unknown>()
@@ -75,5 +85,44 @@ describe("validateBoardDoc", () => {
     const doc = new Y.Doc()
     doc.getMap("hacked").set("x", 1)
     expect(validateBoardDoc(doc)).toContain('unexpected root "hacked"')
+  })
+})
+
+describe("Element operations", () => {
+  it("adds rectangles on top, normalizing a backwards drag", () => {
+    const doc = new Y.Doc()
+    const a = addRect(doc, { position: { x: 0, y: 0 }, size: { w: 10, h: 10 } }, "me")
+    const b = addRect(doc, { position: { x: 50, y: 50 }, size: { w: -20, h: -30 } }, "me")
+    const all = listElements(doc)
+    expect(all.map((e) => e.id)).toEqual([a, b])
+    expect(all[1]).toMatchObject({
+      position: { x: 30, y: 20 },
+      size: { w: 20, h: 30 },
+      color: "ink",
+    })
+    expect(validateBoardDoc(doc)).toEqual([])
+  })
+
+  it("moves, recolors, and deletes", () => {
+    const doc = new Y.Doc()
+    const id = addRect(doc, { position: { x: 0, y: 0 }, size: { w: 10, h: 10 } }, "me")
+    moveElement(doc, id, { x: 5, y: 6 }, "me")
+    recolorElement(doc, id, "blue", "me")
+    expect(listElements(doc)[0]).toMatchObject({ position: { x: 5, y: 6 }, color: "blue" })
+    deleteElements(doc, [id], "me")
+    expect(listElements(doc)).toEqual([])
+    moveElement(doc, id, { x: 1, y: 1 }, "me") // deleted elsewhere: a no-op, not an error
+    expect(listElements(doc)).toEqual([])
+  })
+
+  it("undoes only the local origin's changes", () => {
+    const doc = new Y.Doc()
+    const undo = new Y.UndoManager(elementsOf(doc), { trackedOrigins: new Set(["me"]) })
+    const mine = addRect(doc, { position: { x: 0, y: 0 }, size: { w: 10, h: 10 } }, "me")
+    undo.stopCapturing()
+    const theirs = addRect(doc, { position: { x: 20, y: 0 }, size: { w: 10, h: 10 } }, "them")
+    undo.undo()
+    expect(listElements(doc).map((e) => e.id)).toEqual([theirs])
+    expect(mine).not.toBe(theirs)
   })
 })

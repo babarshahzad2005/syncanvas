@@ -1,0 +1,24 @@
+import { defineConfig } from "@playwright/test"
+
+// Browser seam (M0 spec): real browsers against the dev server, which talks to Neon.
+// Locally this drives the installed Microsoft Edge, so no browser download is needed.
+export default defineConfig({
+  testDir: "e2e",
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
+  workers: 1,
+  reporter: process.env.CI ? "github" : "list",
+  use: {
+    baseURL: "http://localhost:5173",
+    channel: process.env.CI ? undefined : "msedge",
+    viewport: { width: 1280, height: 800 },
+    trace: "retain-on-failure",
+  },
+  webServer: {
+    command: "pnpm dev",
+    url: "http://localhost:5173/api/health",
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+  },
+  globalTeardown: "./e2e/global-teardown.ts",
+})

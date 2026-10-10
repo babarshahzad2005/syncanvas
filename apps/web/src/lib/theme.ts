@@ -63,3 +63,18 @@ export function useThemePreference(): ThemePreference {
     () => "system",
   )
 }
+
+/** The theme actually showing ("system" resolved against the OS), kept live. */
+export function useResolvedTheme(): Theme {
+  const preference = useThemePreference()
+  const systemDark = useSyncExternalStore(
+    (onChange) => {
+      const query = darkQuery()
+      query.addEventListener("change", onChange)
+      return () => query.removeEventListener("change", onChange)
+    },
+    () => darkQuery().matches,
+    () => false,
+  )
+  return resolveTheme(preference, systemDark)
+}

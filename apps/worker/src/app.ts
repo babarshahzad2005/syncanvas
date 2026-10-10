@@ -6,7 +6,14 @@ import {
 } from "@syncanvas/shared"
 import { Hono } from "hono"
 import { createMiddleware } from "hono/factory"
-import { type Auth, createAuth, logMagicLink } from "./auth"
+import {
+  type Auth,
+  createAuth,
+  devInboxEnabled,
+  lastDevMagicLink,
+  logAndKeepMagicLink,
+  logMagicLink,
+} from "./auth"
 import { signBoardToken } from "./board-token"
 import { createBoard, findMembership, listBoards } from "./boards"
 import { createDb, type Database } from "./db/client"
@@ -21,7 +28,7 @@ export const productionServices: ServicesFactory = (env) => {
     db,
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
-    sendMagicLink: logMagicLink,
+    sendMagicLink: devInboxEnabled(env) ? logAndKeepMagicLink : logMagicLink,
   })
   return { db, auth, dispose: close }
 }
@@ -54,6 +61,13 @@ export function createApp(services: ServicesFactory = productionServices) {
   for (const path of ["/boards", "/boards/*", "/dashboard"]) app.use(path, requireUser)
 
   app.get("/health", (c) => c.json({ ok: true }))
+
+  // End-to-end tests read magic links here. Off unless DEV_MAGIC_LINK_INBOX=on on localhost.
+  app.get("/dev/magic-link", (c) => {
+    if (!devInboxEnabled(c.env)) return c.notFound()
+    const url = lastDevMagicLink(c.req.query("email") ?? "")
+    return url ? c.json({ url }) : c.json({ error: "No link sent to that address yet." }, 404)
+  })
   app.on(["GET", "POST"], "/auth/*", (c) => c.var.services.auth.handler(c.req.raw))
 
   app.get("/dashboard", async (c) => {

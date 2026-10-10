@@ -1,3 +1,4 @@
+import { generateKeyBetween } from "fractional-indexing"
 import * as Y from "yjs"
 
 /**
@@ -105,4 +106,68 @@ export function validateBoardDoc(doc: Y.Doc): string[] {
     else if (!readElement(fields)) problems.push(`element ${id} is invalid`)
   }
   return problems
+}
+
+// ---------- Reading and writing Elements ----------
+
+export type ElementWithId = Element & { id: string }
+
+/** All valid Elements, bottom to top (z-order). Invalid entries are skipped. */
+export function listElements(doc: Y.Doc): ElementWithId[] {
+  const out: ElementWithId[] = []
+  for (const [id, fields] of elementsOf(doc)) {
+    if (!(fields instanceof Y.Map)) continue
+    const element = readElement(fields)
+    if (element) out.push({ ...element, id })
+  }
+  return out.sort((a, b) => (a.z < b.z ? -1 : a.z > b.z ? 1 : a.id < b.id ? -1 : 1))
+}
+
+/** Next z-order key above everything on the Board. */
+export function topZ(doc: Y.Doc): string {
+  const all = listElements(doc)
+  return generateKeyBetween(all.at(-1)?.z ?? null, null)
+}
+
+/**
+ * Adds a rectangle in one transaction tagged with `origin`, so one undo removes it.
+ * Size is normalized so drawing "backwards" (right to left) still gives a positive size.
+ */
+export function addRect(
+  doc: Y.Doc,
+  rect: { position: Point; size: Size; color?: PaletteColor },
+  origin: unknown,
+): string {
+  const id = crypto.randomUUID()
+  const x = rect.size.w < 0 ? rect.position.x + rect.size.w : rect.position.x
+  const y = rect.size.h < 0 ? rect.position.y + rect.size.h : rect.position.y
+  doc.transact(() => {
+    const fields = new Y.Map<unknown>()
+    fields.set("type", "rect")
+    fields.set("position", { x, y })
+    fields.set("size", { w: Math.abs(rect.size.w), h: Math.abs(rect.size.h) })
+    fields.set("z", topZ(doc))
+    fields.set("color", rect.color ?? "ink")
+    elementsOf(doc).set(id, fields)
+  }, origin)
+  return id
+}
+
+/** Replaces position whole (ADR 0002): concurrent moves resolve to one chosen position. */
+export function moveElement(doc: Y.Doc, id: string, position: Point, origin: unknown) {
+  const fields = elementsOf(doc).get(id)
+  if (!fields) return // someone else deleted it; nothing to move
+  doc.transact(() => fields.set("position", { x: position.x, y: position.y }), origin)
+}
+
+export function recolorElement(doc: Y.Doc, id: string, color: PaletteColor, origin: unknown) {
+  const fields = elementsOf(doc).get(id)
+  if (!fields) return
+  doc.transact(() => fields.set("color", color), origin)
+}
+
+export function deleteElements(doc: Y.Doc, ids: Iterable<string>, origin: unknown) {
+  doc.transact(() => {
+    for (const id of ids) elementsOf(doc).delete(id)
+  }, origin)
 }

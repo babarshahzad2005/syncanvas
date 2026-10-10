@@ -10,6 +10,25 @@ export const logMagicLink: SendMagicLink = async ({ email, url }) => {
   console.log(`\n  Magic sign-in link for ${email}:\n  ${url}\n`)
 }
 
+/**
+ * Development-only inbox so end-to-end tests can sign in: remembers the last link per email.
+ * Only reachable when DEV_MAGIC_LINK_INBOX=on AND the app runs on localhost (see devInboxEnabled).
+ */
+const devInbox = new Map<string, string>()
+
+export const logAndKeepMagicLink: SendMagicLink = async (message) => {
+  devInbox.set(message.email.toLowerCase(), message.url)
+  await logMagicLink(message)
+}
+
+export function lastDevMagicLink(email: string): string | undefined {
+  return devInbox.get(email.toLowerCase())
+}
+
+export function devInboxEnabled(env: { DEV_MAGIC_LINK_INBOX?: string; BETTER_AUTH_URL: string }) {
+  return env.DEV_MAGIC_LINK_INBOX === "on" && env.BETTER_AUTH_URL.startsWith("http://localhost")
+}
+
 export function createAuth(options: {
   // biome-ignore lint/suspicious/noExplicitAny: Drizzle databases differ by driver (postgres-js, PGlite in tests)
   db: any

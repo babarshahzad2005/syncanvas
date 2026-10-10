@@ -9,3 +9,6 @@ BETTER_AUTH_SECRET=
 # Ticket 07: board token signing keys (Ed25519 JWK, base64url). Fill them with: pnpm --filter @syncanvas/worker gen:keys
 BOARD_TOKEN_PRIVATE_KEY=
 BOARD_TOKEN_PUBLIC_KEY=
+
+# Ticket 08: lets end-to-end tests read magic links at /api/dev/magic-link (localhost only).
+DEV_MAGIC_LINK_INBOX=on

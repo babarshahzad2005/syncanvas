@@ -269,7 +269,7 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
 | Board room logic (Role rejection, caps, compaction, Versions) | `@cloudflare/vitest-plugin` against real workerd + DO SQLite | Every PR |
 | S7 Access enforced on the server | The same pool: forged Viewer updates rejected; `setRole` and `kick` take effect within 1 s | Every PR |
 | API routes | Vitest calling the Hono app directly, on PGlite (in-memory Postgres) with the real Drizzle migrations; magic-link sender swapped for an in-memory outbox | Every PR |
-| End-to-end collaboration | Playwright with multiple browser contexts on one Board | PR preview |
+| End-to-end collaboration | Playwright with multiple browser contexts on one Board. Locally it drives the installed Microsoft Edge (`channel: "msedge"`, no browser download). Sign-in reads links from a dev-only inbox (`/api/dev/magic-link`, on only with `DEV_MAGIC_LINK_INBOX=on` on localhost) | `pnpm e2e` locally; PR preview in CI |
 | S8 Export fidelity | Playwright: render a fixed Board corpus, export, rasterize, compare with `pixelmatch` (threshold set per format) | PR preview |
 | S5 60 fps, S6 open time | Playwright + Chrome DevTools Protocol tracing and network throttling (10 Mbps / 50 ms RTT) | Nightly on `main` |
 | S3 Latency, S4 20 Editors | `tools/loadtest`: Node, `ws` + `yjs`, N clients, timestamps embedded in updates, p50/p95/p99 | Long runs locally against `wrangler dev`; short confirmation runs against production (free-tier daily limits); results go in the README |
