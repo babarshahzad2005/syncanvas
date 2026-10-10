@@ -146,10 +146,12 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
   - Freehand pen: smoothed, uses pressure when a stylus provides it.
   - Rectangle, ellipse, arrow.
   - Connector: straight or elbow, attaching to snap points on shapes.
-  - Text: plain text. Font size, color, alignment, and bold apply to the whole Element.
+  - Text: plain text. Font size, Palette color, alignment, and bold apply to the whole Element.
   - Sticky note: grows to fit its text up to a maximum size, then the text shrinks.
   - Image.
 - **Arranging:** select, multi-select (marquee and shift-click), group and ungroup, align, resize, recolor, Lock, bring forward and send backward.
+- **Colors:** Elements use one of 10 Palette colors (stroke and light fill), and sticky notes use 6 pastel backgrounds. Colors adapt to light and dark mode, and there's no free color picker (ADR 0008, `DESIGN.md`).
+- **Theme:** light and dark mode, following the OS by default, with a manual override.
 - **Lock** prevents accidental selection or movement. Any Editor can lift it.
 - **Connectors** bind to shapes by Element ID and re-route on every client when a shape moves, including when someone else moves it.
 - **Groups:** a group with fewer than 2 Elements left dissolves automatically. An Element whose group no longer exists counts as ungrouped.
@@ -259,7 +261,7 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 ### A8. Export and Embed (P0, Share Link expiry P1)
 
 - **Export** the whole Board or the selection to PNG (capped at 8,192 px, scaled down with a notice), SVG, or PDF (vector text). Everything runs on the client.
-- Exports contain Elements only: no pins, cursors, or selection outlines.
+- Exports contain Elements only: no pins, cursors, or selection outlines. They render in the light theme by default, with a dark option.
 - **Embed:** the Owner switches it on to get an iframe snippet backed by its own read-only token. It doesn't expire by default and can be revoked on its own; the Share Link doesn't affect it.
 - The Embed viewer is lightweight, updates live, and shows Board content only: no Threads, pins, or cursors.
 
@@ -276,6 +278,8 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
   - [ADR 0005](../docs/adr/0005-own-canvas-engine.md): our own canvas engine instead of tldraw or Excalidraw
   - [ADR 0006](../docs/adr/0006-hand-rolled-board-room-sync.md): hand-rolled board room sync on y-protocols
   - [ADR 0007](../docs/adr/0007-zero-cost-services.md): free tiers only: Workers KV for images, Brevo for email, workers.dev hosting
+  - [ADR 0008](../docs/adr/0008-visual-direction.md): visual direction; Elements store Palette color names
+- **Visual design:** [`DESIGN.md`](../DESIGN.md)
 - **Tech stack in detail:** [`context/TECH_STACK.md`](./TECH_STACK.md)
 
 ## Appendix C: Source flows

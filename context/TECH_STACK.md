@@ -29,9 +29,11 @@ Browser                  │  Worker "syncanvas" (ADR 0004)                     
 | Repo | pnpm workspaces monorepo | Share the Element model and renderer between client, board room, and exports | Turborepo (unneeded at this size), polyrepo |
 | Hosting | One Cloudflare Worker with static assets on `*.workers.dev`, Free plan (ADR 0004, 0007) | One origin, one deploy unit, $0 | Cloudflare Pages + separate Workers, custom domain |
 | Frontend | Vite + React SPA, TanStack Router, TanStack Query | No SSR needed: the app sits behind a login and the Board is a canvas | Next.js, React Router framework mode |
-| UI chrome | Tailwind CSS v4 + shadcn/ui (Radix) | Accessible primitives for the WCAG AA baseline; component source is in the repo | MUI, Chakra |
-| Local UI state | Zustand | Tool, viewport, panels; small and works outside React | Redux, Jotai |
+| UI chrome | Tailwind CSS v4 + shadcn/ui on Base UI, `nova` style, themed from `DESIGN.md` (ADR 0008) | Accessible primitives for the WCAG AA baseline; component source is in the repo; shadcn's current default | Radix base, MUI, Chakra |
+| Local UI state | Zustand | Tool, viewport, panels, theme; small and works outside React | Redux, Jotai |
 | Canvas | Own engine on Canvas2D (ADR 0005) | Control of data model, rendering, and exports | tldraw SDK, Excalidraw, WebGL |
+| Motion | CSS transitions + `@starting-style`; `perfect-cursors` for remote cursors | Stays smooth while the page is busy; no animation library | Motion (Framer Motion) |
+| Fonts | Geist Sans + Geist Mono via Fontsource (`@fontsource-variable/geist`, `-geist-mono`) | One font pair for the UI, the canvas, and exports | Inter, a handwritten font |
 | CRDT | Yjs + y-protocols + y-indexeddb | Mature CRDT with offline persistence | Automerge, Loro |
 | Realtime server | Hand-rolled `BoardRoom` Durable Object (ADR 0006) | Hooks for Role checks, caps, and persistence on every message | y-partyserver, Liveblocks |
 | API | Hono on Workers, Zod validation | Small and fast; typed RPC client for the SPA | itty-router, tRPC |
@@ -89,7 +91,7 @@ syncanvas/
 - **Routing:** TanStack Router with typed routes and search params. Route loaders prefetch API data through TanStack Query.
 - **Server data:** TanStack Query for the dashboard, Members, Threads, and Notifications. Real-time events from the board room (`comment-added`, `thread-resolved`, `notification`) update the query cache directly instead of refetching.
 - **Hono RPC client** (`hc<AppType>`) gives end-to-end types from `apps/worker` routes, with no code generation.
-- **UI:** shadcn/ui components (Dialog, DropdownMenu, Popover, Command for the mention picker, Toast), Tailwind v4 and `lucide-react` icons.
+- **UI:** shadcn/ui on Base UI, `nova` style, with only the components we use installed (Dialog, DropdownMenu, Popover, Tooltip, Command for the mention picker, Toast, …), Tailwind v4, and `lucide-react` icons (20px, 1.75 stroke). All tokens, type utilities, and component recipes come from `DESIGN.md`. A dev-only `/design` route shows every token and component in both themes.
 - **Local UI state:** Zustand stores for the active tool, viewport (x, y, zoom), selection, panel visibility, and follow target.
 
 ### Canvas engine (ADR 0005)
@@ -120,7 +122,8 @@ syncanvas/
 - **SVG:** the renderer's SVG backend, with fonts embedded as base64 `@font-face`.
 - **PDF:** `jspdf` + `svg2pdf.js`, which converts the SVG so the PDF stays vector and the fonts are registered with jsPDF.
 - **Images in exports:** served by our own Worker from KV, on the same origin, so the canvas isn't tainted.
-- **Fonts:** self-hosted WOFF2 files (one sans, one handwritten), the same ones on screen and in exports.
+- **Fonts:** Geist Sans and Geist Mono, self-hosted, the same files on screen and in exports.
+- **Theme:** Elements store Palette color names (ADR 0008). Exports resolve them with the light theme by default, or dark if the user chooses it.
 
 ### Embed viewer (`embed.html`)
 A separate Vite entry that bundles only the renderer, a read-only provider, and pan/zoom. It has no React Query, comments, or dashboard code. If the board room returns `capped`, it falls back to the static image.
@@ -306,3 +309,6 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
 - ADR 0005: our own canvas engine instead of tldraw or Excalidraw
 - ADR 0006: hand-rolled board room sync on y-protocols
 - ADR 0007: free tiers only: Workers KV for images, Brevo for email, workers.dev hosting
+- ADR 0008: visual direction; Elements store Palette color names
+
+Visual design: `DESIGN.md` at the repo root.

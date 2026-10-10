@@ -56,6 +56,10 @@ _Avoid_: Object, item, node, shape (when meaning any element)
 A User's private grouping of Boards they can open, whether owned or shared with them. Folders are never shared.
 _Avoid_: Project, workspace, collection
 
+**Palette color**:
+One of the named colors an Element can have, such as ink, red, or blue. Each theme shows it in its own shade.
+_Avoid_: Hex color, custom color, swatch
+
 **Trash**:
 Where a deleted Board stays for 30 days, visible only to its Owner, who can restore it from there.
 _Avoid_: Archive, recycle bin
