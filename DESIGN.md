@@ -221,7 +221,33 @@ Twelve saturated colors, separate from the palette and the accent, so a cursor n
 
 ### Dashboard
 
-A conventional page: header bar, a left list of Folders, and the main area with Boards. It uses roomier spacing (24–32px gutters) than the Board chrome. The exact layout is pending prototypes.
+**"Launcher"**, chosen from prototype C in M0 ticket 04. It's a page layout, not floating chrome, with roomier spacing (24–32px gutters, sections 40px apart) than the Board.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ ◆ Syncanvas        [ 🔍 Search boards and their text   / ]   (AR) │  ← account menu: Trash, Settings, Sign out
+│                                                              │
+│ Start something new                                          │
+│ [+ Blank] [Retro] [Brainstorm] [Flowchart] [Journey] [Kanban]│  ← compact row; big hero tiles for new users
+│                                                              │
+│ Folders                                        + New folder  │
+│ [📁 Product 4] [📁 Design reviews 2] [📁 Retros 3] [📁 …]    │  ← tiles; click opens the Folder's page
+│                                                              │
+│ Your boards          [All · Mine · Shared with me · Favorites]│
+│ [thumb] [thumb] [thumb] [thumb]                              │  ← tiles with a ⋯ menu
+└──────────────────────────────────────────────────────────────┘
+```
+
+- **Header:** wordmark at left, a wide centered search (`/` focuses it), account avatar at right. The **account menu** holds Trash, Settings, and Sign out. Trash is deliberately one level down.
+- **Start something new:** template tiles with Blank first (dashed `primary` outline, solid `primary` icon).
+  - **New users** (no Boards) get big hero tiles titled "Let's make your first board", and "Your boards" shows "Boards you open will show up here."
+  - **Returning users** get a compact single row about half the height. On a phone it scrolls sideways.
+- **Folders:** tiles showing the Folder icon, name, and Board count, plus "New folder". Clicking a tile opens the **Folder page**: a "Home › Folder name" breadcrumb and the same Board grid, filtered to that Folder. An empty Folder says "This folder is empty. Move boards here from their menu."
+- **Your boards:** every Board the User can open, sorted by last opened. Boards never opened (for example, newly shared ones) come after. A segmented filter switches between **All · Mine · Shared with me · Favorites**.
+- **Board tiles:** a thumbnail (light-theme render, placeholder dot grid with the mark when there's none yet), the title on one line truncated, then "Owner · last edited" (owner only when shared), and a star when it's a favorite. A **⋯ menu** appears on hover (always visible on touch): Open, Rename, Favorite, Move to folder, then Delete (Owner) or Leave board (Members). On desktop, dragging a tile onto a Folder moves it.
+- **Trash page:** "Home › Trash", a list of rows reading "Deleted 3 days ago · 27 days left", each with Restore, under the note "Boards in Trash are deleted for good after 30 days."
+- **Grid:** 4 columns on desktop, 2 on tablet, 1 on phone.
+- **Prototype source:** branch `prototype/dashboard` (variants A–C). C won because it makes creating a Board the hero action and gives Folders a simple tile-and-page model.
 
 ## Elevation
 
@@ -288,7 +314,6 @@ Motion confirms what you did and never slows you down (emil-design-eng).
 
 ## Known Gaps
 
-- **Dashboard layout pending prototype** (M0 ticket 04): grid vs list, Folder navigation. The Board screen is settled (Layout above).
 - **Logo mark** is not drawn yet. The wordmark is "Syncanvas" set in Geist at 600 weight.
 - **v0 values:** colors pass the contrast math, but the shadows, dark-mode sticky colors, and spacing still need to be checked visually on the `/design` page.
 - **Deviation from the shadcn skill:** we install only the components we use instead of `add --all`. The `/design` page coverage check runs against the installed set.
