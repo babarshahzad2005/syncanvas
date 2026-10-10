@@ -268,7 +268,7 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
 | S1 Convergence, S2 No lost work | `fast-check` model-based fuzz: ≥5 in-memory Yjs clients, random ops, partitions, and offline periods; asserts identical state and no accepted edit lost | Vitest, every PR |
 | Board room logic (Role rejection, caps, compaction, Versions) | `@cloudflare/vitest-pool-workers` against real workerd + DO SQLite | Every PR |
 | S7 Access enforced on the server | The same pool: forged Viewer updates rejected; `setRole` and `kick` take effect within 1 s | Every PR |
-| API routes | Vitest + workers pool + Neon branch | Every PR |
+| API routes | Vitest calling the Hono app directly, on PGlite (in-memory Postgres) with the real Drizzle migrations; magic-link sender swapped for an in-memory outbox | Every PR |
 | End-to-end collaboration | Playwright with multiple browser contexts on one Board | PR preview |
 | S8 Export fidelity | Playwright: render a fixed Board corpus, export, rasterize, compare with `pixelmatch` (threshold set per format) | PR preview |
 | S5 60 fps, S6 open time | Playwright + Chrome DevTools Protocol tracing and network throttling (10 Mbps / 50 ms RTT) | Nightly on `main` |

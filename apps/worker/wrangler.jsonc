@@ -10,5 +10,9 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/ws/*"]
   },
+  // Postgres (Neon) through Hyperdrive (ADR 0003). Locally, Wrangler connects straight to the
+  // string in apps/web/.env. The real config id is created in M0 ticket 10.
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "00000000000000000000000000000000" }],
+  "vars": { "BETTER_AUTH_URL": "http://localhost:5173" },
   "observability": { "enabled": true }
 }

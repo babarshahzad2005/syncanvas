@@ -1,14 +1,20 @@
 import { PlusIcon } from "lucide-react"
+import { AccountMenu } from "@/components/account-menu"
 import { Wordmark } from "@/components/brand"
 import { ThemeMenu } from "@/components/theme-menu"
 import { Button } from "@/components/ui/button"
+import { authClient } from "@/lib/auth-client"
 
 export function Dashboard() {
+  const { data: session } = authClient.useSession()
   return (
     <div className="flex min-h-svh flex-col">
       <header className="flex h-14 items-center justify-between border-b px-6">
         <Wordmark />
-        <ThemeMenu />
+        <div className="flex items-center gap-2">
+          <ThemeMenu />
+          {session && <AccountMenu user={session.user} />}
+        </div>
       </header>
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-6 py-10">
         <h1 className="type-display">Boards</h1>
