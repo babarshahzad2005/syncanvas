@@ -1,0 +1,6 @@
+<!-- Placeholder mark until the logo is designed (DESIGN.md Known Gaps). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>Syncanvas</title>
+  <rect x="4" y="4" width="17" height="17" rx="4" fill="#5145CD"/>
+  <rect x="11" y="11" width="17" height="17" rx="4" fill="#5145CD" fill-opacity="0.45"/>
+</svg>

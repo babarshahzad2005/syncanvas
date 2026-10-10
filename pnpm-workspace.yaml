@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - packages/*
+allowBuilds:
+  esbuild: true
+  workerd: true
+minimumReleaseAgeExclude:
+  - '@tanstack/history@1.162.5'
+  - '@tanstack/react-router@1.170.42'
+  - '@tanstack/router-core@1.171.35'
+  - '@types/node@24.19.2'
+  - lucide-react@1.55.0

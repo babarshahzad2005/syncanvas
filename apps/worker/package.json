@@ -1,0 +1,16 @@
+{
+  "name": "@syncanvas/worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@syncanvas/shared": "workspace:*",
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "wrangler": "^4.149.0"
+  }
+}

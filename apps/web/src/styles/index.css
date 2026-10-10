@@ -1,0 +1,249 @@
+/* Theme generated from DESIGN.md. Change DESIGN.md first, then mirror it here (Iteration Guide). */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ---------- Color roles (DESIGN.md colors.light / colors.dark) ---------- */
+:root {
+  color-scheme: light;
+  --background: #f8f7f4;
+  --surface: #ffffff;
+  --foreground: #1c1b19;
+  --card: var(--surface);
+  --card-foreground: var(--foreground);
+  --popover: #ffffff;
+  --popover-foreground: var(--foreground);
+  --primary: #5145cd;
+  --primary-foreground: #ffffff;
+  --primary-active: #4337b5;
+  --primary-subtle: #eceafb;
+  --secondary: #f2f0ec;
+  --secondary-foreground: var(--foreground);
+  --muted: #f2f0ec;
+  --muted-foreground: #6b6760;
+  --accent: #efede8;
+  --accent-foreground: #1c1b19;
+  --destructive: #c8321f;
+  --destructive-foreground: #ffffff;
+  --success: #2b8a3e;
+  --warning: #a87f00;
+  --border: #e6e3dd;
+  --input: #e6e3dd;
+  --ring: #5145cd;
+  --grid-dot: #d9d5ce;
+
+  --elevation-panel:
+    0 0 0 1px #e6e3dd, 0 1px 2px rgb(28 27 25 / 0.06), 0 4px 12px rgb(28 27 25 / 0.06);
+  --elevation-popover:
+    0 0 0 1px #e6e3dd, 0 2px 4px rgb(28 27 25 / 0.06), 0 8px 24px rgb(28 27 25 / 0.1);
+  --elevation-dialog:
+    0 0 0 1px #e6e3dd, 0 4px 8px rgb(28 27 25 / 0.08), 0 24px 48px rgb(28 27 25 / 0.16);
+
+  /* Motion (DESIGN.md motion) */
+  --duration-press: 120ms;
+  --duration-tooltip: 150ms;
+  --duration-menu: 180ms;
+  --duration-panel: 220ms;
+  --duration-dialog: 240ms;
+
+  /* shadcn slots we don't use yet, kept on-palette */
+  --chart-1: #5145cd;
+  --chart-2: #0c8579;
+  --chart-3: #d2650c;
+  --chart-4: #c93a84;
+  --chart-5: #2a64db;
+  --sidebar: var(--surface);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #161514;
+  --surface: #1f1e1c;
+  --foreground: #edebe7;
+  --popover: #262523;
+  --primary: #8c82f6;
+  --primary-foreground: #120f2e;
+  --primary-active: #a39bf8;
+  --primary-subtle: #2a2650;
+  --secondary: #2a2926;
+  --muted: #2a2926;
+  --muted-foreground: #a39f98;
+  --accent: #2e2d2a;
+  --accent-foreground: #edebe7;
+  --destructive: #f06a5b;
+  --destructive-foreground: #1a0705;
+  --success: #6bd48a;
+  --warning: #f2cc4a;
+  --border: #3a3834;
+  --input: #3a3834;
+  --ring: #8c82f6;
+  --grid-dot: #34322e;
+
+  --elevation-panel: 0 0 0 1px #3a3834, 0 4px 12px rgb(0 0 0 / 0.3);
+  --elevation-popover: 0 0 0 1px #3a3834, 0 8px 24px rgb(0 0 0 / 0.4);
+  --elevation-dialog: 0 0 0 1px #3a3834, 0 24px 48px rgb(0 0 0 / 0.5);
+}
+
+@theme inline {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-active: var(--primary-active);
+  --color-primary-subtle: var(--primary-subtle);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-grid-dot: var(--grid-dot);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Radius scale (DESIGN.md rounded) pinned to the classes base-nova uses */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 16px;
+  --radius-4xl: 9999px;
+
+  /* Elevation tiers (DESIGN.md elevation) */
+  --shadow-panel: var(--elevation-panel);
+  --shadow-popover: var(--elevation-popover);
+  --shadow-dialog: var(--elevation-dialog);
+}
+
+@theme {
+  /* Hairline-only system: inputs and outline buttons carry no shadow */
+  --shadow-xs: 0 0 #0000;
+  /* Stronger curves than Tailwind's defaults (DESIGN.md motion, emil-design-eng). Never ease-in. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+/* ---------- Type scale (DESIGN.md typography.scale) ---------- */
+@utility type-display {
+  font-size: 32px;
+  line-height: 40px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+@utility type-title {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+@utility type-heading {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+@utility type-body {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+}
+@utility type-body-strong {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+@utility type-caption {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+}
+@utility type-label {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+}
+@utility type-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 450;
+}
+
+/* ---------- Canvas (DESIGN.md Canvas → Dot grid) ---------- */
+@utility dot-grid {
+  background-color: var(--background);
+  background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring;
+  }
+  html {
+    @apply font-sans;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-background text-foreground type-body;
+  }
+}
+
+/* Reduced motion: keep only short fades (DESIGN.md Motion). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore-start lint/complexity/noImportantStyles: must override every component's motion */
+    animation-duration: 1ms !important;
+    transition-property: opacity !important;
+    transition-duration: 120ms !important;
+    /* biome-ignore-end lint/complexity/noImportantStyles: end of reduced-motion overrides */
+  }
+}
+
+/* Lucide icons use a 1.75 stroke (DESIGN.md components.icon). */
+.lucide {
+  stroke-width: 1.75;
+}

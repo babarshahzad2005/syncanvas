@@ -139,7 +139,7 @@ motion:
 components:
   shadcn: { base: base-ui, style: nova, icons: lucide }
   control-height: { default: 36px, touch: 44px } # touch = (pointer: coarse)
-  icon: { size: 20px, stroke: 1.75 }
+  icon: { size: 20px, inline-with-text: 16px, stroke: 1.75 } # 20px standalone (icon buttons, tools)
   button-primary: { fill: primary, text: primary-foreground, radius: lg, height: 36px, padding-x: 12px, pressed: primary-active + scale(0.97) }
   button-secondary: { fill: surface, text: foreground, border: border, radius: lg }
   button-ghost: { fill: transparent, hover: accent, text: foreground, radius: lg }
