@@ -1,5 +1,6 @@
 // Test harness for the HTTP seam: the real Hono app, Better Auth, and Drizzle migrations,
 // on an in-memory Postgres (PGlite) instead of Neon. Used only by *.test.ts files.
+import { generateKeyPairSync } from "node:crypto"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { PGlite } from "@electric-sql/pglite"
@@ -11,9 +12,18 @@ import { createAuth } from "./auth"
 import * as schema from "./db/schema"
 
 export const ORIGIN = "http://localhost:5173"
-const env = {
+/** A fresh Ed25519 pair in the same encoding as scripts/gen-keys.mjs. */
+export function testBoardTokenKeys() {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519")
+  const encode = (key: typeof publicKey) =>
+    Buffer.from(JSON.stringify(key.export({ format: "jwk" }))).toString("base64url")
+  return { BOARD_TOKEN_PRIVATE_KEY: encode(privateKey), BOARD_TOKEN_PUBLIC_KEY: encode(publicKey) }
+}
+
+export const env = {
   BETTER_AUTH_URL: ORIGIN,
   BETTER_AUTH_SECRET: "test-secret-0123456789abcdef0123456789",
+  ...testBoardTokenKeys(),
 } as Env
 const ctx = {
   waitUntil: () => {},

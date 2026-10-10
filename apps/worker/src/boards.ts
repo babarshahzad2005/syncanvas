@@ -47,3 +47,20 @@ export async function listBoards(db: Database, userId: string): Promise<BoardSum
     thumbnailKey: r.thumbnailKey,
   }))
 }
+
+/** The User's Role on a Board and its title, or null if they aren't a Member (or it's in Trash). */
+export async function findMembership(db: Database, boardId: string, userId: string) {
+  const [row] = await db
+    .select({ role: memberships.role, title: boards.title })
+    .from(memberships)
+    .innerJoin(boards, eq(boards.id, memberships.boardId))
+    .where(
+      and(
+        eq(memberships.boardId, boardId),
+        eq(memberships.userId, userId),
+        isNull(boards.deletedAt),
+      ),
+    )
+    .limit(1)
+  return row ?? null
+}

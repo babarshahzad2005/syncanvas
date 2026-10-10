@@ -1,12 +1,14 @@
 import {
   BOARD_TITLE_MAX,
+  type BoardTokenResponse,
   type CreateBoardResponse,
   type DashboardResponse,
 } from "@syncanvas/shared"
 import { Hono } from "hono"
 import { createMiddleware } from "hono/factory"
 import { type Auth, createAuth, logMagicLink } from "./auth"
-import { createBoard, listBoards } from "./boards"
+import { signBoardToken } from "./board-token"
+import { createBoard, findMembership, listBoards } from "./boards"
 import { createDb, type Database } from "./db/client"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
@@ -68,6 +70,24 @@ export function createApp(services: ServicesFactory = productionServices) {
       title: title || undefined,
     })
     return c.json(board, 201)
+  })
+
+  app.post("/boards/:id/token", async (c) => {
+    const boardId = c.req.param("id")
+    const membership = await findMembership(c.var.services.db, boardId, c.var.user.id)
+    // Same answer for "no such Board" and "not a Member", so Board ids can't be probed.
+    if (!membership) return c.json({ error: "You don't have access to this board." }, 403)
+    const { token, expiresAt } = await signBoardToken(
+      { userId: c.var.user.id, boardId, role: membership.role, kind: "member" },
+      c.env.BOARD_TOKEN_PRIVATE_KEY,
+    )
+    const body: BoardTokenResponse = {
+      token,
+      expiresAt,
+      role: membership.role,
+      board: { id: boardId, title: membership.title },
+    }
+    return c.json(body)
   })
 
   return app

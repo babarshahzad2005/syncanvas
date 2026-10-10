@@ -208,6 +208,9 @@ importers:
       cn:
         specifier: ^0.4.0
         version: 0.4.0
+      lib0:
+        specifier: ^0.2.119
+        version: 0.2.119
       lucide-react:
         specifier: ^1.55.0
         version: 1.55.0(@types/react@19.3.0)(react@19.3.0)
@@ -226,6 +229,12 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      y-protocols:
+        specifier: ^1.0.7
+        version: 1.0.7(yjs@13.6.33)
+      yjs:
+        specifier: ^13.6.33
+        version: 13.6.33
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.63.1
@@ -251,6 +260,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@syncanvas/board-model':
+        specifier: workspace:*
+        version: link:../../packages/board-model
       '@syncanvas/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -263,10 +275,25 @@ importers:
       hono:
         specifier: ^4.13.13
         version: 4.13.13
+      jose:
+        specifier: ^6.2.12
+        version: 6.2.12
+      lib0:
+        specifier: ^0.2.119
+        version: 0.2.119
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
+      y-protocols:
+        specifier: ^1.0.7
+        version: 1.0.7(yjs@13.6.33)
+      yjs:
+        specifier: ^13.6.33
+        version: 13.6.33
     devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: ^1.4.0
+        version: 1.4.0(@types/node@24.19.2)(vitest@5.0.3(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))
       '@electric-sql/pglite':
         specifier: ^0.5.8
         version: 0.5.8
@@ -277,7 +304,11 @@ importers:
         specifier: ^4.149.0
         version: 4.149.0(@types/node@24.19.2)
 
-  packages/board-model: {}
+  packages/board-model:
+    dependencies:
+      yjs:
+        specifier: ^13.6.33
+        version: 13.6.33
 
   packages/renderer: {}
 
@@ -599,6 +630,11 @@ packages:
     peerDependencies:
       vite: ^6.1.0 || ^7.0.0 || ^8.0.0
       wrangler: ^4.149.0
+
+  '@cloudflare/vitest-plugin@1.4.0':
+    resolution: {integrity: sha512-SgIhyhpVH+2MVSJxidG8gosqrpzF25IwKevQhPykwulTgAFe4s0Nkj71pNzqCkwV2+A4NKkHJP2ReyyRsoIxsg==}
+    peerDependencies:
+      vitest: ^4.1.0 || ^5.0.0
 
   '@cloudflare/workerd-darwin-64@1.20261006.1':
     resolution: {integrity: sha512-lCX6avJO2It9AyDEYitjmOtJRVp/xmaW0TziyoLAnfxlzozyyRbSFfIIMMCiDx/sTP1++E4VLbV+7BHSD33f0Q==}
@@ -1821,6 +1857,9 @@ packages:
     resolution: {integrity: sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA==}
     engines: {node: ^12.17.0 || ^14.13 || >=16.0.0}
 
+  cjs-module-lexer@1.2.3:
+    resolution: {integrity: sha512-0TNiGstbQmCFwt4akjjBg5pLRTSyj/PkWQ1ZoO2zntmg9yLqSRxwEa4iCfQLGjqhiqBfOJa7W/E8wfGrTDmlZQ==}
+
   class-variance-authority@0.7.1:
     resolution: {integrity: sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg==}
 
@@ -2416,6 +2455,9 @@ packages:
     resolution: {integrity: sha512-6B3tLtFqtQS4ekarvLVMZ+X+VlvQekbe4taUkf/rhVO3d/h0M2rfARm/pXLcPEsjjMsFgrFgSrhQIxcSVrBz8w==}
     engines: {node: '>=18'}
 
+  isomorphic.js@0.2.5:
+    resolution: {integrity: sha512-PIeMbHqMt4DnUP3MA/Flc0HElYjMXArsw1qwJZcm9sqR8mq3l8NYizFMty0pWwE/tzIGH3EKK5+jes5mAr85yw==}
+
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
@@ -2459,6 +2501,11 @@ packages:
   kysely@0.29.6:
     resolution: {integrity: sha512-hHaB8C/rfzDDtr/t8YZwxAuPJTT0zHyaPoVzcXwDYhYNAgH/4sIfVhi/XLLIY+bL/FqaIJnjATDbi8ObSELmxg==}
     engines: {node: '>=22.0.0'}
+
+  lib0@0.2.119:
+    resolution: {integrity: sha512-vh+TiejVy8Xm+hCdnRfn9BthGNvNUZdEXltNjVZL3TzRIKP3s1lnQh8pWd/Q0wCgY0FPAGVVjFF4ZiHUV3LFgA==}
+    engines: {node: '>=16'}
+    hasBin: true
 
   lightningcss-android-arm64@1.32.0:
     resolution: {integrity: sha512-YK7/ClTt4kAK0vo6w3X+Pnm0D2cf2vPHbhOXdoNti1Ga0al1P4TBZhwjATvjNwLEBCnKvjJc2jQgHXH0NEwlAg==}
@@ -3312,8 +3359,18 @@ packages:
     resolution: {integrity: sha512-c16PKLIRxBYpR3jSWsdS7SFp0COm5SOQdiFjY818dYFHJbMGuLBszpF07LBWmOS1uzrHa9VGdynsEgoeKy0oOQ==}
     engines: {node: '>=20'}
 
+  y-protocols@1.0.7:
+    resolution: {integrity: sha512-YSVsLoXxO67J6eE/nV4AtFtT3QEotZf5sK5BHxFBXso7VDUT3Tx07IfA6hsu5Q5OmBdMkQVmFZ9QOA7fikWvnw==}
+    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
+    peerDependencies:
+      yjs: ^13.0.0
+
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
+
+  yjs@13.6.33:
+    resolution: {integrity: sha512-q/UYvr1gOk4XII+Cu1CW2dINjYqJJFifTzogEaIARznrvX7uOlHsdTEXcnOBMuIsrCGEEKdNxi74kyMLZlKVfw==}
+    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
 
   yocto-spinner@1.2.2:
     resolution: {integrity: sha512-DODGl1wJjA/s5pnJFKau9lIYHT81lnhob1i3e1TjxZRxEhWRKl74nTbWE6H5KlkViQQTo/Z29YFdxzTZAMY3ng==}
@@ -3663,6 +3720,20 @@ snapshots:
       wrangler: 4.149.0(@types/node@24.19.2)
       ws: 8.21.0
     transitivePeerDependencies:
+      - '@types/node'
+      - bufferutil
+      - utf-8-validate
+
+  '@cloudflare/vitest-plugin@1.4.0(@types/node@24.19.2)(vitest@5.0.3(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)))':
+    dependencies:
+      cjs-module-lexer: 1.2.3
+      esbuild: 0.28.2
+      miniflare: 5.20261006.1-alpha(@types/node@24.19.2)
+      vitest: 5.0.3(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+      wrangler: 4.149.0(@types/node@24.19.2)
+      zod: 4.6.5
+    transitivePeerDependencies:
+      - '@cloudflare/workers-types'
       - '@types/node'
       - bufferutil
       - utf-8-validate
@@ -4520,6 +4591,8 @@ snapshots:
 
   chalk@5.6.2: {}
 
+  cjs-module-lexer@1.2.3: {}
+
   class-variance-authority@0.7.1:
     dependencies:
       clsx: 2.1.1
@@ -5034,6 +5107,8 @@ snapshots:
 
   isexe@3.1.5: {}
 
+  isomorphic.js@0.2.5: {}
+
   jiti@2.7.0: {}
 
   jose@6.2.12: {}
@@ -5061,6 +5136,10 @@ snapshots:
   kleur@4.1.5: {}
 
   kysely@0.29.6: {}
+
+  lib0@0.2.119:
+    dependencies:
+      isomorphic.js: 0.2.5
 
   lightningcss-android-arm64@1.32.0:
     optional: true
@@ -5829,7 +5908,16 @@ snapshots:
       is-wsl: 3.1.1
       powershell-utils: 0.2.1
 
+  y-protocols@1.0.7(yjs@13.6.33):
+    dependencies:
+      lib0: 0.2.119
+      yjs: 13.6.33
+
   yallist@3.1.1: {}
+
+  yjs@13.6.33:
+    dependencies:
+      lib0: 0.2.119
 
   yocto-spinner@1.2.2:
     dependencies:

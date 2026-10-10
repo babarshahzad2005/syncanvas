@@ -14,5 +14,8 @@
   // string in apps/web/.env. The real config id is created in M0 ticket 10.
   "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "00000000000000000000000000000000" }],
   "vars": { "BETTER_AUTH_URL": "http://localhost:5173" },
+  // One BoardRoom per Board, with SQLite storage (ADR 0006).
+  "durable_objects": { "bindings": [{ "name": "BOARD_ROOM", "class_name": "BoardRoom" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BoardRoom"] }],
   "observability": { "enabled": true }
 }

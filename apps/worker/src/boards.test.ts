@@ -1,6 +1,7 @@
-import type { CreateBoardResponse, DashboardResponse } from "@syncanvas/shared"
+import type { BoardTokenResponse, CreateBoardResponse, DashboardResponse } from "@syncanvas/shared"
 import { beforeEach, describe, expect, it } from "vitest"
-import { createTestApp, type TestApp } from "./test-app"
+import { verifyBoardToken } from "./board-token"
+import { createTestApp, env, type TestApp } from "./test-app"
 
 async function dashboard(t: TestApp, cookie: string) {
   const res = await t.request("/api/dashboard", { cookie })
@@ -72,5 +73,39 @@ describe("Boards", () => {
 
     const rows = await t.pg.query<{ n: number }>("select count(*)::int as n from boards")
     expect(rows.rows[0]?.n).toBe(0)
+  })
+
+  it("issues a board token with the Member's Role", async () => {
+    const ada = await t.signIn("ada@example.com")
+    const board = (await create(t, ada, { title: "Q4 retro" })).board
+    const res = await t.request(`/api/boards/${board?.id}/token`, { method: "POST", cookie: ada })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as BoardTokenResponse
+    expect(body).toMatchObject({ role: "owner", board: { id: board?.id, title: "Q4 retro" } })
+
+    const claims = await verifyBoardToken(body.token, env.BOARD_TOKEN_PUBLIC_KEY)
+    expect(claims).toMatchObject({ boardId: board?.id, role: "owner", kind: "member" })
+    const lifetime = new Date(body.expiresAt).getTime() - Date.now()
+    expect(lifetime).toBeGreaterThan(4 * 60_000)
+    expect(lifetime).toBeLessThanOrEqual(5 * 60_000)
+  })
+
+  it("refuses a board token to non-Members and for unknown Boards alike", async () => {
+    const ada = await t.signIn("ada@example.com")
+    const grace = await t.signIn("grace@example.com")
+    const board = (await create(t, ada)).board
+
+    const notMember = await t.request(`/api/boards/${board?.id}/token`, {
+      method: "POST",
+      cookie: grace,
+    })
+    const unknown = await t.request("/api/boards/no-such-board/token", {
+      method: "POST",
+      cookie: grace,
+    })
+    expect(notMember.status).toBe(403)
+    expect(unknown.status).toBe(403)
+    expect(await notMember.json()).toEqual(await unknown.json())
+    expect((await t.request(`/api/boards/${board?.id}/token`, { method: "POST" })).status).toBe(401)
   })
 })

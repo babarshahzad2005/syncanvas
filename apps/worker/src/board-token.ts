@@ -1,0 +1,69 @@
+import type { Role } from "@syncanvas/shared"
+import { type CryptoKey, importJWK, jwtVerify, SignJWT } from "jose"
+
+// Board tokens (TECH_STACK §5): short-lived EdDSA JWTs. The API signs one after checking the
+// session and Membership; the board room verifies it with the public key, no database call.
+
+export const BOARD_TOKEN_TTL_SECONDS = 5 * 60
+const ISSUER = "syncanvas-api"
+const AUDIENCE = "syncanvas-board-room"
+
+export type BoardTokenKind = "member" | "guest" | "embed"
+export type BoardTokenClaims = { userId: string; boardId: string; role: Role; kind: BoardTokenKind }
+
+/** Keys are stored as base64url-encoded JWK JSON (see scripts/gen-keys.mjs). */
+async function importKey(encoded: string): Promise<CryptoKey> {
+  const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/")
+  const jwk = JSON.parse(atob(base64))
+  return (await importJWK(jwk, "EdDSA")) as CryptoKey
+}
+
+const keyCache = new Map<string, Promise<CryptoKey>>()
+const key = (encoded: string) => {
+  let k = keyCache.get(encoded)
+  if (!k) {
+    k = importKey(encoded)
+    keyCache.set(encoded, k)
+  }
+  return k
+}
+
+export async function signBoardToken(
+  claims: BoardTokenClaims,
+  privateKey: string,
+  now = Date.now(),
+) {
+  const iat = Math.floor(now / 1000)
+  const exp = iat + BOARD_TOKEN_TTL_SECONDS
+  const token = await new SignJWT({ board: claims.boardId, role: claims.role, kind: claims.kind })
+    .setProtectedHeader({ alg: "EdDSA" })
+    .setSubject(claims.userId)
+    .setIssuer(ISSUER)
+    .setAudience(AUDIENCE)
+    .setIssuedAt(iat)
+    .setExpirationTime(exp)
+    .sign(await key(privateKey))
+  return { token, expiresAt: new Date(exp * 1000).toISOString() }
+}
+
+/** Returns the claims of a valid, unexpired token, or null for anything else. */
+export async function verifyBoardToken(
+  token: string,
+  publicKey: string,
+): Promise<BoardTokenClaims | null> {
+  try {
+    const { payload } = await jwtVerify(token, await key(publicKey), {
+      issuer: ISSUER,
+      audience: AUDIENCE,
+      algorithms: ["EdDSA"],
+    })
+    const { sub, board, role, kind } = payload as Record<string, unknown>
+    if (typeof sub !== "string" || typeof board !== "string") return null
+    if (role !== "owner" && role !== "editor" && role !== "commenter" && role !== "viewer")
+      return null
+    if (kind !== "member" && kind !== "guest" && kind !== "embed") return null
+    return { userId: sub, boardId: board, role, kind }
+  } catch {
+    return null
+  }
+}

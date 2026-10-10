@@ -1,4 +1,4 @@
-import type { CreateBoardResponse, DashboardResponse } from "@syncanvas/shared"
+import type { BoardTokenResponse, CreateBoardResponse, DashboardResponse } from "@syncanvas/shared"
 
 export class ApiError extends Error {
   readonly status: number
@@ -25,6 +25,10 @@ export const api = {
   dashboard: () => request<DashboardResponse>("/api/dashboard"),
   createBoard: (input: { title?: string } = {}) =>
     request<CreateBoardResponse>("/api/boards", { method: "POST", body: JSON.stringify(input) }),
+  boardToken: (boardId: string) =>
+    request<BoardTokenResponse>(`/api/boards/${encodeURIComponent(boardId)}/token`, {
+      method: "POST",
+    }),
 }
 
 export const queryKeys = {

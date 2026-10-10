@@ -44,7 +44,7 @@ Browser                  │  Worker "syncanvas" (ADR 0004)                     
 | Email | Brevo + React Email (ADR 0007) | Free with no domain; templates live in the repo | Resend (needs a domain), Postmark, SES |
 | Rate limiting | Workers Rate Limiting binding | Built in and keyed per User or IP | Custom counters in Postgres |
 | Observability | Workers Logs; Sentry optional in M6 | Free and built in; one less account | Sentry from day one |
-| Testing | Vitest, `@cloudflare/vitest-pool-workers`, fast-check, Playwright, custom load tool | Covers S1–S8 (§9) | Jest, Cypress, k6 |
+| Testing | Vitest, `@cloudflare/vitest-plugin`, fast-check, Playwright, custom load tool | Covers S1–S8 (§9) | Jest, Cypress, k6 |
 | Lint/format | Biome | One fast tool | ESLint + Prettier |
 | CI/CD | GitHub Actions + Wrangler | Preview Worker and Neon branch per PR | — |
 
@@ -266,7 +266,7 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
 | Criterion | Tool | Where it runs |
 |---|---|---|
 | S1 Convergence, S2 No lost work | `fast-check` model-based fuzz: ≥5 in-memory Yjs clients, random ops, partitions, and offline periods; asserts identical state and no accepted edit lost | Vitest, every PR |
-| Board room logic (Role rejection, caps, compaction, Versions) | `@cloudflare/vitest-pool-workers` against real workerd + DO SQLite | Every PR |
+| Board room logic (Role rejection, caps, compaction, Versions) | `@cloudflare/vitest-plugin` against real workerd + DO SQLite | Every PR |
 | S7 Access enforced on the server | The same pool: forged Viewer updates rejected; `setRole` and `kick` take effect within 1 s | Every PR |
 | API routes | Vitest calling the Hono app directly, on PGlite (in-memory Postgres) with the real Drizzle migrations; magic-link sender swapped for an in-memory outbox | Every PR |
 | End-to-end collaboration | Playwright with multiple browser contexts on one Board | PR preview |

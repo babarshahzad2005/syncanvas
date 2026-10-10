@@ -3,20 +3,27 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.room.json",
     "cf-typegen": "wrangler types",
     "gen:secret": "node scripts/gen-secret.mjs",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "gen:keys": "node scripts/gen-keys.mjs"
   },
   "dependencies": {
+    "@syncanvas/board-model": "workspace:*",
     "@syncanvas/shared": "workspace:*",
     "better-auth": "^1.7.7",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.13",
-    "postgres": "^3.4.9"
+    "jose": "^6.2.12",
+    "lib0": "^0.2.119",
+    "postgres": "^3.4.9",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.33"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.0",
     "@electric-sql/pglite": "^0.5.8",
     "drizzle-kit": "^0.31.11",
     "wrangler": "^4.149.0"

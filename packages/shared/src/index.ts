@@ -21,3 +21,11 @@ export type DashboardResponse = { boards: BoardSummary[] }
 export type CreateBoardResponse = { id: string; title: string }
 
 export const BOARD_TITLE_MAX = 200
+
+/** POST /api/boards/:id/token: a short-lived pass to that Board's live room. */
+export type BoardTokenResponse = {
+  token: string
+  expiresAt: string
+  role: Role
+  board: { id: string; title: string }
+}
