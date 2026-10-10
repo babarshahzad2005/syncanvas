@@ -1,0 +1,3 @@
+# Board room sync is hand-rolled on y-protocols, not y-partyserver
+
+The `BoardRoom` Durable Object implements the Yjs sync and awareness protocols directly on top of `y-protocols`, using the hibernatable WebSocket API. A ready-made provider such as `y-partyserver` would get in the way of the hooks we need on every message: checking the Role on each update, enforcing the Element cap, admitting connections under the cap in priority order, persisting to SQLite before broadcasting, compacting, keeping Versions, and live downgrades. The protocol itself is about 200 lines. One consequence is that awareness lives only in memory and is lost when the Durable Object hibernates; clients' periodic awareness renewals rebuild it on wake.

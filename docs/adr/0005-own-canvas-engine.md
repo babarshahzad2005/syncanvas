@@ -1,0 +1,3 @@
+# Build our own canvas engine instead of tldraw or Excalidraw
+
+We write the Element model, the Canvas2D renderer, and the tools ourselves, using small libraries for strokes, spatial indexing, and z-order. The tldraw SDK requires a paid license (or a watermark) in production and has its own store that would have to be bridged to Yjs. Excalidraw's scene model and sync assumptions would fight our CRDT. Both would make it hard to store position and size as one value each (ADR 0002), to check Roles per update in the board room, and to share one drawing path between the screen and exports. The cost is building selection, hit-testing, and text editing ourselves.

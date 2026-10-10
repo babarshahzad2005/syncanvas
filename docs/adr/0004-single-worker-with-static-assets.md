@@ -1,0 +1,3 @@
+# One Worker serves the app, API, board rooms and crons
+
+The original architecture diagram shows a separate Cloudflare Pages site. Instead, one Worker serves the React build as static assets. It routes `/api/*` to Hono and `/ws/*` to the `BoardRoom` Durable Object, and it runs the scheduled handlers. With a single origin there are no CORS or cross-site cookie problems, and there is one deploy unit, one config file, and one set of bindings. Separate Workers connected by service bindings would only add deploy coordination for a solo developer. The code stays split into packages, so splitting the deployment later would be a configuration change, not a rewrite.

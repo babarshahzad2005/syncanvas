@@ -1,0 +1,3 @@
+# Element position and size are stored as one value each in the CRDT
+
+An Element's position (x, y) and size (w, h) are each stored as a single value that is replaced whole, not as separate CRDT fields. With separate fields, two people dragging the same Element at the same time can converge on one person's x and the other's y, a position nobody chose. Storing each pair as one value means the last write wins for the whole pair, so the result is always a position someone actually picked. The cost is that two people can't independently change x and y at the same moment, which never happens on purpose. Changing this later requires migrating every stored Board.
