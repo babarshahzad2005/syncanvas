@@ -106,16 +106,21 @@ export class BoardRoom extends DurableObject<Env> {
 
   private receiveUpdate(ws: WebSocket, update: Uint8Array) {
     if (isEmptyUpdate(update)) return
+
+    // Apply to a scratch copy first, so nothing touches the live doc until it's accepted.
+    const scratch = new Y.Doc()
+    Y.applyUpdate(scratch, Y.encodeStateAsUpdate(this.doc))
+    Y.applyUpdate(scratch, update)
+
+    // Nothing new (e.g. a client replaying its local copy on reconnect): ignore it, even from
+    // a read-only socket, so re-sending known content never counts as an edit attempt.
+    if (Y.equalSnapshots(Y.snapshot(scratch), Y.snapshot(this.doc))) return
+
     const info = ws.deserializeAttachment() as SocketInfo
     if (info.kind !== "member" || !canEdit(info.role)) {
       ws.close(CLOSE.forbidden, "read-only")
       return
     }
-
-    // Validate on a scratch copy first, so invalid content never touches the live doc.
-    const scratch = new Y.Doc()
-    Y.applyUpdate(scratch, Y.encodeStateAsUpdate(this.doc))
-    Y.applyUpdate(scratch, update)
     if (validateBoardDoc(scratch).length > 0) {
       ws.close(CLOSE.invalidUpdate, "invalid update")
       return

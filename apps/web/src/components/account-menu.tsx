@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { authClient, type Session } from "@/lib/auth-client"
 import { parsePreference, setThemePreference, useThemePreference } from "@/lib/theme"
+import { clearAllLocalCopies } from "@/sync/local-copy"
 
 export function initials(email: string) {
   const name = email.split("@")[0] ?? ""
@@ -33,6 +34,8 @@ export function AccountMenu({ user }: { user: Session["user"] }) {
 
   async function signOut() {
     await authClient.signOut()
+    // Saved Boards on this device belong to the person signing out.
+    await clearAllLocalCopies()
     await navigate({ to: "/sign-in" })
   }
 

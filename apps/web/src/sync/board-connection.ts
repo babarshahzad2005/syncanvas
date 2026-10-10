@@ -1,4 +1,4 @@
-import type { BoardTokenResponse } from "@syncanvas/shared"
+import { type BoardTokenResponse, canEdit } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
 import * as syncProtocol from "y-protocols/sync"
@@ -49,11 +49,15 @@ export class BoardConnection {
 
   start() {
     this.stopped = false
+    window.addEventListener("offline", this.onBrowserOffline)
+    window.addEventListener("online", this.onBrowserOnline)
     void this.connect()
   }
 
   stop() {
     this.stopped = true
+    window.removeEventListener("offline", this.onBrowserOffline)
+    window.removeEventListener("online", this.onBrowserOnline)
     if (this.retryTimer) clearTimeout(this.retryTimer)
     this.ws?.close(1000, "left the board")
     this.ws = null
@@ -110,8 +114,25 @@ export class BoardConnection {
     })
   }
 
+  /** The browser knows the network is gone: don't wait for the socket to time out. */
+  private onBrowserOffline = () => {
+    const ws = this.ws
+    this.ws = null
+    ws?.close(1000, "browser offline")
+    this.scheduleRetry()
+  }
+
+  /** The network is back: reconnect now instead of waiting out the backoff. */
+  private onBrowserOnline = () => {
+    if (this.stopped || this.ws || this.status === "revoked") return
+    if (this.retryTimer) clearTimeout(this.retryTimer)
+    this.attempt = 0
+    void this.connect()
+  }
+
   private scheduleRetry() {
     if (this.stopped) return
+    if (this.retryTimer) clearTimeout(this.retryTimer)
     this.setStatus("offline")
     const delay = backoffDelay(this.attempt++)
     this.retryTimer = setTimeout(() => void this.connect(), delay)
@@ -140,6 +161,7 @@ export class BoardConnection {
 
   private onLocalUpdate = (update: Uint8Array, origin: unknown) => {
     if (origin === this) return // came from the room; don't echo it back
+    if (this.role && !canEdit(this.role)) return // read-only: nothing of ours to send
     this.send((e) => syncProtocol.writeUpdate(e, update))
   }
 }

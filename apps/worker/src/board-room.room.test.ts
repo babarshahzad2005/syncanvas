@@ -157,6 +157,21 @@ describe("BoardRoom", () => {
     late.close()
   })
 
+  it("lets a Viewer re-send content the room already has without being disconnected", async () => {
+    const board = newBoardId()
+    const editor = await join(board, "editor")
+    editor.addRect("known")
+    const viewer = await join(board, "viewer")
+    await until(() => viewer.rect("known") !== undefined, "viewer to see the rectangle")
+
+    // Like a reconnecting client replaying its local copy.
+    viewer.sendUpdate(Y.encodeStateAsUpdate(viewer.doc))
+    await new Promise((r) => setTimeout(r, 300))
+    expect(viewer.closed).toBeNull()
+    editor.close()
+    viewer.close()
+  })
+
   it.each<[string, () => Promise<string>, string, number]>([
     ["a forged token", async () => "not-a-jwt", "board-forged", CLOSE.invalidToken],
     [

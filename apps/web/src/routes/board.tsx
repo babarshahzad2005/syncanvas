@@ -86,6 +86,7 @@ function TitlePill({
     <Link
       to="/"
       aria-label="Back to your boards"
+      title={status === "offline" ? "You're offline. Changes are saved on this device." : undefined}
       className={cn(
         "fixed top-3 left-3 flex h-10 items-center gap-2 rounded-full bg-surface pr-4 pl-3 shadow-panel",
         status === "offline" && "ring-1 ring-warning",
