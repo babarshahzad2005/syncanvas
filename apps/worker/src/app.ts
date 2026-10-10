@@ -1,9 +1,16 @@
+import {
+  BOARD_TITLE_MAX,
+  type CreateBoardResponse,
+  type DashboardResponse,
+} from "@syncanvas/shared"
 import { Hono } from "hono"
+import { createMiddleware } from "hono/factory"
 import { type Auth, createAuth, logMagicLink } from "./auth"
-import { createDb } from "./db/client"
+import { createBoard, listBoards } from "./boards"
+import { createDb, type Database } from "./db/client"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
-export type Services = { auth: Auth; dispose?: () => Promise<void> }
+export type Services = { db: Database; auth: Auth; dispose?: () => Promise<void> }
 export type ServicesFactory = (env: Env) => Services
 
 export const productionServices: ServicesFactory = (env) => {
@@ -14,16 +21,17 @@ export const productionServices: ServicesFactory = (env) => {
     baseURL: env.BETTER_AUTH_URL,
     sendMagicLink: logMagicLink,
   })
-  return { auth, dispose: close }
+  return { db, auth, dispose: close }
 }
 
-type AppEnv = { Bindings: Env; Variables: { services: Services } }
+type SessionUser = { id: string; email: string; name: string }
+type AppEnv = { Bindings: Env; Variables: { services: Services; user: SessionUser } }
 
 export function createApp(services: ServicesFactory = productionServices) {
   const app = new Hono<AppEnv>().basePath("/api")
 
   // Only routes that touch the database or auth open a connection.
-  app.use("/auth/*", async (c, next) => {
+  const withServices = createMiddleware<AppEnv>(async (c, next) => {
     const s = services(c.env)
     c.set("services", s)
     try {
@@ -32,9 +40,35 @@ export function createApp(services: ServicesFactory = productionServices) {
       if (s.dispose) c.executionCtx.waitUntil(s.dispose())
     }
   })
+  for (const path of ["/auth/*", "/boards", "/boards/*", "/dashboard"]) app.use(path, withServices)
+
+  // Signed-in User for everything except auth itself.
+  const requireUser = createMiddleware<AppEnv>(async (c, next) => {
+    const session = await c.var.services.auth.api.getSession({ headers: c.req.raw.headers })
+    if (!session) return c.json({ error: "You need to sign in." }, 401)
+    c.set("user", { id: session.user.id, email: session.user.email, name: session.user.name })
+    await next()
+  })
+  for (const path of ["/boards", "/boards/*", "/dashboard"]) app.use(path, requireUser)
 
   app.get("/health", (c) => c.json({ ok: true }))
   app.on(["GET", "POST"], "/auth/*", (c) => c.var.services.auth.handler(c.req.raw))
+
+  app.get("/dashboard", async (c) => {
+    const body: DashboardResponse = { boards: await listBoards(c.var.services.db, c.var.user.id) }
+    return c.json(body)
+  })
+
+  app.post("/boards", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as { title?: unknown }
+    const title =
+      typeof input.title === "string" ? input.title.trim().slice(0, BOARD_TITLE_MAX) : undefined
+    const board: CreateBoardResponse = await createBoard(c.var.services.db, {
+      ownerId: c.var.user.id,
+      title: title || undefined,
+    })
+    return c.json(board, 201)
+  })
 
   return app
 }

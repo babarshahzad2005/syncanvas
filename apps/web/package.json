@@ -13,6 +13,7 @@
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@syncanvas/shared": "workspace:*",
+    "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-router": "^1.170.42",
     "better-auth": "^1.7.7",
     "class-variance-authority": "^0.7.1",

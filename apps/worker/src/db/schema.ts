@@ -1,4 +1,5 @@
-import { boolean, index, pgTable, text, timestamp } from "drizzle-orm/pg-core"
+import { sql } from "drizzle-orm"
+import { boolean, check, index, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core"
 
 // Better Auth tables, from Better Auth's Drizzle schema generator (core + magic link).
 // Regenerate if auth plugins change; keep column names snake_case.
@@ -73,4 +74,46 @@ export const verification = pgTable(
       .notNull(),
   },
   (table) => [index("verification_identifier_idx").on(table.identifier)],
+)
+
+// ---------- Boards and access (GLOSSARY: Board, Member, Role; ADR 0001) ----------
+
+export const boards = pgTable(
+  "boards",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    title: text("title").notNull().default("Untitled board"),
+    thumbnailKey: text("thumbnail_key"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    deletedAt: timestamp("deleted_at"),
+  },
+  (table) => [index("boards_owner_idx").on(table.ownerId)],
+)
+
+/** A User's saved Role on a Board. The Owner also has a row, with role "owner". */
+export const memberships = pgTable(
+  "memberships",
+  {
+    boardId: text("board_id")
+      .notNull()
+      .references(() => boards.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["owner", "editor", "commenter", "viewer"] }).notNull(),
+    via: text("via", { enum: ["owner", "invitation", "share_link"] }).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.boardId, table.userId] }),
+    index("memberships_user_idx").on(table.userId),
+    check(
+      "memberships_role_check",
+      sql`${table.role} in ('owner', 'editor', 'commenter', 'viewer')`,
+    ),
+  ],
 )
