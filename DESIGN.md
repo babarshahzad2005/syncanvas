@@ -1,6 +1,6 @@
 ---
 name: Syncanvas
-version: 0.1.0 # v0: tokens set, layouts pending prototypes (see Known Gaps)
+version: 0.2.0 # layouts settled (M0 tickets 03–04); values still to be checked on /design
 personality: calm, minimal, warm, precise
 references: [Linear, tldraw, FigJam toolbar]
 
