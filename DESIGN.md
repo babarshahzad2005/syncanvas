@@ -143,7 +143,7 @@ components:
   button-primary: { fill: primary, text: primary-foreground, radius: lg, height: 36px, padding-x: 12px, pressed: primary-active + scale(0.97) }
   button-secondary: { fill: surface, text: foreground, border: border, radius: lg }
   button-ghost: { fill: transparent, hover: accent, text: foreground, radius: lg }
-  tool-button: { size: 36px, radius: lg, idle: ghost, active: "primary-subtle fill + primary icon" }
+  tool-button: { size: 32px, touch: 44px, radius: lg, idle: ghost, active: "primary-subtle fill + primary icon" }
   dock: { surface: surface, elevation: panel, radius: xl, padding: 6px, gap: 2px }
   floating-panel: { surface: surface, elevation: panel, radius: xl, padding: 8px }
   input: { height: 36px, radius: lg, border: input, focus: "2px ring, 2px offset" }
@@ -191,24 +191,33 @@ Twelve saturated colors, separate from the palette and the accent, so a cursor n
 
 ## Layout
 
-### Board screen (FigJam pattern)
+### Board screen ("Dock tray", chosen from prototype C in M0 ticket 03)
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ [◆ Board title ▾ · offline]        [●●●+2] [💬] [Share]       │  ← floating panels, 12px from the edges
+│ (◆ Board title ▾)                         (●●●+2 💬3) (Share) │  ← pills, 12px from the edges
 │                                                               │
 │                · · · · · · dot grid · · · · · ·               │
-│                     (edge-to-edge canvas)                     │
-│                                                               │
-│                                                    [− 100% +] │
-│             [ ↖ ✎ ▭ ◯ → ⤳ T ▤ 🖼 | 💬 ]                       │  ← bottom dock, centered, 12px from the bottom
+│        📍┌──────────┐      (edge-to-edge canvas)              │
+│          │ thread … │  ← inline thread beside its pin         │
+│          └──────────┘                                         │
+│              ┌─────────────────────────────────┐              │
+│              │ ●●●●●● | S M L B | 🔒 ⋯          │ ← style tray │
+│              ├─────────────────────────────────┤  (selection) │
+│              │ ↖ ✎ ▭ ◯ → ⤳ T ▤ 🖼 💬           │ ← tool row   │
+│              └─────────────────────────────────┘ (↶ ↷ | 100%) │
 └───────────────────────────────────────────────────────────────┘
 ```
 
-- **Top left:** the mark, the Board title (rename inline), the Board menu, and the offline indicator.
-- **Top right:** presence avatars (up to 4, then `+N`), the comments panel toggle, and Share (the only primary button).
-- **Bottom center:** the tool dock. **Bottom right:** zoom controls.
-- Where the style panel goes, how the comments panel looks, and exact spacing are **pending prototypes** (see Known Gaps).
+- **Top left: title pill** (rounded-full, panel elevation): the mark, the Board title, and a small chevron. Clicking it opens the **Board menu**: rename, theme, dot-grid toggle, export, and back to the dashboard. **Offline:** the pill gets a 1px `warning` outline plus a cloud-off icon and "Offline". There's no other offline banner.
+- **Top right:** a presence pill with avatars (up to 4, then `+N`) and the **comment count button** (💬 + number of open Threads), then a separate pill-shaped Share button, the only primary button. The count button opens a **comments popover** with Open and Resolved tabs. Each row shows the first comment. Clicking a row pans the Board to that pin and opens its inline thread.
+- **Bottom center: the dock** is one panel. Its **tool row** holds compact 32px icon buttons, all tools, active tool in `primary-subtle`. While something is selected, a **style tray** slides up out of the same panel (220ms `ease-out`), separated by a hairline on a `muted` background. The tray shows only the controls that apply to the selection:
+  - **Sticky notes:** sticky colors, text size S/M/L, bold.
+  - **Shapes:** stroke and fill Palette colors.
+  - **Always:** lock and "more".
+- **Bottom right:** a pill with undo and redo, then the zoom percentage. Clicking the percentage opens a menu: zoom in, zoom out, zoom to fit, 100%.
+- **Comment Threads open inline** as a popover card beside their pin, never covering the pinned Element. The card is placed on the side with the most free space. Escape or a click on the Board closes it. There's no permanent comments side panel.
+- **Prototype source:** branch `prototype/board-screen` (variants A–C). Variant C won because it's thumb-friendly on iPad and keeps the canvas open, with controls next to the dock.
 
 ### Dashboard
 
@@ -227,7 +236,7 @@ Use the radius scale only: 4 / 6 / 8 / 12 / 16 / pill. Controls are 8, floating 
 shadcn/ui on **Base UI** with the **nova** style and Lucide icons. Only the components we use are installed (see Known Gaps).
 
 - **Buttons:** 36px tall (44px on touch). Variants: `default` (primary), `outline` (secondary), `ghost`, `destructive`, `link`. Pressing scales the button to 0.97 for 120ms.
-- **Tool buttons:** 36px squares, ghost when idle. The active tool gets a `primary-subtle` fill with a `primary` icon. Tooltips show the name plus the shortcut in a `kbd`.
+- **Tool buttons:** 32px squares (44px on touch), ghost when idle. The compact dock is part of the Dock tray layout. The active tool gets a `primary-subtle` fill with a `primary` icon. Tooltips show the name plus the shortcut in a `kbd`.
 - **Inputs:** 36px, 8px radius, hairline border, 2px focus ring with a 2px offset.
 - **Menus and popovers:** popover elevation and 12px radius. Items are 32px tall with 6px radius, and the highlight uses `accent`.
 - **Toasts:** bottom-center above the dock on the Board, bottom-right on the dashboard. Errors say what happened and what to do next.
@@ -279,7 +288,7 @@ Motion confirms what you did and never slows you down (emil-design-eng).
 
 ## Known Gaps
 
-- **Layouts pending prototypes (Step 4):** the Board screen (style panel placement, comments panel) and the dashboard (grid vs list, Folder navigation).
+- **Dashboard layout pending prototype** (M0 ticket 04): grid vs list, Folder navigation. The Board screen is settled (Layout above).
 - **Logo mark** is not drawn yet. The wordmark is "Syncanvas" set in Geist at 600 weight.
 - **v0 values:** colors pass the contrast math, but the shadows, dark-mode sticky colors, and spacing still need to be checked visually on the `/design` page.
 - **Deviation from the shadcn skill:** we install only the components we use instead of `add --all`. The `/design` page coverage check runs against the installed set.
