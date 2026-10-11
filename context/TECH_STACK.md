@@ -278,25 +278,30 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
 
 ## 10. Environments and CI/CD
 
-| Environment | Worker | Database | KV |
+| Environment | Worker | Database | Notes |
 |---|---|---|---|
-| Local | `wrangler dev` (workerd, local DO + KV) | Neon dev branch via Hyperdrive local connection string | Local KV emulation |
-| PR preview | `syncanvas-pr-{n}` | Neon branch per PR (created and deleted by CI) | Shared preview namespace, prefixed per PR |
-| Production | `syncanvas` | Neon `main` | `ASSETS` |
+| Local | `pnpm dev` (Vite + Cloudflare plugin, local workerd and DO storage) | Neon **`dev`** branch (`apps/web/.env`) | Magic links printed to the terminal; dev-only inbox for e2e |
+| Pull request | none deployed | Throwaway Neon **`pr-N`** branch from `dev`, deleted when the PR closes | Playwright (Chromium) against `pnpm dev` in CI |
+| Production | `syncanvas` at `syncanvas.babarshahzad2005.workers.dev` | Neon default branch (**`production`**) via Hyperdrive | Brevo sign-in emails |
 
-**GitHub Actions:**
-1. Install (pnpm cache).
-2. Biome check, then `tsc -b`.
-3. Unit tests, fuzz suite, workers-pool tests.
-4. Create the Neon branch, then run `drizzle-kit migrate`.
-5. `wrangler deploy` the preview.
-6. Run Playwright against the preview.
-7. On merge to `main`: migrate production, `wrangler deploy`.
+**GitHub Actions (`.github/workflows/ci.yml`, `pr-cleanup.yml`):**
+1. Every PR and every push to `main`: `pnpm check` (Biome, typecheck, unit, integration, and workerd room tests).
+2. PRs only: create the Neon `pr-N` branch, generate local secrets for the run, migrate, then run `pnpm e2e`. The Playwright report is uploaded on failure.
+3. Pushes to `main` only (`production` environment): migrate the production database, then `pnpm release` (build, delete `.dev.vars` from the output, `wrangler deploy`).
+4. When a PR closes: delete its `pr-N` Neon branch.
+
+**Deviation from the original plan:** there are no per-PR preview Workers. Cloudflare preview versions share production's bindings, so they would hit the production database, and a Hyperdrive config plus secrets per PR is heavy on the free tier. Instead, each PR is tested end to end against `pnpm dev` on its own Neon branch.
+
+**Secrets:**
+- GitHub `production` environment: `CLOUDFLARE_API_TOKEN`, `PRODUCTION_DATABASE_URL`.
+- Repo secret: `NEON_API_KEY`.
+- Repo variables: `CLOUDFLARE_ACCOUNT_ID`, `NEON_PROJECT_ID`.
+- Cloudflare Worker secrets: `BETTER_AUTH_SECRET`, `BOARD_TOKEN_PRIVATE_KEY`, `BOARD_TOKEN_PUBLIC_KEY`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`.
 
 **Tooling:**
-- Node LTS, pnpm (pinned via `packageManager`).
-- Biome for lint and format, TypeScript strict.
-- Vite for the web build. Wrangler bundles the Worker with esbuild.
+- Node 24 LTS, pnpm 12 (pinned via `packageManager`).
+- Biome for lint and format, TypeScript 6 strict.
+- Vite builds the app and the Worker through the Cloudflare plugin.
 
 ---
 

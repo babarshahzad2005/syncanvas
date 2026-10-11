@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "biome check . && pnpm -r typecheck && tsc --noEmit -p e2e && vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "release": "pnpm build && node -e \"require('fs').rmSync('apps/web/dist/syncanvas/.dev.vars',{force:true})\" && pnpm --filter @syncanvas/web exec wrangler deploy"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
