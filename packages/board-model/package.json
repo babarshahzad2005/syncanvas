@@ -11,5 +11,11 @@
   "dependencies": {
     "fractional-indexing": "^4.0.0",
     "yjs": "^13.6.33"
+  },
+  "devDependencies": {
+    "@syncanvas/shared": "workspace:*",
+    "fast-check": "^4.10.2",
+    "lib0": "^0.2.119",
+    "y-protocols": "^1.0.7"
   }
 }

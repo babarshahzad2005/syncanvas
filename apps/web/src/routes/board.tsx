@@ -1,9 +1,9 @@
-import { elementsOf } from "@syncanvas/board-model"
+import { createUndoManager } from "@syncanvas/board-model"
 import { canEdit } from "@syncanvas/shared"
 import { getRouteApi, Link } from "@tanstack/react-router"
 import { ChevronDown, CloudOff, Eye, Loader2, Lock } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
-import * as Y from "yjs"
+import type * as Y from "yjs"
 import { BoardCanvas, type CanvasHandle } from "@/board/board-canvas"
 import { Dock, UndoZoomPill } from "@/board/chrome"
 import { useBoardUi } from "@/board/store"
@@ -40,11 +40,7 @@ function BoardSurface({ doc, editable }: { doc: Y.Doc; editable: boolean }) {
   // manager, not one destroyed by the simulated unmount.
   const [undoManager, setUndoManager] = useState<Y.UndoManager | null>(null)
   useEffect(() => {
-    // captureTimeout: Infinity + stopCapturing() at each gesture start = one gesture per undo step.
-    const manager = new Y.UndoManager(elementsOf(doc), {
-      trackedOrigins: new Set([origin]),
-      captureTimeout: Number.POSITIVE_INFINITY,
-    })
+    const manager = createUndoManager(doc, origin)
     setUndoManager(manager)
     return () => manager.destroy()
   }, [doc, origin])

@@ -156,7 +156,7 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 - **Connectors** bind to shapes by Element ID and re-route on every client when a shape moves, including when someone else moves it.
 - **Groups:** a group with fewer than 2 Elements left dissolves automatically. An Element whose group no longer exists counts as ungrouped.
 - **Position and size** are each stored as one value that's replaced whole (ADR 0002).
-- **Undo/redo** covers only the local user's actions, within the current tab session. One gesture is one undo step. Undoing an action on an Element someone else has since deleted does nothing and shows no error.
+- **Undo/redo** covers only the local user's actions, within the current tab session. One gesture is one undo step. Undo puts back your own previous value even if someone changed it after you (ADR 0010). Undoing an action on an Element someone else has since deleted does nothing and shows no error.
 - **Copy, cut, paste, duplicate** work within a Board and between Boards. Pasting an image from the clipboard uploads it. Pasting into a Board needs Editor access there. Copying out of a Board you can only view is allowed.
 - **Drawing and moving:** while you drag out a new shape, it's only a local preview, and the document is written once, on pointer-up. Moving existing Elements streams at about 20 Hz so collaborators see smooth motion.
 - **Shortcuts:**

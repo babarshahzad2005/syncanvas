@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers"
-import { validateBoardDoc } from "@syncanvas/board-model"
+import { checkUpdate } from "@syncanvas/board-model"
 import { canEdit, type Role } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
@@ -29,11 +29,6 @@ function syncMessage(write: (encoder: encoding.Encoder) => void) {
   encoding.writeVarUint(encoder, MESSAGE_SYNC)
   write(encoder)
   return encoding.toUint8Array(encoder)
-}
-
-function isEmptyUpdate(update: Uint8Array) {
-  const { structs, ds } = Y.decodeUpdate(update)
-  return structs.length === 0 && ds.clients.size === 0
 }
 
 export class BoardRoom extends DurableObject<Env> {
@@ -105,25 +100,17 @@ export class BoardRoom extends DurableObject<Env> {
   }
 
   private receiveUpdate(ws: WebSocket, update: Uint8Array) {
-    if (isEmptyUpdate(update)) return
-
-    // Apply to a scratch copy first, so nothing touches the live doc until it's accepted.
-    const scratch = new Y.Doc()
-    Y.applyUpdate(scratch, Y.encodeStateAsUpdate(this.doc))
-    Y.applyUpdate(scratch, update)
-
-    // Nothing new (e.g. a client replaying its local copy on reconnect): ignore it, even from
-    // a read-only socket, so re-sending known content never counts as an edit attempt.
-    if (Y.equalSnapshots(Y.snapshot(scratch), Y.snapshot(this.doc))) return
-
     const info = ws.deserializeAttachment() as SocketInfo
-    if (info.kind !== "member" || !canEdit(info.role)) {
-      ws.close(CLOSE.forbidden, "read-only")
-      return
-    }
-    if (validateBoardDoc(scratch).length > 0) {
-      ws.close(CLOSE.invalidUpdate, "invalid update")
-      return
+    switch (checkUpdate(this.doc, update, info.kind === "member" && canEdit(info.role))) {
+      case "unchanged":
+      case "incomplete":
+        return
+      case "read-only":
+        ws.close(CLOSE.forbidden, "read-only")
+        return
+      case "invalid":
+        ws.close(CLOSE.invalidUpdate, "invalid update")
+        return
     }
 
     // Persist before broadcasting: an update anyone has seen is always in storage.
