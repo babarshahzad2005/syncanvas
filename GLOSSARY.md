@@ -68,6 +68,14 @@ _Avoid_: Archive, recycle bin
 A saved past state of a Board that Editors can preview and restore.
 _Avoid_: Snapshot, revision, backup
 
+**Group**:
+A set of Elements that are selected and moved together. Groups are not nested, and a group with fewer than two Elements dissolves.
+_Avoid_: Frame, container, folder (when meaning Elements)
+
+**Connector**:
+A line whose ends attach to Elements and follow them when they move. If an attached Element is deleted, that end stays where the Element last was.
+_Avoid_: Arrow (an arrow is a free line that attaches to nothing), link, edge
+
 **Lock**:
 A state of an Element that prevents accidental selection or movement. Any Editor can lift it.
 _Avoid_: Freeze, protect

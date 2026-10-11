@@ -1,0 +1,3 @@
+# Text in text Elements and sticky notes is collaborative (Y.Text)
+
+The text inside text Elements and sticky notes is stored as a Yjs `Y.Text`, not as one plain value. When two people edit the same note at the same time, their edits merge character by character and both survive. With a plain string, the last person to commit would silently erase the other's typing, which breaks the product's core promise that conflicts resolve themselves. The cost is binding the editing text box to `Y.Text` (applying minimal diffs both ways and keeping the caret in place when remote edits arrive), plus validating `Y.Text` content (length limits) in the board room. Switching later would mean migrating every stored Board's text, so this is decided before text exists in production.
