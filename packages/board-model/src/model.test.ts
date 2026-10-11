@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import * as Y from "yjs"
 import {
+  addArrow,
   addElement,
   addShape,
   type ConnectorElement,
@@ -208,6 +209,19 @@ describe("operations", () => {
     const { z: _z, ...values } = VALID.sticky as Record<string, unknown>
     const id = addElement(doc, values, "me")
     expect(elementsOf(doc).get(id)?.get("text")).toBeInstanceOf(Y.Text)
+    expect(validateBoardDoc(doc)).toEqual([])
+  })
+
+  it("adds an arrow drawn in any direction, with its ends relative to its box", () => {
+    const doc = new Y.Doc()
+    addArrow(doc, { from: { x: 100, y: 20 }, to: { x: 40, y: 80 }, color: "red" }, "me")
+    expect(listElements(doc)[0]).toMatchObject({
+      type: "arrow",
+      position: { x: 40, y: 20 },
+      size: { w: 60, h: 60 },
+      color: "red",
+      ends: { from: { x: 60, y: 0 }, to: { x: 0, y: 60 } },
+    })
     expect(validateBoardDoc(doc)).toEqual([])
   })
 

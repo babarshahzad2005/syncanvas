@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 import {
+  addArrow,
   addPen,
   addShape,
   checkUpdate,
@@ -231,6 +232,18 @@ const editCommand = fc.oneof(
     }),
   },
   {
+    weight: 1,
+    arbitrary: fc.record({
+      op: fc.constant("arrow" as const),
+      client: editor,
+      x: coordinate,
+      y: coordinate,
+      x2: coordinate,
+      y2: coordinate,
+      color,
+    }),
+  },
+  {
     weight: 4,
     arbitrary: fc.record({
       op: fc.constant("move" as const),
@@ -299,6 +312,9 @@ function runEdit(client: SimClient, c: EditCommand) {
       break
     case "pen":
       addPen(doc, { points: c.points, color: c.color, width: c.width, tolerance: 0.5 }, LOCAL)
+      break
+    case "arrow":
+      addArrow(doc, { from: { x: c.x, y: c.y }, to: { x: c.x2, y: c.y2 }, color: c.color }, LOCAL)
       break
     case "move": {
       const id = target()

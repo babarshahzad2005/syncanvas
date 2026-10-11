@@ -111,3 +111,27 @@ export function deleteElements(doc: Y.Doc, ids: Iterable<string>, origin: unknow
     for (const id of ids) elementsOf(doc).delete(id)
   }, origin)
 }
+
+/**
+ * Adds a free arrow from `from` to `to` (world coordinates); the arrowhead is at `to`.
+ * The ends are stored relative to the arrow's box, so moving it moves both.
+ */
+export function addArrow(
+  doc: Y.Doc,
+  arrow: { from: Point; to: Point; color?: PaletteColor },
+  origin: unknown,
+): string {
+  const position = { x: Math.min(arrow.from.x, arrow.to.x), y: Math.min(arrow.from.y, arrow.to.y) }
+  const relative = (p: Point) => ({ x: p.x - position.x, y: p.y - position.y })
+  return addElement(
+    doc,
+    {
+      type: "arrow",
+      position,
+      size: { w: Math.abs(arrow.to.x - arrow.from.x), h: Math.abs(arrow.to.y - arrow.from.y) },
+      color: arrow.color ?? "ink",
+      ends: { from: relative(arrow.from), to: relative(arrow.to) },
+    },
+    origin,
+  )
+}

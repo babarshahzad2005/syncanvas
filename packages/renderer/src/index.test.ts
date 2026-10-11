@@ -79,6 +79,20 @@ describe("hitTest", () => {
     expect(hitTest([stroke], { x: 90, y: 10 }, 1)).toBeNull() // inside the box, far from the line
   })
 
+  it("hits an arrow along its line", () => {
+    const arrow = {
+      id: "a",
+      type: "arrow",
+      position: { x: 0, y: 0 },
+      size: { w: 100, h: 100 },
+      z: "a0",
+      color: "ink",
+      ends: { from: { x: 0, y: 100 }, to: { x: 100, y: 0 } },
+    } as ElementWithId
+    expect(hitTest([arrow], { x: 50, y: 51 }, 1)).toBe("a")
+    expect(hitTest([arrow], { x: 10, y: 10 }, 1)).toBeNull() // inside the box, off the line
+  })
+
   it("respects the ellipse shape", () => {
     const ellipse = { ...rect("e", 0, "a0"), type: "ellipse" } as ElementWithId
     expect(hitTest([ellipse], { x: 50, y: 50 }, 1)).toBe("e")

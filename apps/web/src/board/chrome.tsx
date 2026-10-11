@@ -55,7 +55,7 @@ const TOOLS: {
   { id: "pen", label: "Pen", shortcut: "P", icon: Pencil },
   { id: "rect", label: "Rectangle", shortcut: "R", icon: Square },
   { id: "ellipse", label: "Ellipse", shortcut: "O", icon: Circle },
-  { id: null, label: "Arrow", shortcut: "A", icon: MoveUpRight },
+  { id: "arrow", label: "Arrow", shortcut: "A", icon: MoveUpRight },
   { id: null, label: "Connector", shortcut: "C", icon: Spline },
   { id: null, label: "Text", shortcut: "T", icon: Type },
   { id: null, label: "Sticky note", shortcut: "S", icon: StickyNote },

@@ -175,11 +175,14 @@ export function hitTest(
   for (let i = elements.length - 1; i >= 0; i--) {
     const e = elements[i]
     if (!e) continue
-    if (!hasBox(e)) {
-      const { start, end } = resolveConnector(e, byId)
-      if (distanceToSegment(world, start, end) <= tolerance) return e.id
+    const line = lineEnds(e, byId)
+    if (line) {
+      if (distanceToSegment(world, line.from, line.to) <= tolerance + strokeWidth(zoom) / 2) {
+        return e.id
+      }
       continue
     }
+    if (!hasBox(e)) continue
     if (e.type === "pen") {
       // Along the stroke itself, not its box.
       const reach = tolerance + PEN_WIDTHS[e.width] / 2
@@ -230,6 +233,7 @@ export type Scene = {
   preview?:
     | { type: "rect" | "ellipse"; position: Point; size: Size; color: PaletteColor; fill: Fill }
     | { type: "pen"; points: readonly StrokePoint[]; color: PaletteColor; width: PenWidth }
+    | { type: "arrow"; from: Point; to: Point; color: PaletteColor }
     | null
   showGrid?: boolean
 }
@@ -254,7 +258,10 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
     : scene.elements
   const byId = indexById(elements)
   for (const e of elements) drawElement(ctx, e, byId, theme, camera.zoom)
-  if (scene.preview?.type === "pen") {
+  if (scene.preview?.type === "arrow") {
+    const p = scene.preview
+    drawArrow(ctx, p.from, p.to, paletteShades(p.color, theme).stroke, camera.zoom)
+  } else if (scene.preview?.type === "pen") {
     const p = scene.preview
     drawStroke(ctx, p.points, p.width, paletteShades(p.color, theme).stroke, false)
   } else if (scene.preview) {
@@ -273,6 +280,12 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   for (const e of elements) {
     if (!scene.selection.has(e.id)) continue
+    const line = lineEnds(e, byId)
+    if (line) {
+      // Lines show their two ends, not a box.
+      drawHandles(ctx, [worldToScreen(camera, line.from), worldToScreen(camera, line.to)], colors)
+      continue
+    }
     const box = elementBox(e, byId)
     drawSelection(
       ctx,
@@ -334,19 +347,9 @@ function drawElement(
       drawStroke(ctx, absolutePoints(e), e.width, shades.stroke, true)
       return
     case "arrow":
-      drawPolyline(
-        ctx,
-        [
-          { x: e.position.x + e.ends.from.x, y: e.position.y + e.ends.from.y },
-          { x: e.position.x + e.ends.to.x, y: e.position.y + e.ends.to.y },
-        ],
-        shades.stroke,
-        zoom,
-      )
-      return
     case "connector": {
-      const { start, end } = resolveConnector(e, byId)
-      drawPolyline(ctx, [start, end], shades.stroke, zoom)
+      const line = lineEnds(e, byId)
+      if (line) drawArrow(ctx, line.from, line.to, shades.stroke, zoom)
       return
     }
     case "text":
@@ -364,6 +367,72 @@ function drawElement(
       ctx.strokeRect(e.position.x, e.position.y, e.size.w, e.size.h)
       return
   }
+}
+
+// ---------- Arrows and connectors ----------
+
+/** Where a line-like Element starts and ends right now (world), or null for other types. */
+export function lineEnds(
+  e: ElementWithId,
+  byId: ReadonlyMap<string, ElementWithId>,
+): { from: Point; to: Point } | null {
+  if (e.type === "arrow") {
+    return {
+      from: { x: e.position.x + e.ends.from.x, y: e.position.y + e.ends.from.y },
+      to: { x: e.position.x + e.ends.to.x, y: e.position.y + e.ends.to.y },
+    }
+  }
+  if (e.type === "connector") {
+    const { start, end } = resolveConnector(e, byId)
+    return { from: start, to: end }
+  }
+  return null
+}
+
+/** Arrowhead: a filled triangle about 5 line widths long, half-angle ~26°. */
+const ARROWHEAD_LENGTH = 5
+const ARROWHEAD_ANGLE = 0.45
+
+/** A straight line with a filled arrowhead at `to`. */
+function drawArrow(
+  ctx: CanvasRenderingContext2D,
+  from: Point,
+  to: Point,
+  color: string,
+  zoom: number,
+) {
+  const width = strokeWidth(zoom)
+  const length = Math.hypot(to.x - from.x, to.y - from.y)
+  const angle = Math.atan2(to.y - from.y, to.x - from.x)
+  // Short arrows get a smaller head, so the head never swallows the line.
+  const head = Math.min(width * ARROWHEAD_LENGTH, length / 2)
+  const base = {
+    x: to.x - Math.cos(angle) * head * Math.cos(ARROWHEAD_ANGLE),
+    y: to.y - Math.sin(angle) * head * Math.cos(ARROWHEAD_ANGLE),
+  }
+  ctx.beginPath()
+  ctx.moveTo(from.x, from.y)
+  ctx.lineTo(base.x, base.y)
+  ctx.lineWidth = width
+  ctx.lineCap = "round"
+  ctx.strokeStyle = color
+  ctx.stroke()
+  if (head <= 0) return
+  ctx.beginPath()
+  ctx.moveTo(to.x, to.y)
+  ctx.lineTo(
+    to.x - head * Math.cos(angle - ARROWHEAD_ANGLE),
+    to.y - head * Math.sin(angle - ARROWHEAD_ANGLE),
+  )
+  ctx.lineTo(
+    to.x - head * Math.cos(angle + ARROWHEAD_ANGLE),
+    to.y - head * Math.sin(angle + ARROWHEAD_ANGLE),
+  )
+  ctx.closePath()
+  ctx.fillStyle = color
+  ctx.lineJoin = "round"
+  ctx.fill()
+  ctx.stroke()
 }
 
 // ---------- Pen strokes ----------
@@ -404,19 +473,6 @@ function drawStroke(
   ctx.fill()
 }
 
-function drawPolyline(ctx: CanvasRenderingContext2D, points: Point[], color: string, zoom: number) {
-  const [first, ...rest] = points
-  if (!first) return
-  ctx.beginPath()
-  ctx.moveTo(first.x, first.y)
-  for (const p of rest) ctx.lineTo(p.x, p.y)
-  ctx.lineWidth = strokeWidth(zoom)
-  ctx.lineCap = "round"
-  ctx.lineJoin = "round"
-  ctx.strokeStyle = color
-  ctx.stroke()
-}
-
 /** Shape fill (DESIGN.md → Palette colors): none, the light fill shade, or the solid stroke shade. */
 function fillShape(ctx: CanvasRenderingContext2D, fill: Fill, shades: Shades, zoom: number) {
   if (fill !== "none") {
@@ -454,6 +510,23 @@ function drawEllipse(
   fillShape(ctx, fill, shades, zoom)
 }
 
+function drawHandles(
+  ctx: CanvasRenderingContext2D,
+  points: readonly Point[],
+  colors: (typeof CANVAS)[Theme],
+) {
+  const half = 4
+  ctx.lineWidth = 1.5
+  ctx.strokeStyle = colors.primary
+  for (const { x, y } of points) {
+    ctx.beginPath()
+    ctx.roundRect(x - half, y - half, half * 2, half * 2, 2)
+    ctx.fillStyle = colors.handleFill
+    ctx.fill()
+    ctx.stroke()
+  }
+}
+
 function drawSelection(
   ctx: CanvasRenderingContext2D,
   p: Point,
@@ -463,17 +536,14 @@ function drawSelection(
   ctx.lineWidth = 1.5
   ctx.strokeStyle = colors.primary
   ctx.strokeRect(p.x, p.y, s.w, s.h)
-  const half = 4
-  for (const [hx, hy] of [
-    [p.x, p.y],
-    [p.x + s.w, p.y],
-    [p.x, p.y + s.h],
-    [p.x + s.w, p.y + s.h],
-  ] as const) {
-    ctx.beginPath()
-    ctx.roundRect(hx - half, hy - half, half * 2, half * 2, 2)
-    ctx.fillStyle = colors.handleFill
-    ctx.fill()
-    ctx.stroke()
-  }
+  drawHandles(
+    ctx,
+    [
+      { x: p.x, y: p.y },
+      { x: p.x + s.w, y: p.y },
+      { x: p.x, y: p.y + s.h },
+      { x: p.x + s.w, y: p.y + s.h },
+    ],
+    colors,
+  )
 }

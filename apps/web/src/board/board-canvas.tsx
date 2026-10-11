@@ -1,4 +1,5 @@
 import {
+  addArrow,
   addPen,
   addShape,
   deleteElements,
@@ -7,6 +8,8 @@ import {
   hasBox,
   listElements,
   moveElement,
+  type PaletteColor,
+  type PenWidth,
   type Point,
   type StrokePoint,
 } from "@syncanvas/board-model"
@@ -16,13 +19,14 @@ import {
   drawScene,
   fitCamera,
   hitTest,
+  type Scene,
   screenToWorld,
   zoomAt,
 } from "@syncanvas/renderer"
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react"
 import type * as Y from "yjs"
 import { useResolvedTheme } from "@/lib/theme"
-import { isShapeTool, type ShapeTool, useBoardUi } from "./store"
+import { type DragTool, isDragTool, useBoardUi } from "./store"
 
 // The Board canvas: Canvas2D rendering plus pointer/keyboard input (DESIGN.md → Canvas).
 // The document is only written at gesture boundaries (and throttled during drags), so local
@@ -44,7 +48,7 @@ export type CanvasHandle = {
 type Gesture =
   | { kind: "pan"; pointerId: number; start: Point; camera: Camera }
   | { kind: "pinch"; distance: number; center: Point; camera: Camera }
-  | { kind: "draw"; pointerId: number; shape: ShapeTool; start: Point; current: Point }
+  | { kind: "draw"; pointerId: number; tool: DragTool; start: Point; current: Point }
   | { kind: "stroke"; pointerId: number; points: StrokePoint[] }
   | {
       kind: "move"
@@ -68,6 +72,23 @@ declare global {
   interface Window {
     __SYNCANVAS_TEST__?: boolean
     __syncanvas?: { elements: () => ElementWithId[]; camera: () => Camera }
+  }
+}
+
+/** What the gesture in progress is drawing, for the renderer to show before it's written. */
+function previewOf(
+  g: Gesture | null,
+  pen: { color: PaletteColor; width: PenWidth },
+): Scene["preview"] {
+  if (g?.kind === "stroke") return { type: "pen", points: g.points, ...pen }
+  if (g?.kind !== "draw") return null
+  if (g.tool === "arrow") return { type: "arrow", from: g.start, to: g.current, color: "ink" }
+  return {
+    type: g.tool,
+    position: g.start,
+    size: { w: g.current.x - g.start.x, h: g.current.y - g.start.y },
+    color: "ink",
+    fill: "light",
   }
 }
 
@@ -112,18 +133,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         dpr: s.dpr,
         selection: ui.selection,
         dragging: g?.kind === "move" ? new Map([[g.id, g.position]]) : undefined,
-        preview:
-          g?.kind === "draw"
-            ? {
-                type: g.shape,
-                position: g.start,
-                size: { w: g.current.x - g.start.x, h: g.current.y - g.start.y },
-                color: "ink",
-                fill: "light",
-              }
-            : g?.kind === "stroke"
-              ? { type: "pen", points: g.points, ...ui.pen }
-              : null,
+        preview: previewOf(g, ui.pen),
       })
     })
   }, [])
@@ -251,6 +261,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         case "o":
           if (canEdit) ui().setTool("ellipse")
           return
+        case "a":
+          if (canEdit) ui().setTool("arrow")
+          return
         case "escape":
           state.current.gesture = null
           ui().select([])
@@ -317,12 +330,12 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       ui.select([])
       return
     }
-    if (isShapeTool(ui.tool) && canEdit) {
+    if (isDragTool(ui.tool) && canEdit) {
       undoManager.stopCapturing()
       s.gesture = {
         kind: "draw",
         pointerId: e.pointerId,
-        shape: ui.tool,
+        tool: ui.tool,
         start: world,
         current: world,
       }
@@ -421,9 +434,14 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       const w = g.current.x - g.start.x
       const h = g.current.y - g.start.y
       const minWorld = MIN_DRAW_PX / s.camera.zoom
-      if (Math.abs(w) >= minWorld && Math.abs(h) >= minWorld) {
-        // One transaction for the whole shape, so one undo removes it (FLOWS §2).
-        const id = addShape(doc, { type: g.shape, position: g.start, size: { w, h } }, origin)
+      // One transaction for the whole Element, so one undo removes it (FLOWS §2).
+      if (g.tool === "arrow") {
+        if (Math.hypot(w, h) >= minWorld) {
+          const id = addArrow(doc, { from: g.start, to: g.current }, origin)
+          useBoardUi.getState().select([id])
+        }
+      } else if (Math.abs(w) >= minWorld && Math.abs(h) >= minWorld) {
+        const id = addShape(doc, { type: g.tool, position: g.start, size: { w, h } }, origin)
         useBoardUi.getState().select([id])
       }
       useBoardUi.getState().setTool("select")
@@ -450,7 +468,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     return [world.x, world.y, e.pointerType === "pen" ? e.pressure : 0.5]
   }
 
-  const cursor = (isShapeTool(tool) || tool === "pen") && canEdit ? "crosshair" : "default"
+  const cursor = (isDragTool(tool) || tool === "pen") && canEdit ? "crosshair" : "default"
 
   return (
     <canvas

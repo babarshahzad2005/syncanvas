@@ -2,13 +2,13 @@ import type { PaletteColor, PenWidth } from "@syncanvas/board-model"
 import { create } from "zustand"
 
 /** Local, per-tab UI state for the Board screen (TECH_STACK §3: Zustand for UI state). */
-export type Tool = "select" | "pen" | "rect" | "ellipse"
+export type Tool = "select" | "pen" | "rect" | "ellipse" | "arrow"
 
-/** Tools that drag out a shape. */
-export const SHAPE_TOOLS = ["rect", "ellipse"] as const
-export type ShapeTool = (typeof SHAPE_TOOLS)[number]
-export const isShapeTool = (tool: Tool): tool is ShapeTool =>
-  (SHAPE_TOOLS as readonly Tool[]).includes(tool)
+/** Tools that drag out an Element from one corner (or end) to the other. */
+export const DRAG_TOOLS = ["rect", "ellipse", "arrow"] as const
+export type DragTool = (typeof DRAG_TOOLS)[number]
+export const isDragTool = (tool: Tool): tool is DragTool =>
+  (DRAG_TOOLS as readonly Tool[]).includes(tool)
 
 type BoardUi = {
   tool: Tool
