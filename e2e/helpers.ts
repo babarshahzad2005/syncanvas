@@ -25,19 +25,37 @@ export async function signIn(page: Page, email: string) {
   await page.waitForURL("/")
 }
 
-export type Rect = { id: string; x: number; y: number; w: number; h: number; color: string }
+export type Shape = {
+  id: string
+  type: string
+  x: number
+  y: number
+  w: number
+  h: number
+  color: string
+  fill?: string
+}
 
-export async function elements(page: Page): Promise<Rect[]> {
+/** Elements with a box, rounded to whole pixels. */
+export async function elements(page: Page): Promise<Shape[]> {
   return page.evaluate(
     () =>
-      window.__syncanvas?.elements().map((e) => ({
-        id: e.id,
-        x: Math.round(e.position.x),
-        y: Math.round(e.position.y),
-        w: Math.round(e.size.w),
-        h: Math.round(e.size.h),
-        color: e.color,
-      })) ?? [],
+      window.__syncanvas?.elements().flatMap((e) =>
+        e.position && e.size
+          ? [
+              {
+                id: e.id,
+                type: e.type,
+                x: Math.round(e.position.x),
+                y: Math.round(e.position.y),
+                w: Math.round(e.size.w),
+                h: Math.round(e.size.h),
+                color: e.color,
+                fill: e.fill,
+              },
+            ]
+          : [],
+      ) ?? [],
   )
 }
 

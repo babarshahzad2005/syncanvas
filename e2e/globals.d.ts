@@ -5,9 +5,12 @@ declare global {
     __syncanvas?: {
       elements: () => {
         id: string
-        position: { x: number; y: number }
-        size: { w: number; h: number }
+        type: string
+        /** Absent on connectors, which follow their ends. */
+        position?: { x: number; y: number }
+        size?: { w: number; h: number }
         color: string
+        fill?: string
       }[]
       camera: () => { x: number; y: number; zoom: number }
     }

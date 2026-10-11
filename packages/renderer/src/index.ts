@@ -1,5 +1,6 @@
 import {
   type ElementWithId,
+  type Fill,
   hasBox,
   indexById,
   type PaletteColor,
@@ -175,6 +176,15 @@ export function hitTest(
       if (distanceToSegment(world, start, end) <= tolerance) return e.id
       continue
     }
+    if (e.type === "ellipse") {
+      // Inside the ellipse grown by the tolerance on each axis.
+      const rx = e.size.w / 2 + tolerance
+      const ry = e.size.h / 2 + tolerance
+      const dx = world.x - (e.position.x + e.size.w / 2)
+      const dy = world.y - (e.position.y + e.size.h / 2)
+      if ((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1) return e.id
+      continue
+    }
     if (
       world.x >= e.position.x - tolerance &&
       world.x <= e.position.x + e.size.w + tolerance &&
@@ -200,7 +210,13 @@ export type Scene = {
   /** Positions overriding the document while a local drag is in progress. */
   dragging?: ReadonlyMap<string, Point>
   /** The rectangle being drawn, in world coordinates (not yet in the document). */
-  preview?: { position: Point; size: Size; color: PaletteColor } | null
+  preview?: {
+    type: "rect" | "ellipse"
+    position: Point
+    size: Size
+    color: PaletteColor
+    fill: Fill
+  } | null
   showGrid?: boolean
 }
 
@@ -226,15 +242,14 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
   for (const e of elements) drawElement(ctx, e, byId, theme, camera.zoom)
   if (scene.preview) {
     const p = scene.preview
-    const x = p.size.w < 0 ? p.position.x + p.size.w : p.position.x
-    const y = p.size.h < 0 ? p.position.y + p.size.h : p.position.y
-    drawRect(
-      ctx,
-      { x, y },
-      { w: Math.abs(p.size.w), h: Math.abs(p.size.h) },
-      paletteShades(p.color, theme),
-      camera.zoom,
-    )
+    const position = {
+      x: p.size.w < 0 ? p.position.x + p.size.w : p.position.x,
+      y: p.size.h < 0 ? p.position.y + p.size.h : p.position.y,
+    }
+    const size = { w: Math.abs(p.size.w), h: Math.abs(p.size.h) }
+    const shades = paletteShades(p.color, theme)
+    if (p.type === "ellipse") drawEllipse(ctx, position, size, p.fill, shades, camera.zoom)
+    else drawRect(ctx, position, size, p.fill, shades, camera.zoom)
   }
 
   // Selection chrome is drawn in screen space so handles keep a constant size at any zoom.
@@ -293,24 +308,10 @@ function drawElement(
   const shades = paletteShades(e.color, theme)
   switch (e.type) {
     case "rect":
-      drawRect(ctx, e.position, e.size, shades, zoom)
+      drawRect(ctx, e.position, e.size, e.fill, shades, zoom)
       return
     case "ellipse":
-      ctx.beginPath()
-      ctx.ellipse(
-        e.position.x + e.size.w / 2,
-        e.position.y + e.size.h / 2,
-        e.size.w / 2,
-        e.size.h / 2,
-        0,
-        0,
-        Math.PI * 2,
-      )
-      ctx.fillStyle = shades.fill
-      ctx.fill()
-      ctx.lineWidth = strokeWidth(zoom)
-      ctx.strokeStyle = shades.stroke
-      ctx.stroke()
+      drawEllipse(ctx, e.position, e.size, e.fill, shades, zoom)
       return
     case "pen":
       drawPolyline(
@@ -366,15 +367,41 @@ function drawPolyline(ctx: CanvasRenderingContext2D, points: Point[], color: str
   ctx.stroke()
 }
 
-function drawRect(ctx: CanvasRenderingContext2D, p: Point, s: Size, shades: Shades, zoom: number) {
-  const radius = Math.min(4, s.w / 2, s.h / 2)
-  ctx.beginPath()
-  ctx.roundRect(p.x, p.y, s.w, s.h, radius)
-  ctx.fillStyle = shades.fill
-  ctx.fill()
+/** Shape fill (DESIGN.md → Palette colors): none, the light fill shade, or the solid stroke shade. */
+function fillShape(ctx: CanvasRenderingContext2D, fill: Fill, shades: Shades, zoom: number) {
+  if (fill !== "none") {
+    ctx.fillStyle = fill === "solid" ? shades.stroke : shades.fill
+    ctx.fill()
+  }
   ctx.lineWidth = strokeWidth(zoom)
   ctx.strokeStyle = shades.stroke
   ctx.stroke()
+}
+
+function drawRect(
+  ctx: CanvasRenderingContext2D,
+  p: Point,
+  s: Size,
+  fill: Fill,
+  shades: Shades,
+  zoom: number,
+) {
+  ctx.beginPath()
+  ctx.roundRect(p.x, p.y, s.w, s.h, Math.min(4, s.w / 2, s.h / 2))
+  fillShape(ctx, fill, shades, zoom)
+}
+
+function drawEllipse(
+  ctx: CanvasRenderingContext2D,
+  p: Point,
+  s: Size,
+  fill: Fill,
+  shades: Shades,
+  zoom: number,
+) {
+  ctx.beginPath()
+  ctx.ellipse(p.x + s.w / 2, p.y + s.h / 2, s.w / 2, s.h / 2, 0, 0, Math.PI * 2)
+  fillShape(ctx, fill, shades, zoom)
 }
 
 function drawSelection(

@@ -1,8 +1,10 @@
 import {
   elementsOf,
+  type Fill,
   PALETTE_COLORS,
   type PaletteColor,
   recolorElement,
+  setFill,
 } from "@syncanvas/board-model"
 import { paletteShades } from "@syncanvas/renderer"
 import {
@@ -50,13 +52,22 @@ const TOOLS: {
   { id: "select", label: "Select", shortcut: "V", icon: MousePointer2 },
   { id: null, label: "Pen", shortcut: "P", icon: Pencil },
   { id: "rect", label: "Rectangle", shortcut: "R", icon: Square },
-  { id: null, label: "Ellipse", shortcut: "O", icon: Circle },
+  { id: "ellipse", label: "Ellipse", shortcut: "O", icon: Circle },
   { id: null, label: "Arrow", shortcut: "A", icon: MoveUpRight },
   { id: null, label: "Connector", shortcut: "C", icon: Spline },
   { id: null, label: "Text", shortcut: "T", icon: Type },
   { id: null, label: "Sticky note", shortcut: "S", icon: StickyNote },
   { id: null, label: "Image", icon: Image },
   { id: null, label: "Comment", icon: MessageCircle },
+]
+
+/** Element types that have a fill (spec: style tray per type). */
+const SHAPE_TYPES = new Set(["rect", "ellipse"])
+
+const FILLS: { fill: Fill; label: string }[] = [
+  { fill: "none", label: "No fill" },
+  { fill: "light", label: "Light fill" },
+  { fill: "solid", label: "Solid fill" },
 ]
 
 function Kbd({ children }: { children: React.ReactNode }) {
@@ -148,17 +159,27 @@ function StyleTray({
   selection: ReadonlySet<string>
 }) {
   const theme = useResolvedTheme()
-  const first = [...selection][0]
-  // Re-read on every document change, so the marked swatch follows recolors (local or remote).
-  const current = useSyncExternalStore(
+  // Re-read on every document change, so the marked controls follow edits (local or remote).
+  // The snapshot is a string so React can compare it cheaply.
+  const snapshot = useSyncExternalStore(
     (onChange) => {
       const elements = elementsOf(doc)
       elements.observeDeep(onChange)
       return () => elements.unobserveDeep(onChange)
     },
-    () =>
-      first ? (elementsOf(doc).get(first)?.get("color") as PaletteColor | undefined) : undefined,
+    () => {
+      const elements = elementsOf(doc)
+      const fields = [...selection].map((id) => elements.get(id))
+      const first = fields[0]
+      const allShapes = fields.every((f) => SHAPE_TYPES.has(f?.get("type") as string))
+      return JSON.stringify([
+        first?.get("color"),
+        allShapes ? (first?.get("fill") ?? "light") : null,
+      ])
+    },
   )
+  const [current, currentFill] = JSON.parse(snapshot) as [PaletteColor | undefined, Fill | null]
+  const currentShades = paletteShades(current ?? "ink", theme)
 
   return (
     <div
@@ -185,6 +206,36 @@ function StyleTray({
           />
         )
       })}
+      {currentFill !== null && (
+        <>
+          <span className="mx-1.5 h-5 w-px bg-border" />
+          {FILLS.map(({ fill, label }) => (
+            <Hint key={fill} label={label}>
+              <button
+                type="button"
+                aria-label={label}
+                aria-pressed={currentFill === fill}
+                onClick={() => {
+                  for (const id of selection) setFill(doc, id, fill, origin)
+                }}
+                className={cn(
+                  "size-6 rounded-sm border-2 transition-transform duration-(--duration-press) ease-out active:scale-90 pointer-coarse:size-9",
+                  currentFill === fill && "ring-2 ring-primary ring-offset-2 ring-offset-muted",
+                )}
+                style={{
+                  borderColor: currentShades.stroke,
+                  background:
+                    fill === "none"
+                      ? "transparent"
+                      : fill === "solid"
+                        ? currentShades.stroke
+                        : currentShades.fill,
+                }}
+              />
+            </Hint>
+          ))}
+        </>
+      )}
       <span className="mx-1.5 h-5 w-px bg-border" />
       <Hint label="Lock (coming soon)">
         <Button variant="ghost" size="icon-sm" aria-label="Lock" disabled>

@@ -2,6 +2,7 @@ import { generateKeyBetween } from "fractional-indexing"
 import * as Y from "yjs"
 import {
   elementsOf,
+  type Fill,
   isStickyColor,
   listElements,
   type PaletteColor,
@@ -55,18 +56,36 @@ export function addElement(doc: Y.Doc, values: Record<string, unknown>, origin: 
   return id
 }
 
-/** Adds a rectangle. Drawing "backwards" (right to left) still gives a positive size. */
+export type ShapeType = "rect" | "ellipse"
+
+/** Adds a rectangle or ellipse. Drawing "backwards" (right to left) still gives a positive size. */
+export function addShape(
+  doc: Y.Doc,
+  shape: { type: ShapeType; position: Point; size: Size; color?: PaletteColor; fill?: Fill },
+  origin: unknown,
+): string {
+  const box = normalizeBox(shape.position, shape.size)
+  return addElement(
+    doc,
+    { type: shape.type, ...box, color: shape.color ?? "ink", fill: shape.fill ?? "light" },
+    origin,
+  )
+}
+
 export function addRect(
   doc: Y.Doc,
   rect: { position: Point; size: Size; color?: PaletteColor },
   origin: unknown,
 ): string {
-  const box = normalizeBox(rect.position, rect.size)
-  return addElement(
-    doc,
-    { type: "rect", ...box, color: rect.color ?? "ink", fill: "light" },
-    origin,
-  )
+  return addShape(doc, { type: "rect", ...rect }, origin)
+}
+
+/** Sets a shape's fill. Other types have no fill and are left alone. */
+export function setFill(doc: Y.Doc, id: string, fill: Fill, origin: unknown) {
+  const fields = elementsOf(doc).get(id)
+  const type = fields?.get("type")
+  if (!fields || (type !== "rect" && type !== "ellipse")) return
+  doc.transact(() => fields.set("fill", fill), origin)
 }
 
 /**

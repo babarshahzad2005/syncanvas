@@ -213,7 +213,7 @@ Twelve saturated colors, separate from the palette and the accent, so a cursor n
 - **Top right:** a presence pill with avatars (up to 4, then `+N`) and the **comment count button** (💬 + number of open Threads), then a separate pill-shaped Share button, the only primary button. The count button opens a **comments popover** with Open and Resolved tabs. Each row shows the first comment. Clicking a row pans the Board to that pin and opens its inline thread.
 - **Bottom center: the dock** is one panel. Its **tool row** holds compact 32px icon buttons, all tools, active tool in `primary-subtle`. While something is selected, a **style tray** slides up out of the same panel (220ms `ease-out`), separated by a hairline on a `muted` background. The tray shows only the controls that apply to the selection:
   - **Sticky notes:** sticky colors, text size S/M/L, bold.
-  - **Shapes:** stroke and fill Palette colors.
+  - **Shapes:** Palette color, plus fill none / light / solid (small squares previewing each fill in the current color).
   - **Always:** lock and "more".
 - **Bottom right:** a pill with undo and redo, then the zoom percentage. Clicking the percentage opens a menu: zoom in, zoom out, zoom to fit, 100%.
 - **Comment Threads open inline** as a popover card beside their pin, never covering the pinned Element. The card is placed on the side with the most free space. Escape or a click on the Board closes it. There's no permanent comments side panel.

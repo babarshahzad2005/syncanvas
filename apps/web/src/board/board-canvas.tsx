@@ -1,5 +1,5 @@
 import {
-  addRect,
+  addShape,
   deleteElements,
   type ElementWithId,
   elementsOf,
@@ -20,7 +20,7 @@ import {
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react"
 import type * as Y from "yjs"
 import { useResolvedTheme } from "@/lib/theme"
-import { useBoardUi } from "./store"
+import { isShapeTool, type ShapeTool, useBoardUi } from "./store"
 
 // The Board canvas: Canvas2D rendering plus pointer/keyboard input (DESIGN.md → Canvas).
 // The document is only written at gesture boundaries (and throttled during drags), so local
@@ -28,7 +28,7 @@ import { useBoardUi } from "./store"
 
 /** Moving an existing Element streams to collaborators at about 20 per second (FLOWS §2). */
 const MOVE_SEND_INTERVAL_MS = 50
-/** Rectangles smaller than this (in screen px) are treated as a click, not a drag. */
+/** Shapes smaller than this (in screen px) are treated as a click, not a drag. */
 const MIN_DRAW_PX = 4
 
 export type CanvasHandle = {
@@ -40,7 +40,7 @@ export type CanvasHandle = {
 type Gesture =
   | { kind: "pan"; pointerId: number; start: Point; camera: Camera }
   | { kind: "pinch"; distance: number; center: Point; camera: Camera }
-  | { kind: "draw"; pointerId: number; start: Point; current: Point }
+  | { kind: "draw"; pointerId: number; shape: ShapeTool; start: Point; current: Point }
   | {
       kind: "move"
       pointerId: number
@@ -109,9 +109,11 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         preview:
           g?.kind === "draw"
             ? {
+                type: g.shape,
                 position: g.start,
                 size: { w: g.current.x - g.start.x, h: g.current.y - g.start.y },
                 color: "ink",
+                fill: "light",
               }
             : null,
       })
@@ -235,6 +237,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         case "r":
           if (canEdit) ui().setTool("rect")
           return
+        case "o":
+          if (canEdit) ui().setTool("ellipse")
+          return
         case "escape":
           state.current.gesture = null
           ui().select([])
@@ -295,9 +300,15 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     }
     if (e.button !== 0) return
 
-    if (ui.tool === "rect" && canEdit) {
+    if (isShapeTool(ui.tool) && canEdit) {
       undoManager.stopCapturing()
-      s.gesture = { kind: "draw", pointerId: e.pointerId, start: world, current: world }
+      s.gesture = {
+        kind: "draw",
+        pointerId: e.pointerId,
+        shape: ui.tool,
+        start: world,
+        current: world,
+      }
       ui.select([])
       return
     }
@@ -388,7 +399,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       const minWorld = MIN_DRAW_PX / s.camera.zoom
       if (Math.abs(w) >= minWorld && Math.abs(h) >= minWorld) {
         // One transaction for the whole shape, so one undo removes it (FLOWS §2).
-        const id = addRect(doc, { position: g.start, size: { w, h } }, origin)
+        const id = addShape(doc, { type: g.shape, position: g.start, size: { w, h } }, origin)
         useBoardUi.getState().select([id])
       }
       useBoardUi.getState().setTool("select")
@@ -398,7 +409,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     render()
   }
 
-  const cursor = tool === "rect" && canEdit ? "crosshair" : "default"
+  const cursor = isShapeTool(tool) && canEdit ? "crosshair" : "default"
 
   return (
     <canvas

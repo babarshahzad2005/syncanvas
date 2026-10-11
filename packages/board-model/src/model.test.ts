@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import * as Y from "yjs"
 import {
   addElement,
+  addShape,
   type ConnectorElement,
   type ElementWithId,
   effectiveGroupId,
@@ -13,6 +14,7 @@ import {
   readElement,
   recolorElement,
   resolveConnector,
+  setFill,
   TEXT_LIMIT,
   validateBoardDoc,
 } from "./index"
@@ -206,6 +208,25 @@ describe("operations", () => {
     const { z: _z, ...values } = VALID.sticky as Record<string, unknown>
     const id = addElement(doc, values, "me")
     expect(elementsOf(doc).get(id)?.get("text")).toBeInstanceOf(Y.Text)
+    expect(validateBoardDoc(doc)).toEqual([])
+  })
+
+  it("adds ellipses and changes the fill of shapes only", () => {
+    const doc = new Y.Doc()
+    const ellipse = addShape(
+      doc,
+      { type: "ellipse", position: { x: 10, y: 10 }, size: { w: -10, h: 20 } },
+      "me",
+    )
+    const sticky = addElement(doc, VALID.sticky as Record<string, unknown>, "me")
+    setFill(doc, ellipse, "solid", "me")
+    setFill(doc, sticky, "solid", "me") // stickies have no fill
+    expect(listElements(doc).find((e) => e.id === ellipse)).toMatchObject({
+      type: "ellipse",
+      position: { x: 0, y: 10 },
+      size: { w: 10, h: 20 },
+      fill: "solid",
+    })
     expect(validateBoardDoc(doc)).toEqual([])
   })
 

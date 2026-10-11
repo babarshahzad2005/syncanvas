@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 import {
-  addRect,
+  addShape,
   checkUpdate,
   createUndoManager,
   deleteElements,
@@ -15,6 +15,7 @@ import {
   moveElement,
   PALETTE_COLORS,
   recolorElement,
+  setFill,
   validateBoardDoc,
 } from "./index"
 
@@ -193,6 +194,7 @@ const anyClient = fc.integer({ min: 0, max: ROLES.length - 1 })
 const coordinate = fc.integer({ min: -1000, max: 1000 })
 const extent = fc.integer({ min: -300, max: 300 })
 const color = fc.constantFrom(...PALETTE_COLORS)
+const fill = fc.constantFrom("none" as const, "light" as const, "solid" as const)
 /** Which Element to act on: an index into the client's own Element list, modulo its length. */
 const pick = fc.nat({ max: 1000 })
 
@@ -202,6 +204,8 @@ const editCommand = fc.oneof(
     arbitrary: fc.record({
       op: fc.constant("create" as const),
       client: editor,
+      type: fc.constantFrom("rect" as const, "ellipse" as const),
+      fill,
       x: coordinate,
       y: coordinate,
       w: extent,
@@ -222,6 +226,10 @@ const editCommand = fc.oneof(
   {
     weight: 2,
     arbitrary: fc.record({ op: fc.constant("recolor" as const), client: editor, pick, color }),
+  },
+  {
+    weight: 1,
+    arbitrary: fc.record({ op: fc.constant("fill" as const), client: editor, pick, fill }),
   },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("delete" as const), client: editor, pick }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("undo" as const), client: editor }) },
@@ -260,9 +268,15 @@ function runEdit(client: SimClient, c: EditCommand) {
   }
   switch (c.op) {
     case "create":
-      addRect(
+      addShape(
         doc,
-        { position: { x: c.x, y: c.y }, size: { w: c.w, h: c.h }, color: c.color },
+        {
+          type: c.type,
+          position: { x: c.x, y: c.y },
+          size: { w: c.w, h: c.h },
+          color: c.color,
+          fill: c.fill,
+        },
         LOCAL,
       )
       break
@@ -274,6 +288,11 @@ function runEdit(client: SimClient, c: EditCommand) {
     case "recolor": {
       const id = target()
       if (id) recolorElement(doc, id, c.color, LOCAL)
+      break
+    }
+    case "fill": {
+      const id = target()
+      if (id) setFill(doc, id, c.fill, LOCAL)
       break
     }
     case "delete": {

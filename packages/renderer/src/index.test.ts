@@ -61,6 +61,13 @@ describe("hitTest", () => {
     fill: "light",
   })
 
+  it("respects the ellipse shape", () => {
+    const ellipse = { ...rect("e", 0, "a0"), type: "ellipse" } as ElementWithId
+    expect(hitTest([ellipse], { x: 50, y: 50 }, 1)).toBe("e")
+    expect(hitTest([ellipse], { x: 50, y: 1 }, 1)).toBe("e") // on the edge
+    expect(hitTest([ellipse], { x: 5, y: 5 }, 1)).toBeNull() // the box corner is outside
+  })
+
   it("returns the topmost Element under the point", () => {
     const elements = [rect("bottom", 0, "a0"), rect("top", 50, "a1")]
     expect(hitTest(elements, { x: 75, y: 50 }, 1)).toBe("top")
