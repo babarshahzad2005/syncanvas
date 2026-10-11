@@ -1,4 +1,12 @@
-import type { ElementWithId, PaletteColor, Point, Size } from "@syncanvas/board-model"
+import {
+  type ElementWithId,
+  hasBox,
+  indexById,
+  type PaletteColor,
+  type Point,
+  resolveConnector,
+  type Size,
+} from "@syncanvas/board-model"
 
 // Canvas2D drawing shared by the screen (and later PNG export and thumbnails).
 // No DOM access beyond the 2D context it's handed.
@@ -48,17 +56,19 @@ export function fitCamera(
   }
 }
 
-export function boundsOf(elements: readonly { position: Point; size: Size }[]) {
+export function boundsOf(elements: readonly ElementWithId[]) {
   if (elements.length === 0) return null
+  const byId = indexById(elements)
   let minX = Number.POSITIVE_INFINITY
   let minY = Number.POSITIVE_INFINITY
   let maxX = Number.NEGATIVE_INFINITY
   let maxY = Number.NEGATIVE_INFINITY
   for (const e of elements) {
-    minX = Math.min(minX, e.position.x)
-    minY = Math.min(minY, e.position.y)
-    maxX = Math.max(maxX, e.position.x + e.size.w)
-    maxY = Math.max(maxY, e.position.y + e.size.h)
+    const { position, size } = elementBox(e, byId)
+    minX = Math.min(minX, position.x)
+    minY = Math.min(minY, position.y)
+    maxX = Math.max(maxX, position.x + size.w)
+    maxY = Math.max(maxY, position.y + size.h)
   }
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
 }
@@ -137,6 +147,18 @@ export function paletteShades(color: PaletteColor, theme: Theme): Shades {
 
 // ---------- Hit testing ----------
 
+/** Distance from `p` to the segment a–b. */
+function distanceToSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const lengthSquared = dx * dx + dy * dy
+  const t =
+    lengthSquared === 0
+      ? 0
+      : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared))
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+}
+
 /** The topmost Element under a world point, with a small screen-space tolerance. */
 export function hitTest(
   elements: readonly ElementWithId[],
@@ -144,9 +166,15 @@ export function hitTest(
   zoom: number,
 ): string | null {
   const tolerance = 4 / zoom
+  const byId = indexById(elements)
   for (let i = elements.length - 1; i >= 0; i--) {
     const e = elements[i]
     if (!e) continue
+    if (!hasBox(e)) {
+      const { start, end } = resolveConnector(e, byId)
+      if (distanceToSegment(world, start, end) <= tolerance) return e.id
+      continue
+    }
     if (
       world.x >= e.position.x - tolerance &&
       world.x <= e.position.x + e.size.w + tolerance &&
@@ -187,10 +215,15 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
   if (scene.showGrid !== false) drawGrid(ctx, camera, size, colors.gridDot)
 
   ctx.setTransform(dpr * camera.zoom, 0, 0, dpr * camera.zoom, dpr * camera.x, dpr * camera.y)
-  for (const e of scene.elements) {
-    const position = scene.dragging?.get(e.id) ?? e.position
-    drawRect(ctx, position, e.size, paletteShades(e.color, theme), camera.zoom)
-  }
+  // Apply local drags first, so connectors follow the shapes being dragged.
+  const elements = scene.dragging?.size
+    ? scene.elements.map((e) => {
+        const position = scene.dragging?.get(e.id)
+        return position && hasBox(e) ? { ...e, position } : e
+      })
+    : scene.elements
+  const byId = indexById(elements)
+  for (const e of elements) drawElement(ctx, e, byId, theme, camera.zoom)
   if (scene.preview) {
     const p = scene.preview
     const x = p.size.w < 0 ? p.position.x + p.size.w : p.position.x
@@ -206,16 +239,13 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
 
   // Selection chrome is drawn in screen space so handles keep a constant size at any zoom.
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  for (const e of scene.elements) {
+  for (const e of elements) {
     if (!scene.selection.has(e.id)) continue
-    const position = scene.dragging?.get(e.id) ?? e.position
+    const box = elementBox(e, byId)
     drawSelection(
       ctx,
-      worldToScreen(camera, position),
-      {
-        w: e.size.w * camera.zoom,
-        h: e.size.h * camera.zoom,
-      },
+      worldToScreen(camera, box.position),
+      { w: box.size.w * camera.zoom, h: box.size.h * camera.zoom },
       colors,
     )
   }
@@ -235,13 +265,114 @@ function drawGrid(ctx: CanvasRenderingContext2D, camera: Camera, size: Size, col
   ctx.globalAlpha = 1
 }
 
+/** An Element's box in world coordinates; for a connector, the box around its resolved ends. */
+export function elementBox(
+  e: ElementWithId,
+  byId: ReadonlyMap<string, ElementWithId>,
+): { position: Point; size: Size } {
+  if (hasBox(e)) return { position: e.position, size: e.size }
+  const { start, end } = resolveConnector(e, byId)
+  return {
+    position: { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y) },
+    size: { w: Math.abs(end.x - start.x), h: Math.abs(end.y - start.y) },
+  }
+}
+
+/** Line width that stays legible when zoomed out. */
+const strokeWidth = (zoom: number) => 2 / Math.max(zoom, 0.5)
+
+// Every type is drawn at least as a placeholder, so a Board never fails to draw a type a
+// later ticket finishes (pen smoothing, arrowheads, elbows and text are still to come).
+function drawElement(
+  ctx: CanvasRenderingContext2D,
+  e: ElementWithId,
+  byId: ReadonlyMap<string, ElementWithId>,
+  theme: Theme,
+  zoom: number,
+) {
+  const shades = paletteShades(e.color, theme)
+  switch (e.type) {
+    case "rect":
+      drawRect(ctx, e.position, e.size, shades, zoom)
+      return
+    case "ellipse":
+      ctx.beginPath()
+      ctx.ellipse(
+        e.position.x + e.size.w / 2,
+        e.position.y + e.size.h / 2,
+        e.size.w / 2,
+        e.size.h / 2,
+        0,
+        0,
+        Math.PI * 2,
+      )
+      ctx.fillStyle = shades.fill
+      ctx.fill()
+      ctx.lineWidth = strokeWidth(zoom)
+      ctx.strokeStyle = shades.stroke
+      ctx.stroke()
+      return
+    case "pen":
+      drawPolyline(
+        ctx,
+        e.points.map(([x, y]) => ({ x: e.position.x + x, y: e.position.y + y })),
+        shades.stroke,
+        zoom,
+      )
+      return
+    case "arrow":
+      drawPolyline(
+        ctx,
+        [
+          { x: e.position.x + e.ends.from.x, y: e.position.y + e.ends.from.y },
+          { x: e.position.x + e.ends.to.x, y: e.position.y + e.ends.to.y },
+        ],
+        shades.stroke,
+        zoom,
+      )
+      return
+    case "connector": {
+      const { start, end } = resolveConnector(e, byId)
+      drawPolyline(ctx, [start, end], shades.stroke, zoom)
+      return
+    }
+    case "text":
+      ctx.setLineDash([4 / zoom, 4 / zoom])
+      ctx.lineWidth = 1 / zoom
+      ctx.strokeStyle = shades.stroke
+      ctx.strokeRect(e.position.x, e.position.y, e.size.w, e.size.h)
+      ctx.setLineDash([])
+      return
+    case "sticky":
+      ctx.fillStyle = shades.fill
+      ctx.fillRect(e.position.x, e.position.y, e.size.w, e.size.h)
+      ctx.lineWidth = 1 / zoom
+      ctx.strokeStyle = shades.stroke
+      ctx.strokeRect(e.position.x, e.position.y, e.size.w, e.size.h)
+      return
+  }
+}
+
+function drawPolyline(ctx: CanvasRenderingContext2D, points: Point[], color: string, zoom: number) {
+  const [first, ...rest] = points
+  if (!first) return
+  ctx.beginPath()
+  ctx.moveTo(first.x, first.y)
+  for (const p of rest) ctx.lineTo(p.x, p.y)
+  ctx.lineWidth = strokeWidth(zoom)
+  ctx.lineCap = "round"
+  ctx.lineJoin = "round"
+  ctx.strokeStyle = color
+  ctx.stroke()
+}
+
 function drawRect(ctx: CanvasRenderingContext2D, p: Point, s: Size, shades: Shades, zoom: number) {
   const radius = Math.min(4, s.w / 2, s.h / 2)
   ctx.beginPath()
   ctx.roundRect(p.x, p.y, s.w, s.h, radius)
   ctx.fillStyle = shades.fill
   ctx.fill()
-  ctx.lineWidth = 2 / Math.max(zoom, 0.5) // stays legible when zoomed out
+  ctx.lineWidth = strokeWidth(zoom)
   ctx.strokeStyle = shades.stroke
   ctx.stroke()
 }

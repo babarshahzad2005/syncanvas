@@ -3,6 +3,7 @@ import {
   deleteElements,
   type ElementWithId,
   elementsOf,
+  hasBox,
   listElements,
   moveElement,
   type Point,
@@ -313,7 +314,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     ui.select([hit])
     if (!canEdit) return
     const element = s.elements.find((el) => el.id === hit)
-    if (!element) return
+    if (!element || !hasBox(element)) return // connectors follow their ends; moving them comes later
     undoManager.stopCapturing()
     s.gesture = {
       kind: "move",

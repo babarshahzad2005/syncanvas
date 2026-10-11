@@ -1,5 +1,5 @@
 import { env, evictDurableObject, SELF } from "cloudflare:test"
-import { elementsOf } from "@syncanvas/board-model"
+import { ELEMENT_CAP, elementsOf } from "@syncanvas/board-model"
 import type { Role } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
@@ -121,9 +121,9 @@ async function token(
   return signed.token
 }
 
-async function join(boardId: string, role: Role) {
+async function join(boardId: string, role: Role, ms?: number) {
   const client = await TestClient.connect(boardId, await token(boardId, role))
-  await until(() => client.synced, `${role} to sync`)
+  await until(() => client.synced, `${role} to sync`, ms)
   return client
 }
 
@@ -204,6 +204,75 @@ describe("BoardRoom", () => {
     expect(b.rect("bad")).toBeUndefined()
     b.close()
   })
+
+  it("accepts valid v2 Elements, including collaborative text", async () => {
+    const board = newBoardId()
+    const a = await join(board, "editor")
+    const b = await join(board, "editor")
+    a.doc.transact(() => {
+      const sticky = new Y.Map<unknown>()
+      for (const [k, v] of Object.entries({
+        type: "sticky",
+        position: { x: 0, y: 0 },
+        size: { w: 200, h: 200 },
+        z: "a0",
+        color: "yellow",
+        text: new Y.Text("retro idea"),
+        fontSize: "M",
+        bold: false,
+        groupId: "g1",
+      }))
+        sticky.set(k, v)
+      elementsOf(a.doc).set("sticky", sticky)
+    })
+    a.addRect("pen", {
+      type: "pen",
+      width: "S",
+      points: [
+        [0, 0, 0.5],
+        [5, 5, 0.5],
+      ],
+      groupId: "g1",
+    })
+    await until(() => b.rect("pen") !== undefined, "v2 Elements to reach the other Editor")
+    expect(b.rect("sticky")).toMatchObject({ type: "sticky", text: "retro idea" })
+    expect(a.closed).toBeNull()
+    a.close()
+    b.close()
+  })
+
+  it("rejects an invalid v2 Element", async () => {
+    const board = newBoardId()
+    const a = await join(board, "editor")
+    a.addRect("bad-pen", { type: "pen", width: "S", points: [[0, 0, 7]] })
+    await until(() => a.closed !== null, "invalid pen to be refused")
+    expect(a.closed?.code).toBe(CLOSE.invalidUpdate)
+
+    const b = await join(board, "editor")
+    expect(b.rect("bad-pen")).toBeUndefined()
+    b.close()
+  })
+
+  it("enforces the Element cap", async () => {
+    const board = newBoardId()
+    const a = await join(board, "editor")
+    // Fill to exactly the cap in a few updates (one message per transaction), each accepted.
+    const batch = 5_000
+    for (let start = 0; start < ELEMENT_CAP; start += batch) {
+      a.doc.transact(() => {
+        for (let i = start; i < start + batch; i++) a.addRect(`r${i}`)
+      })
+    }
+    const b = await join(board, "viewer", 20_000) // the room may still be checking the batches
+    await until(() => elementsOf(b.doc).size === ELEMENT_CAP, "the full Board to sync", 20_000)
+    expect(a.closed).toBeNull()
+
+    a.addRect("one-too-many")
+    await until(() => a.closed !== null, "the over-cap update to be refused", 10_000)
+    expect(a.closed?.code).toBe(CLOSE.invalidUpdate)
+    expect(b.rect("one-too-many")).toBeUndefined()
+    b.close()
+  }, 60_000)
 
   it("keeps the Board when the room is evicted from memory", async () => {
     const board = newBoardId()

@@ -58,6 +58,7 @@ describe("hitTest", () => {
     size: { w: 100, h: 100 },
     z,
     color: "ink",
+    fill: "light",
   })
 
   it("returns the topmost Element under the point", () => {
