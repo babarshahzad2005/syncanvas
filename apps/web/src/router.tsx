@@ -1,4 +1,10 @@
-import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router"
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  lazyRouteComponent,
+  redirect,
+} from "@tanstack/react-router"
 import { authClient, safeRedirect } from "@/lib/auth-client"
 import { BoardScreen } from "@/routes/board"
 import { Dashboard } from "@/routes/dashboard"
@@ -44,10 +50,25 @@ const signInRoute = createRoute({
   component: SignIn,
 })
 
+/**
+ * The DESIGN.md reference page, development builds only. The route (and its dynamic import) is
+ * created inside the DEV branch so production builds drop the page's code entirely.
+ */
+const devOnlyRoutes = import.meta.env.DEV
+  ? [
+      createRoute({
+        getParentRoute: () => rootRoute,
+        path: "/design",
+        component: lazyRouteComponent(() => import("@/design/page"), "DesignSystemPage"),
+      }),
+    ]
+  : []
+
 export const router = createRouter({
   routeTree: rootRoute.addChildren([
     authedRoute.addChildren([dashboardRoute, boardRoute]),
     signInRoute,
+    ...devOnlyRoutes,
   ]),
 })
 

@@ -1,6 +1,6 @@
 ---
 name: Syncanvas
-version: 0.2.0 # layouts settled (M0 tickets 03–04); values still to be checked on /design
+version: 0.3.0 # values checked on /design (M0 ticket 02); see the Iteration Guide
 personality: calm, minimal, warm, precise
 references: [Linear, tldraw, FigJam toolbar]
 
@@ -23,8 +23,8 @@ colors:
     ring: "#5145CD"
     destructive: "#C8321F"       # white text 5.34:1
     destructive-foreground: "#FFFFFF"
-    success: "#2B8A3E"
-    warning: "#A87F00"
+    success: "#237A35"           # text-safe: 5.02:1 on background (was #2B8A3E, 4.08)
+    warning: "#8A6800"           # text-safe: 4.83:1 on background (was #A87F00, 3.44)
     grid-dot: "#D9D5CE"
   dark:
     background: "#161514"
@@ -38,7 +38,7 @@ colors:
     primary: "#8C82F6"           # 5.27:1 on surface
     primary-foreground: "#120F2E" # dark text: white on this indigo is only 3.9:1
     primary-active: "#A39BF8"
-    primary-subtle: "#2A2650"
+    primary-subtle: "#26224A"    # primary on it 4.71:1 (was #2A2650, 4.45)
     border: "#3A3834"
     input: "#3A3834"
     ring: "#8C82F6"
@@ -46,7 +46,7 @@ colors:
     destructive-foreground: "#1A0705"
     success: "#6BD48A"
     warning: "#F2CC4A"
-    grid-dot: "#34322E"
+    grid-dot: "#45423D"          # 1.82:1; #34322E read as invisible on the real canvas
 
 palette: # Element colors (Palette colors). Elements store the NAME; themes map it.
   #        light stroke, light fill, dark stroke, dark fill
@@ -315,13 +315,13 @@ Motion confirms what you did and never slows you down (emil-design-eng).
 ## Known Gaps
 
 - **Logo mark** is not drawn yet. The wordmark is "Syncanvas" set in Geist at 600 weight.
-- **v0 values:** colors pass the contrast math, but the shadows, dark-mode sticky colors, and spacing still need to be checked visually on the `/design` page.
+- **Checked on `/design` (ticket 02):** every text pair passes 4.5:1 and every Palette stroke passes 3:1 in both themes. The pass fixed light `warning` and `success` (too faint as text), dark `primary-subtle` (4.45 → 4.71), and the dark `grid-dot` (invisible on the real canvas). Shadows, dark sticky colors, and spacing look right.
 - **Deviation from the shadcn skill:** we install only the components we use instead of `add --all`. The `/design` page coverage check runs against the installed set.
 
 ## Iteration Guide
 
 1. Change the value **here** first, with the reason in the commit message.
 2. Mirror it in `apps/web` theme CSS (`:root`, `.dark`, `@theme inline`).
-3. Check the `/design` page in both themes. Text pairs must stay ≥ 4.5:1 and strokes ≥ 3:1.
+3. Check the `/design` page (`pnpm dev`, then `/design`; development only) in both themes. Contrast is measured live; text pairs must stay ≥ 4.5:1 and strokes ≥ 3:1.
 4. If a rule changes (not only a value), update the Do's and Don'ts table.
 5. Run an emil-design-eng review on any new or changed motion.

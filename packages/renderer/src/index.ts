@@ -128,7 +128,7 @@ const PALETTE: Record<PaletteColor, { light: Shades; dark: Shades }> = {
 
 const CANVAS = {
   light: { background: "#F8F7F4", gridDot: "#D9D5CE", primary: "#5145CD", handleFill: "#FFFFFF" },
-  dark: { background: "#161514", gridDot: "#34322E", primary: "#8C82F6", handleFill: "#FFFFFF" },
+  dark: { background: "#161514", gridDot: "#45423D", primary: "#8C82F6", handleFill: "#FFFFFF" },
 } as const
 
 export function paletteShades(color: PaletteColor, theme: Theme): Shades {

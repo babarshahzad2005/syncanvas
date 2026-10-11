@@ -7,6 +7,21 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Lets the /design page pin interaction states with data-preview="hover focus active"
+   (shadcn skill, preview-states.css). Same behavior as Tailwind's defaults otherwise. */
+@custom-variant hover {
+  @media (hover: hover) {
+    &:hover {
+      @slot;
+    }
+  }
+  &[data-preview~="hover"] {
+    @slot;
+  }
+}
+@custom-variant focus-visible (&:focus-visible, &[data-preview~="focus"]);
+@custom-variant active (&:active, &[data-preview~="active"]);
+
 /* ---------- Color roles (DESIGN.md colors.light / colors.dark) ---------- */
 :root {
   color-scheme: light;
@@ -29,8 +44,8 @@
   --accent-foreground: #1c1b19;
   --destructive: #c8321f;
   --destructive-foreground: #ffffff;
-  --success: #2b8a3e;
-  --warning: #a87f00;
+  --success: #237a35;
+  --warning: #8a6800;
   --border: #e6e3dd;
   --input: #e6e3dd;
   --ring: #5145cd;
@@ -75,7 +90,7 @@
   --primary: #8c82f6;
   --primary-foreground: #120f2e;
   --primary-active: #a39bf8;
-  --primary-subtle: #2a2650;
+  --primary-subtle: #26224a;
   --secondary: #2a2926;
   --muted: #2a2926;
   --muted-foreground: #a39f98;
@@ -88,7 +103,7 @@
   --border: #3a3834;
   --input: #3a3834;
   --ring: #8c82f6;
-  --grid-dot: #34322e;
+  --grid-dot: #45423d;
 
   --elevation-panel: 0 0 0 1px #3a3834, 0 4px 12px rgb(0 0 0 / 0.3);
   --elevation-popover: 0 0 0 1px #3a3834, 0 8px 24px rgb(0 0 0 / 0.4);
