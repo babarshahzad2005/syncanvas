@@ -4,6 +4,8 @@ import {
   type PaletteColor,
   type Point,
   type Size,
+  type StickyColor,
+  type StickySize,
   type TextAlign,
   type TextSize,
 } from "./model"
@@ -43,6 +45,36 @@ export function addText(
       bold: text.bold ?? false,
       align: text.align ?? "left",
       autoWidth: text.width === null,
+    },
+    origin,
+  )
+}
+
+/** Width of a new sticky note; it starts square and grows taller as text is added. */
+export const STICKY_SIZE = 200
+
+/** Adds a sticky note of the default size, centered on `center`. */
+export function addSticky(
+  doc: Y.Doc,
+  sticky: {
+    center: Point
+    color?: StickyColor
+    fontSize?: StickySize
+    bold?: boolean
+    content?: string
+  },
+  origin: unknown,
+): string {
+  return addElement(
+    doc,
+    {
+      type: "sticky",
+      position: { x: sticky.center.x - STICKY_SIZE / 2, y: sticky.center.y - STICKY_SIZE / 2 },
+      size: { w: STICKY_SIZE, h: STICKY_SIZE },
+      color: sticky.color ?? "yellow",
+      text: sticky.content ?? "",
+      fontSize: sticky.fontSize ?? "M",
+      bold: sticky.bold ?? false,
     },
     origin,
   )
@@ -140,9 +172,11 @@ export function setTextStyle(
   const type = fields?.get("type")
   if (!fields || (type !== "text" && type !== "sticky")) return
   doc.transact(() => {
-    if (style.fontSize !== undefined) fields.set("fontSize", style.fontSize)
+    // Stickies have no XL (and no alignment).
+    if (style.fontSize !== undefined && (type === "text" || style.fontSize !== "XL")) {
+      fields.set("fontSize", style.fontSize)
+    }
     if (style.bold !== undefined) fields.set("bold", style.bold)
-    // Stickies have no alignment.
     if (style.align !== undefined && type === "text") fields.set("align", style.align)
   }, origin)
 }

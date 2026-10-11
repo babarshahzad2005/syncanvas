@@ -9,6 +9,7 @@ import {
   addArrow,
   addPen,
   addShape,
+  addSticky,
   addText,
   applyTextChange,
   checkUpdate,
@@ -19,7 +20,9 @@ import {
   moveElement,
   PALETTE_COLORS,
   recolorElement,
+  STICKY_COLORS,
   setFill,
+  setTextStyle,
   textOf,
   validateBoardDoc,
 } from "./index"
@@ -258,7 +261,29 @@ const editCommand = fc.oneof(
     }),
   },
   {
-    // Typing into (or replacing part of) a text: concurrent edits must merge.
+    weight: 1,
+    arbitrary: fc.record({
+      op: fc.constant("sticky" as const),
+      client: editor,
+      x: coordinate,
+      y: coordinate,
+      color: fc.constantFrom(...STICKY_COLORS),
+      content: fc.string({ maxLength: 8 }),
+    }),
+  },
+  {
+    // Size and bold for texts and stickies (XL is ignored for stickies).
+    weight: 1,
+    arbitrary: fc.record({
+      op: fc.constant("style" as const),
+      client: editor,
+      pick,
+      fontSize: fc.constantFrom("S" as const, "M" as const, "L" as const, "XL" as const),
+      bold: fc.boolean(),
+    }),
+  },
+  {
+    // Typing into (or replacing part of) a text or sticky: concurrent edits must merge.
     weight: 3,
     arbitrary: fc.record({
       op: fc.constant("type" as const),
@@ -350,8 +375,16 @@ function runEdit(client: SimClient, c: EditCommand) {
         LOCAL,
       )
       break
+    case "sticky":
+      addSticky(doc, { center: { x: c.x, y: c.y }, color: c.color, content: c.content }, LOCAL)
+      break
+    case "style": {
+      const id = target()
+      if (id) setTextStyle(doc, id, { fontSize: c.fontSize, bold: c.bold }, LOCAL)
+      break
+    }
     case "type": {
-      const texts = listElements(doc).filter((e) => e.type === "text")
+      const texts = listElements(doc).filter((e) => e.type === "text" || e.type === "sticky")
       const element = texts[c.pick % Math.max(1, texts.length)]
       const text = element && textOf(doc, element.id)
       if (!text) break

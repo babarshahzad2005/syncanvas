@@ -102,7 +102,7 @@ typography:
     M: 20
     L: 28
     XL: 40
-    sticky: { max: 20, min: 10 } # sticky text shrinks between these
+    sticky: { S: 14, M: 16, L: 20, min: 10 } # a full note shrinks its text down to min
 
 rounded:
   sm: 4px     # small accents, kbd, selection handles (2px)
@@ -281,6 +281,7 @@ shadcn/ui on **Base UI** with the **nova** style and Lucide icons. Only the comp
 - **Lock:** a locked Element shows a small lock badge on hover, with no other visual change.
 - **Arrows and connectors:** a 2px line in the stroke shade (thicker in canvas units when zoomed out below 50%, like shape outlines) ending in a filled arrowhead about 10px long with a ~26° half-angle; short lines get a smaller head. Selected, they show a handle at each end instead of a box.
 - **Text:** Geist at the `typography.canvas` sizes, line height 1.3, regular (400) or bold (600), in the stroke shade. A click with T places auto-width text (it grows as you type; only Enter breaks lines). Dragging with T sets a fixed width that wraps at word boundaries, breaking over-long words anywhere. Editing happens in a textarea laid exactly over the text, so the canvas and the editor break lines identically.
+- **Sticky notes:** a flat `sticky` background with 4px corners (no border or shadow), and ink text at the sticky sizes (S / M / L = 14 / 16 / 20, line height 1.3), top-left with 16 units of padding. A new note is 200 × 200, centered where you click with S, in the sticky color you last picked (yellow at first). It keeps its width and grows taller as you type, up to twice its width (400); past that, the text shrinks 1px at a time down to 10px, and anything still left over is cut off at the bottom (the editor scrolls). An empty note stays when editing ends; an empty text doesn't.
 - **Pen strokes:** drawn with `perfect-freehand` (thinning 0.6, smoothing 0.5, streamline 0.5) in the stroke shade. Widths S / M / L are 2 / 4 / 8 canvas units. A stylus varies the width with pressure; mouse and touch draw at a constant width.
 
 ## Motion

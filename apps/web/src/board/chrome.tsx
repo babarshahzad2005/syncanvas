@@ -5,13 +5,15 @@ import {
   type PaletteColor,
   type PenWidth,
   recolorElement,
+  STICKY_COLORS,
+  type StickyColor,
   setFill,
   setPenWidth,
   setTextStyle,
   type TextAlign,
   type TextSize,
 } from "@syncanvas/board-model"
-import { paletteShades } from "@syncanvas/renderer"
+import { paletteShades, stickyBackground } from "@syncanvas/renderer"
 import {
   AlignCenter,
   AlignLeft,
@@ -65,18 +67,23 @@ const TOOLS: {
   { id: "arrow", label: "Arrow", shortcut: "A", icon: MoveUpRight },
   { id: null, label: "Connector", shortcut: "C", icon: Spline },
   { id: "text", label: "Text", shortcut: "T", icon: Type },
-  { id: null, label: "Sticky note", shortcut: "S", icon: StickyNote },
+  { id: "sticky", label: "Sticky note", shortcut: "S", icon: StickyNote },
   { id: null, label: "Image", icon: Image },
   { id: null, label: "Comment", icon: MessageCircle },
 ]
+
+/** Which colors the tray offers: Palette colors, or sticky note backgrounds. */
+type ColorSet = "palette" | "sticky"
 
 /** Element types that have a fill (spec: style tray per type). */
 const SHAPE_TYPES = new Set(["rect", "ellipse"])
 const PEN_TYPES = new Set(["pen"])
 
 const TEXT_TYPES = new Set(["text"])
+const STICKY_TYPES = new Set(["sticky"])
 
-type TextStyle = { fontSize: TextSize; bold: boolean; align: TextAlign }
+/** Text style controls; `align` is null for sticky notes (no alignment, no XL). */
+type TextStyle = { fontSize: TextSize; bold: boolean; align: TextAlign | null }
 
 const TEXT_SIZES_UI: { size: TextSize; label: string }[] = [
   { size: "S", label: "Size S" },
@@ -239,22 +246,27 @@ function SelectionTray({
       const fields = [...selection].map((id) => elements.get(id))
       const first = fields[0]
       const all = (types: Set<string>) => fields.every((f) => types.has(f?.get("type") as string))
+      const stickies = all(STICKY_TYPES)
+      const anySticky = fields.some((f) => f?.get("type") === "sticky")
       return JSON.stringify([
         first?.get("color") ?? null,
+        // Sticky notes have their own colors, so a mix with other types shows no colors.
+        stickies ? "sticky" : anySticky ? null : "palette",
         all(SHAPE_TYPES) ? (first?.get("fill") ?? "light") : null,
         all(PEN_TYPES) ? (first?.get("width") ?? null) : null,
-        all(TEXT_TYPES)
+        all(TEXT_TYPES) || stickies
           ? {
               fontSize: first?.get("fontSize"),
               bold: first?.get("bold"),
-              align: first?.get("align"),
+              align: stickies ? null : first?.get("align"),
             }
           : null,
       ])
     },
   )
-  const [color, fill, width, text] = JSON.parse(snapshot) as [
+  const [color, colors, fill, width, text] = JSON.parse(snapshot) as [
     PaletteColor | null,
+    ColorSet | null,
     Fill | null,
     PenWidth | null,
     TextStyle | null,
@@ -262,11 +274,14 @@ function SelectionTray({
   return (
     <TrayControls
       color={color}
+      colors={colors}
       fill={fill}
       width={width}
       text={text}
       onColor={(value) => {
         for (const id of selection) recolorElement(doc, id, value, origin)
+        // The next sticky note gets the color last picked for one.
+        if (colors === "sticky") useBoardUi.getState().setStickyColor(value as StickyColor)
       }}
       onText={(value) => {
         for (const id of selection) setTextStyle(doc, id, value, origin)
@@ -288,6 +303,7 @@ function PenToolTray() {
   return (
     <TrayControls
       color={pen.color}
+      colors="palette"
       fill={null}
       width={pen.width}
       text={null}
@@ -300,6 +316,7 @@ function PenToolTray() {
 /** Style tray controls (DESIGN.md: only the ones that apply). A null value hides its group. */
 function TrayControls({
   color,
+  colors,
   fill,
   width,
   text,
@@ -309,13 +326,14 @@ function TrayControls({
   onText,
 }: {
   color: PaletteColor | null
+  colors: ColorSet | null
   fill: Fill | null
   width: PenWidth | null
   text: TextStyle | null
   onColor: (color: PaletteColor) => void
   onFill?: (fill: Fill) => void
   onWidth?: (width: PenWidth) => void
-  onText?: (style: Partial<TextStyle>) => void
+  onText?: (style: { fontSize?: TextSize; bold?: boolean; align?: TextAlign }) => void
 }) {
   const theme = useResolvedTheme()
   const currentShades = paletteShades(color ?? "ink", theme)
@@ -328,23 +346,30 @@ function TrayControls({
       onMouseDown={(e) => e.preventDefault()}
       className="flex animate-in items-center gap-1 border-b bg-muted/50 px-2 py-1.5 duration-(--duration-panel) ease-out fade-in slide-in-from-bottom-2"
     >
-      {PALETTE_COLORS.map((option) => {
-        const shades = paletteShades(option, theme)
-        return (
-          <button
-            key={option}
-            type="button"
-            aria-label={`Color ${option}`}
-            aria-pressed={color === option}
-            onClick={() => onColor(option)}
-            className={cn(
-              "size-6 rounded-full border-2 transition-transform duration-(--duration-press) ease-out active:scale-90 pointer-coarse:size-9",
-              color === option && "ring-2 ring-primary ring-offset-2 ring-offset-muted",
-            )}
-            style={{ background: shades.fill, borderColor: shades.stroke }}
-          />
-        )
-      })}
+      {(colors === "sticky" ? STICKY_COLORS : colors === "palette" ? PALETTE_COLORS : []).map(
+        (option) => {
+          const shades = paletteShades(option, theme)
+          return (
+            <button
+              key={option}
+              type="button"
+              aria-label={`Color ${option}`}
+              aria-pressed={color === option}
+              onClick={() => onColor(option)}
+              className={cn(
+                "size-6 rounded-full border-2 transition-transform duration-(--duration-press) ease-out active:scale-90 pointer-coarse:size-9",
+                colors === "sticky" && "rounded-sm border border-foreground/15",
+                color === option && "ring-2 ring-primary ring-offset-2 ring-offset-muted",
+              )}
+              style={
+                colors === "sticky"
+                  ? { background: stickyBackground(option as StickyColor, theme) }
+                  : { background: shades.fill, borderColor: shades.stroke }
+              }
+            />
+          )
+        },
+      )}
       {fill !== null && (
         <>
           <span className="mx-1.5 h-5 w-px bg-border" />
@@ -390,17 +415,19 @@ function TrayControls({
       )}
       {text !== null && (
         <>
-          <span className="mx-1.5 h-5 w-px bg-border" />
-          {TEXT_SIZES_UI.map((option) => (
-            <ToggleButton
-              key={option.size}
-              label={option.label}
-              pressed={text.fontSize === option.size}
-              onClick={() => onText?.({ fontSize: option.size })}
-            >
-              {option.size}
-            </ToggleButton>
-          ))}
+          {colors !== null && <span className="mx-1.5 h-5 w-px bg-border" />}
+          {TEXT_SIZES_UI.filter((option) => text.align !== null || option.size !== "XL").map(
+            (option) => (
+              <ToggleButton
+                key={option.size}
+                label={option.label}
+                pressed={text.fontSize === option.size}
+                onClick={() => onText?.({ fontSize: option.size })}
+              >
+                {option.size}
+              </ToggleButton>
+            ),
+          )}
           <ToggleButton
             label="Bold"
             shortcut="Ctrl B"
@@ -409,17 +436,18 @@ function TrayControls({
           >
             <Bold />
           </ToggleButton>
-          <span className="mx-1.5 h-5 w-px bg-border" />
-          {ALIGNS.map((option) => (
-            <ToggleButton
-              key={option.align}
-              label={option.label}
-              pressed={text.align === option.align}
-              onClick={() => onText?.({ align: option.align })}
-            >
-              <option.icon />
-            </ToggleButton>
-          ))}
+          {text.align !== null && <span className="mx-1.5 h-5 w-px bg-border" />}
+          {text.align !== null &&
+            ALIGNS.map((option) => (
+              <ToggleButton
+                key={option.align}
+                label={option.label}
+                pressed={text.align === option.align}
+                onClick={() => onText?.({ align: option.align })}
+              >
+                <option.icon />
+              </ToggleButton>
+            ))}
         </>
       )}
       <span className="mx-1.5 h-5 w-px bg-border" />

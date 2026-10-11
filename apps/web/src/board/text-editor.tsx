@@ -2,17 +2,25 @@ import {
   applyTextChange,
   deleteElements,
   elementsOf,
-  type PaletteColor,
   readElement,
+  type StickyElement,
   setSize,
   setTextStyle,
   TEXT_LIMIT,
-  type TextAlign,
-  type TextSize,
+  type TextElement,
   textOf,
   transformIndex,
 } from "@syncanvas/board-model"
-import { LINE_HEIGHT, layoutText, paletteShades, TEXT_SIZES, textFont } from "@syncanvas/renderer"
+import {
+  paletteShades,
+  STICKY_PADDING,
+  STICKY_TEXT_COLOR,
+  stickyLayoutOf,
+  TEXT_SIZES,
+  type Theme,
+  textFont,
+  textLayoutOf,
+} from "@syncanvas/renderer"
 import {
   forwardRef,
   useEffect,
@@ -25,7 +33,7 @@ import type * as Y from "yjs"
 import { useResolvedTheme } from "@/lib/theme"
 import { useBoardUi } from "./store"
 
-// Typing on the canvas (spec: Text editing). A textarea sits exactly over the text Element,
+// Typing on the canvas (spec: Text editing). A textarea sits exactly over the text or sticky,
 // in world units scaled by the zoom (BoardCanvas sets its transform every frame), with the
 // same font and line breaking as the renderer. It's bound to the Element's Y.Text: local
 // input becomes the smallest delete + insert, and remote changes are applied with the caret
@@ -34,26 +42,49 @@ import { useBoardUi } from "./store"
 /** Typing pauses longer than this start a new undo step. */
 const UNDO_BURST_MS = 500
 
-type Style = {
-  color: PaletteColor
-  fontSize: TextSize
-  bold: boolean
-  align: TextAlign
-  autoWidth: boolean
-  width: number
-}
+type Editable = TextElement | StickyElement
 
+/** Everything about the Element except its text, as JSON (cheap for React to compare). */
 function readStyle(fields: Y.Map<unknown> | undefined): string {
   const element = fields ? readElement(fields) : null
-  if (element?.type !== "text") return "null"
-  return JSON.stringify({
-    color: element.color,
-    fontSize: element.fontSize,
-    bold: element.bold,
-    align: element.align,
-    autoWidth: element.autoWidth,
-    width: element.size.w,
-  } satisfies Style)
+  if (element?.type !== "text" && element?.type !== "sticky") return "null"
+  return JSON.stringify({ ...element, text: "" } satisfies Editable)
+}
+
+/**
+ * How the textarea looks for an Element with this content: the same font, line height,
+ * and box the renderer uses. A sticky's textarea covers the whole note, padding included.
+ */
+function frameOf(e: Editable, theme: Theme) {
+  if (e.type === "sticky") {
+    const { layout, fontSize, height, clipped } = stickyLayoutOf(e)
+    return {
+      box: { w: e.size.w, h: height },
+      css: {
+        font: textFont(fontSize, e.bold),
+        lineHeight: `${layout.lineHeight}px`,
+        color: STICKY_TEXT_COLOR,
+        textAlign: "left",
+        whiteSpace: "pre-wrap",
+        padding: STICKY_PADDING,
+      } as const,
+      clipped,
+    }
+  }
+  const layout = textLayoutOf(e)
+  return {
+    // Auto width gets a little room for the caret at the end of the widest line.
+    box: { w: e.autoWidth ? layout.width + 2 : e.size.w, h: layout.height },
+    css: {
+      font: textFont(TEXT_SIZES[e.fontSize], e.bold),
+      lineHeight: `${layout.lineHeight}px`,
+      color: paletteShades(e.color, theme).stroke,
+      textAlign: e.align,
+      whiteSpace: e.autoWidth ? "pre" : "pre-wrap",
+      padding: 0,
+    } as const,
+    clipped: false,
+  }
 }
 
 type Props = {
@@ -85,7 +116,7 @@ export const TextEditor = forwardRef<HTMLTextAreaElement, Props>(function TextEd
     },
     () => readStyle(elementsOf(doc).get(id)),
   )
-  const style = JSON.parse(styleJson) as Style | null
+  const style = JSON.parse(styleJson) as Editable | null
   // The textarea's content, mirrored for sizing it (the Y.Text is the source of truth).
   const [value, setValue] = useState(() => textOf(doc, id)?.toString() ?? "")
 
@@ -134,18 +165,19 @@ export const TextEditor = forwardRef<HTMLTextAreaElement, Props>(function TextEd
       if (done) return
       done = true
       // An empty text is removed in the same undo step as the last edit (so undo never
-      // brings back an empty box); otherwise record the measured box.
-      if (elements.has(id)) {
-        const fields = elements.get(id)
-        if (known.trim() === "") deleteElements(doc, [id], origin)
-        else if (fields) {
-          const s = JSON.parse(readStyle(fields)) as Style
-          const layout = layoutText(known, {
-            fontSize: TEXT_SIZES[s.fontSize],
-            bold: s.bold,
-            width: s.autoWidth ? null : s.width,
-          })
-          setSize(doc, id, { w: s.autoWidth ? layout.width : s.width, h: layout.height }, origin)
+      // brings back an empty box); otherwise record the measured box. An empty sticky stays:
+      // a blank note is still a note.
+      const fields = elements.get(id)
+      const element = fields ? (JSON.parse(readStyle(fields)) as Editable | null) : null
+      if (element?.type === "text" && known.trim() === "") deleteElements(doc, [id], origin)
+      else if (element) {
+        const measured = { ...element, text: known }
+        if (measured.type === "sticky") {
+          setSize(doc, id, { w: measured.size.w, h: stickyLayoutOf(measured).height }, origin)
+        } else {
+          const layout = textLayoutOf(measured)
+          const w = measured.autoWidth ? layout.width : measured.size.w
+          setSize(doc, id, { w, h: layout.height }, origin)
         }
       }
       undoManager.stopCapturing()
@@ -162,24 +194,21 @@ export const TextEditor = forwardRef<HTMLTextAreaElement, Props>(function TextEd
     }
   }, [doc, id])
 
-  // The textarea is always sized to its content, so it never needs to scroll; undo any
-  // scrolling the browser did while the caret briefly ran past the old size.
+  const frame = style ? frameOf({ ...style, text: value }, theme) : null
+
+  // The textarea is sized to its content, so it never needs to scroll; undo any scrolling
+  // the browser did while the caret briefly ran past the old size. (A full sticky whose
+  // text is cut off does scroll, so the caret stays visible.)
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after every size change
   useLayoutEffect(() => {
     const area = textarea.current
     if (area) {
       area.scrollLeft = 0
-      area.scrollTop = 0
+      if (!frame?.clipped) area.scrollTop = 0
     }
   }, [value, styleJson])
 
-  if (!style) return null
-  const fontSize = TEXT_SIZES[style.fontSize]
-  const layout = layoutText(value, {
-    fontSize,
-    bold: style.bold,
-    width: style.autoWidth ? null : style.width,
-  })
+  if (!style || !frame) return null
 
   return (
     <textarea
@@ -213,15 +242,10 @@ export const TextEditor = forwardRef<HTMLTextAreaElement, Props>(function TextEd
       className="absolute top-0 left-0 m-0 resize-none overflow-hidden border-0 bg-transparent p-0 outline-none"
       style={{
         transformOrigin: "0 0",
-        font: textFont(fontSize, style.bold),
-        lineHeight: `${fontSize * LINE_HEIGHT}px`,
-        color: paletteShades(style.color, theme).stroke,
-        textAlign: style.align,
-        whiteSpace: style.autoWidth ? "pre" : "pre-wrap",
+        ...frame.css,
         overflowWrap: "break-word",
-        // A little room for the caret at the end of the widest line.
-        width: style.autoWidth ? layout.width + 2 : style.width,
-        height: layout.height,
+        width: frame.box.w,
+        height: frame.box.h,
       }}
     />
   )

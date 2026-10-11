@@ -2,6 +2,7 @@ import {
   addArrow,
   addPen,
   addShape,
+  addSticky,
   addText,
   deleteElements,
   type ElementWithId,
@@ -89,7 +90,7 @@ function previewOf(
   pen: { color: PaletteColor; width: PenWidth },
 ): Scene["preview"] {
   if (g?.kind === "stroke") return { type: "pen", points: g.points, ...pen }
-  if (g?.kind !== "draw") return null
+  if (g?.kind !== "draw" || g.tool === "sticky") return null
   if (g.tool === "arrow") return { type: "arrow", from: g.start, to: g.current, color: "ink" }
   if (g.tool === "text") {
     // Dragging with T sets the text's width; show the box being dragged out.
@@ -289,12 +290,12 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         return
       }
       if (mod && e.key.toLowerCase() === "b") {
-        // Bold for selected texts, toggled together from the first one's state.
+        // Bold for selected texts and stickies, toggled together from the first one's state.
         const texts = state.current.elements.filter(
-          (el) => ui().selection.has(el.id) && el.type === "text",
+          (el) => ui().selection.has(el.id) && (el.type === "text" || el.type === "sticky"),
         )
         const first = texts[0]
-        if (!canEdit || first?.type !== "text") return
+        if (!canEdit || !(first?.type === "text" || first?.type === "sticky")) return
         e.preventDefault()
         for (const el of texts) setTextStyle(doc, el.id, { bold: !first.bold }, origin)
         return
@@ -305,10 +306,15 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         return
       }
       if (mod) return
-      // Typing while one text is selected starts editing it (Enter just opens the editor).
+      // Typing while one text or sticky is selected starts editing it (Enter just opens the
+      // editor).
       const selected = ui().selection.size === 1 ? [...ui().selection][0] : undefined
       const element = state.current.elements.find((el) => el.id === selected)
-      if (canEdit && element?.type === "text" && (e.key === "Enter" || e.key.length === 1)) {
+      if (
+        canEdit &&
+        (element?.type === "text" || element?.type === "sticky") &&
+        (e.key === "Enter" || e.key.length === 1)
+      ) {
         e.preventDefault()
         const text = textOf(doc, element.id)
         if (e.key !== "Enter" && text) {
@@ -341,6 +347,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
           return
         case "t":
           if (canEdit) ui().setTool("text")
+          return
+        case "s":
+          if (canEdit) ui().setTool("sticky")
           return
         case "escape":
           state.current.gesture = null
@@ -513,7 +522,16 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       const h = g.current.y - g.start.y
       const minWorld = MIN_DRAW_PX / s.camera.zoom
       // One transaction for the whole Element, so one undo removes it (FLOWS §2).
-      if (g.tool === "text") {
+      if (g.tool === "sticky") {
+        // A click (or the end of a drag) places a note centered there, ready to type in.
+        const id = addSticky(
+          doc,
+          { center: g.current, color: useBoardUi.getState().stickyColor },
+          origin,
+        )
+        useBoardUi.getState().select([id])
+        useBoardUi.getState().setEditing({ id, continuing: true })
+      } else if (g.tool === "text") {
         // A click places auto-width text with the click at the middle of its first line;
         // a drag sets a fixed width that wraps.
         const lineHeight = TEXT_SIZES.M * LINE_HEIGHT
@@ -583,7 +601,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const s = state.current
     const hit = hitTest(s.elements, screenToWorld(s.camera, local(e)), s.camera.zoom)
     const element = s.elements.find((el) => el.id === hit)
-    if (element?.type !== "text") return
+    if (element?.type !== "text" && element?.type !== "sticky") return
     useBoardUi.getState().select([element.id])
     useBoardUi.getState().setEditing({ id: element.id, continuing: false })
   }

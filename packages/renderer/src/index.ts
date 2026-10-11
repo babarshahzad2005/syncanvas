@@ -9,6 +9,9 @@ import {
   type Point,
   resolveConnector,
   type Size,
+  type StickyColor,
+  type StickyElement,
+  type StickySize,
   type StrokePoint,
   type TextElement,
 } from "@syncanvas/board-model"
@@ -145,6 +148,21 @@ const PALETTE: Record<PaletteColor, { light: Shades; dark: Shades }> = {
   },
 }
 
+/** Sticky note backgrounds (DESIGN.md `sticky`); the text on them is always ink. */
+const STICKY: Record<StickyColor, { light: string; dark: string }> = {
+  yellow: { light: "#FFE58A", dark: "#E6CF7A" },
+  orange: { light: "#FFC99A", dark: "#E6B48A" },
+  pink: { light: "#FFC2DD", dark: "#E6AEC6" },
+  violet: { light: "#D9C8FF", dark: "#C3B4E6" },
+  blue: { light: "#BFD9FF", dark: "#ABC3E6" },
+  green: { light: "#C3EBC4", dark: "#AFD3B0" },
+}
+export const STICKY_TEXT_COLOR = "#1C1B19"
+
+export function stickyBackground(color: StickyColor, theme: Theme): string {
+  return STICKY[color][theme]
+}
+
 const CANVAS = {
   light: { background: "#F8F7F4", gridDot: "#D9D5CE", primary: "#5145CD", handleFill: "#FFFFFF" },
   dark: { background: "#161514", gridDot: "#45423D", primary: "#8C82F6", handleFill: "#FFFFFF" },
@@ -208,7 +226,7 @@ export function hitTest(
       if ((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1) return e.id
       continue
     }
-    const size = e.type === "text" ? textSize(e) : e.size
+    const size = e.type === "text" ? textSize(e) : e.type === "sticky" ? stickySize(e) : e.size
     if (
       world.x >= e.position.x - tolerance &&
       world.x <= e.position.x + size.w + tolerance &&
@@ -241,7 +259,7 @@ export type Scene = {
     | { type: "arrow"; from: Point; to: Point; color: PaletteColor }
     | null
   showGrid?: boolean
-  /** The text being edited in the textarea overlay: its content isn't drawn on the canvas. */
+  /** The text or sticky being edited in the textarea overlay: its text isn't drawn on the canvas. */
   editing?: string | null
 }
 
@@ -266,7 +284,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
   const byId = indexById(elements)
   for (const e of elements) {
     if (e.id === scene.editing && e.type === "text") continue // the textarea shows it
-    drawElement(ctx, e, byId, theme, camera.zoom)
+    drawElement(ctx, e, byId, theme, camera.zoom, e.id === scene.editing)
   }
   if (scene.preview?.type === "arrow") {
     const p = scene.preview
@@ -326,6 +344,7 @@ export function elementBox(
   byId: ReadonlyMap<string, ElementWithId>,
 ): { position: Point; size: Size } {
   if (e.type === "text") return { position: e.position, size: textSize(e) }
+  if (e.type === "sticky") return { position: e.position, size: stickySize(e) }
   if (hasBox(e)) return { position: e.position, size: e.size }
   const { start, end } = resolveConnector(e, byId)
   return {
@@ -368,18 +387,103 @@ function drawText(ctx: CanvasRenderingContext2D, e: TextElement, color: string) 
   }
 }
 
+// ---------- Sticky notes ----------
+
+/** Sticky font sizes in canvas units (DESIGN.md typography.canvas.sticky). */
+export const STICKY_TEXT_SIZES: Record<StickySize, number> = { S: 14, M: 16, L: 20 }
+/** Sticky text shrinks down to this size once the note can't grow any taller. */
+export const STICKY_MIN_FONT = 10
+/** Space between a sticky note's edge and its text, in canvas units. */
+export const STICKY_PADDING = 16
+
+export type StickyLayout = {
+  layout: TextLayout
+  /** The font size actually used: the chosen size, or smaller once the note is full. */
+  fontSize: number
+  /** The note's drawn height: from its width (square) up to twice that. */
+  height: number
+  /** True when even the smallest font overflows: the text is cut off at the bottom. */
+  clipped: boolean
+}
+
+/**
+ * Lays out a sticky note (spec: fixed width, height grows with content up to a maximum,
+ * then the text shrinks). Like text, this is derived from the content at render time, so
+ * concurrent typing never leaves a stale height.
+ */
+export function stickyLayoutOf(e: StickyElement): StickyLayout {
+  const width = e.size.w
+  const inner = Math.max(1, width - STICKY_PADDING * 2)
+  const maxHeight = width * 2
+  const chosen = STICKY_TEXT_SIZES[e.fontSize]
+  let fontSize = chosen
+  let layout = layoutText(e.text, { fontSize, bold: e.bold, width: inner })
+  while (layout.height + STICKY_PADDING * 2 > maxHeight && fontSize > STICKY_MIN_FONT) {
+    fontSize--
+    layout = layoutText(e.text, { fontSize, bold: e.bold, width: inner })
+  }
+  const needed = layout.height + STICKY_PADDING * 2
+  return {
+    layout,
+    fontSize,
+    height: Math.min(maxHeight, Math.max(width, needed)),
+    clipped: needed > maxHeight,
+  }
+}
+
+/** The box a sticky note really covers. */
+export function stickySize(e: StickyElement): Size {
+  return { w: e.size.w, h: stickyLayoutOf(e).height }
+}
+
+function drawSticky(
+  ctx: CanvasRenderingContext2D,
+  e: StickyElement,
+  theme: Theme,
+  editing: boolean,
+) {
+  const { layout, fontSize, height } = stickyLayoutOf(e)
+  const { x, y } = e.position
+  const w = e.size.w
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, height, 4)
+  ctx.fillStyle = stickyBackground(e.color, theme)
+  ctx.fill()
+  if (editing) return // the textarea shows the text
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(x, y + STICKY_PADDING, w, height - STICKY_PADDING * 2)
+  ctx.clip()
+  ctx.font = textFont(fontSize, e.bold)
+  ctx.fillStyle = STICKY_TEXT_COLOR
+  ctx.textBaseline = "alphabetic"
+  for (const [i, line] of layout.lines.entries()) {
+    ctx.fillText(
+      line.text,
+      x + STICKY_PADDING,
+      y + STICKY_PADDING + i * layout.lineHeight + layout.baseline,
+    )
+  }
+  ctx.restore()
+}
+
 /** Line width that stays legible when zoomed out. */
 const strokeWidth = (zoom: number) => 2 / Math.max(zoom, 0.5)
 
 // Every type is drawn at least as a placeholder, so a Board never fails to draw a type a
-// later ticket finishes (pen smoothing, arrowheads, elbows and text are still to come).
+// later ticket finishes (connector elbows are still to come).
 function drawElement(
   ctx: CanvasRenderingContext2D,
   e: ElementWithId,
   byId: ReadonlyMap<string, ElementWithId>,
   theme: Theme,
   zoom: number,
+  editing: boolean,
 ) {
+  if (e.type === "sticky") {
+    drawSticky(ctx, e, theme, editing)
+    return
+  }
   const shades = paletteShades(e.color, theme)
   switch (e.type) {
     case "rect":
@@ -399,13 +503,6 @@ function drawElement(
     }
     case "text":
       drawText(ctx, e, shades.stroke)
-      return
-    case "sticky":
-      ctx.fillStyle = shades.fill
-      ctx.fillRect(e.position.x, e.position.y, e.size.w, e.size.h)
-      ctx.lineWidth = 1 / zoom
-      ctx.strokeStyle = shades.stroke
-      ctx.strokeRect(e.position.x, e.position.y, e.size.w, e.size.h)
       return
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import * as Y from "yjs"
 import {
-  addElement,
+  addSticky,
   addText,
   applyTextChange,
   diffText,
@@ -120,19 +120,7 @@ describe("text Elements", () => {
   it("changes size, bold, and alignment (stickies have no alignment)", () => {
     const doc = new Y.Doc()
     const text = addText(doc, { position: { x: 0, y: 0 }, width: null, lineHeight: 26 }, "me")
-    const sticky = addElement(
-      doc,
-      {
-        type: "sticky",
-        position: { x: 0, y: 0 },
-        size: { w: 200, h: 200 },
-        color: "yellow",
-        text: "",
-        fontSize: "M",
-        bold: false,
-      },
-      "me",
-    )
+    const sticky = addSticky(doc, { center: { x: 0, y: 0 } }, "me")
     setTextStyle(doc, text, { fontSize: "XL", bold: true, align: "right" }, "me")
     setTextStyle(doc, sticky, { fontSize: "L", align: "right" }, "me")
     expect(
@@ -140,6 +128,32 @@ describe("text Elements", () => {
         e.type === "text" ? [e.fontSize, e.bold, e.align] : e.type === "sticky" && e.fontSize,
       ),
     ).toEqual([["XL", true, "right"], "L"])
+    expect(validateBoardDoc(doc)).toEqual([])
+  })
+})
+
+describe("sticky notes", () => {
+  it("adds a square yellow note centered on the point", () => {
+    const doc = new Y.Doc()
+    addSticky(doc, { center: { x: 100, y: 50 }, content: "hi" }, "me")
+    const [note] = listElements(doc)
+    expect(note).toMatchObject({
+      type: "sticky",
+      position: { x: 0, y: -50 },
+      size: { w: 200, h: 200 },
+      color: "yellow",
+      text: "hi",
+      fontSize: "M",
+      bold: false,
+    })
+    expect(validateBoardDoc(doc)).toEqual([])
+  })
+
+  it("ignores XL, which stickies don't have", () => {
+    const doc = new Y.Doc()
+    const id = addSticky(doc, { center: { x: 0, y: 0 }, fontSize: "L" }, "me")
+    setTextStyle(doc, id, { fontSize: "XL", bold: true }, "me")
+    expect(listElements(doc)).toMatchObject([{ fontSize: "L", bold: true }])
     expect(validateBoardDoc(doc)).toEqual([])
   })
 })
