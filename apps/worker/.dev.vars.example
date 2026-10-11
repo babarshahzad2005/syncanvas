@@ -5,6 +5,8 @@
 
 # Ticket 05: Better Auth session signing secret. Fill it with: pnpm --filter @syncanvas/worker gen:secret
 BETTER_AUTH_SECRET=
+# Local origin (production uses the workers.dev URL from wrangler.jsonc).
+BETTER_AUTH_URL=http://localhost:5173
 
 # Ticket 07: board token signing keys (Ed25519 JWK, base64url). Fill them with: pnpm --filter @syncanvas/worker gen:keys
 BOARD_TOKEN_PRIVATE_KEY=
@@ -12,3 +14,8 @@ BOARD_TOKEN_PUBLIC_KEY=
 
 # Ticket 08: lets end-to-end tests read magic links at /api/dev/magic-link (localhost only).
 DEV_MAGIC_LINK_INBOX=on
+
+# Ticket 10: leave BREVO_API_KEY empty locally to print links in the terminal instead of emailing.
+BREVO_API_KEY=
+# Production only (a Cloudflare secret, so the address stays out of the public repo).
+BREVO_SENDER_EMAIL=

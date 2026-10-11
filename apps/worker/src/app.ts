@@ -17,6 +17,7 @@ import {
 import { signBoardToken } from "./board-token"
 import { createBoard, findMembership, listBoards } from "./boards"
 import { createDb, type Database } from "./db/client"
+import { brevoMagicLinkSender } from "./email"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
 export type Services = { db: Database; auth: Auth; dispose?: () => Promise<void> }
@@ -28,7 +29,11 @@ export const productionServices: ServicesFactory = (env) => {
     db,
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
-    sendMagicLink: devInboxEnabled(env) ? logAndKeepMagicLink : logMagicLink,
+    sendMagicLink: env.BREVO_API_KEY
+      ? brevoMagicLinkSender({ apiKey: env.BREVO_API_KEY, senderEmail: env.BREVO_SENDER_EMAIL })
+      : devInboxEnabled(env)
+        ? logAndKeepMagicLink
+        : logMagicLink,
   })
   return { db, auth, dispose: close }
 }
