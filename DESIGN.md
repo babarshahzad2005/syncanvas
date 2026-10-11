@@ -214,6 +214,7 @@ Twelve saturated colors, separate from the palette and the accent, so a cursor n
 - **Bottom center: the dock** is one panel. Its **tool row** holds compact 32px icon buttons, all tools, active tool in `primary-subtle`. While something is selected, a **style tray** slides up out of the same panel (220ms `ease-out`), separated by a hairline on a `muted` background. The tray shows only the controls that apply to the selection:
   - **Sticky notes:** sticky colors, text size S/M/L, bold.
   - **Shapes:** Palette color, plus fill none / light / solid (small squares previewing each fill in the current color).
+  - **Pen strokes:** Palette color, plus width S / M / L (letter buttons, active one in `primary-subtle`). While the pen tool is active with nothing selected, the same tray sets the color and width of the next strokes.
   - **Always:** lock and "more".
 - **Bottom right:** a pill with undo and redo, then the zoom percentage. Clicking the percentage opens a menu: zoom in, zoom out, zoom to fit, 100%.
 - **Comment Threads open inline** as a popover card beside their pin, never covering the pinned Element. The card is placed on the side with the most free space. Escape or a click on the Board closes it. There's no permanent comments side panel.
@@ -276,6 +277,7 @@ shadcn/ui on **Base UI** with the **nova** style and Lucide icons. Only the comp
 - **Cursors:** a 16px arrow in the presence color with a 1.5px white outline. The label pill sits below and to the right, with white `label` text, and fades out after 3s without movement. Motion is smoothed with `perfect-cursors`.
 - **Comment pins:** a 28px teardrop pointing to its anchor, on `surface` with panel elevation, showing the author's initials or the reply count. A Detached Thread pin is at 50% opacity with a dashed border. Resolved pins are hidden unless the filter is on.
 - **Lock:** a locked Element shows a small lock badge on hover, with no other visual change.
+- **Pen strokes:** drawn with `perfect-freehand` (thinning 0.6, smoothing 0.5, streamline 0.5) in the stroke shade. Widths S / M / L are 2 / 4 / 8 canvas units. A stylus varies the width with pressure; mouse and touch draw at a constant width.
 
 ## Motion
 

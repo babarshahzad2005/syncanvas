@@ -1,4 +1,5 @@
 import {
+  addPen,
   addShape,
   deleteElements,
   type ElementWithId,
@@ -7,6 +8,7 @@ import {
   listElements,
   moveElement,
   type Point,
+  type StrokePoint,
 } from "@syncanvas/board-model"
 import {
   boundsOf,
@@ -28,6 +30,8 @@ import { isShapeTool, type ShapeTool, useBoardUi } from "./store"
 
 /** Moving an existing Element streams to collaborators at about 20 per second (FLOWS §2). */
 const MOVE_SEND_INTERVAL_MS = 50
+/** Pen points closer than this (screen px) to the simplified line are dropped. */
+const PEN_TOLERANCE_PX = 0.5
 /** Shapes smaller than this (in screen px) are treated as a click, not a drag. */
 const MIN_DRAW_PX = 4
 
@@ -41,6 +45,7 @@ type Gesture =
   | { kind: "pan"; pointerId: number; start: Point; camera: Camera }
   | { kind: "pinch"; distance: number; center: Point; camera: Camera }
   | { kind: "draw"; pointerId: number; shape: ShapeTool; start: Point; current: Point }
+  | { kind: "stroke"; pointerId: number; points: StrokePoint[] }
   | {
       kind: "move"
       pointerId: number
@@ -98,13 +103,14 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       const ctx = canvasRef.current?.getContext("2d")
       if (!ctx) return
       const g = s.gesture
+      const ui = useBoardUi.getState()
       drawScene(ctx, {
         elements: s.elements,
         camera: s.camera,
         theme: s.theme,
         size: s.size,
         dpr: s.dpr,
-        selection: useBoardUi.getState().selection,
+        selection: ui.selection,
         dragging: g?.kind === "move" ? new Map([[g.id, g.position]]) : undefined,
         preview:
           g?.kind === "draw"
@@ -115,7 +121,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
                 color: "ink",
                 fill: "light",
               }
-            : null,
+            : g?.kind === "stroke"
+              ? { type: "pen", points: g.points, ...ui.pen }
+              : null,
       })
     })
   }, [])
@@ -234,6 +242,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         case "v":
           ui().setTool("select")
           return
+        case "p":
+          if (canEdit) ui().setTool("pen")
+          return
         case "r":
           if (canEdit) ui().setTool("rect")
           return
@@ -300,6 +311,12 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     }
     if (e.button !== 0) return
 
+    if (ui.tool === "pen" && canEdit) {
+      undoManager.stopCapturing()
+      s.gesture = { kind: "stroke", pointerId: e.pointerId, points: [strokePoint(e, s.camera)] }
+      ui.select([])
+      return
+    }
     if (isShapeTool(ui.tool) && canEdit) {
       undoManager.stopCapturing()
       s.gesture = {
@@ -368,6 +385,13 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     } else if (g.kind === "draw") {
       g.current = screenToWorld(s.camera, point)
       render()
+    } else if (g.kind === "stroke") {
+      // Coalesced events keep fast strokes smooth: the browser batches points between frames.
+      const events = e.nativeEvent.getCoalescedEvents?.() ?? []
+      for (const event of events.length > 0 ? events : [e.nativeEvent]) {
+        g.points.push(strokePoint(event, s.camera))
+      }
+      render()
     } else if (g.kind === "move") {
       const world = screenToWorld(s.camera, point)
       g.position = { x: world.x - g.grab.x, y: world.y - g.grab.y }
@@ -403,13 +427,30 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         useBoardUi.getState().select([id])
       }
       useBoardUi.getState().setTool("select")
+    } else if (g.kind === "stroke") {
+      // One write for the whole stroke; the pen stays active for the next one.
+      addPen(
+        doc,
+        {
+          points: g.points,
+          ...useBoardUi.getState().pen,
+          tolerance: PEN_TOLERANCE_PX / s.camera.zoom,
+        },
+        origin,
+      )
     } else if (g.kind === "move" && g.moved) {
       moveElement(doc, g.id, g.position, origin)
     }
     render()
   }
 
-  const cursor = isShapeTool(tool) && canEdit ? "crosshair" : "default"
+  function strokePoint(e: PointerEvent | React.PointerEvent, camera: Camera): StrokePoint {
+    const world = screenToWorld(camera, local(e))
+    // Only a stylus reports real pressure; mouse and touch get a constant middle value.
+    return [world.x, world.y, e.pointerType === "pen" ? e.pressure : 0.5]
+  }
+
+  const cursor = (isShapeTool(tool) || tool === "pen") && canEdit ? "crosshair" : "default"
 
   return (
     <canvas

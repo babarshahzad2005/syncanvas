@@ -61,6 +61,24 @@ describe("hitTest", () => {
     fill: "light",
   })
 
+  it("hits a pen stroke along its path, not its whole box", () => {
+    const stroke = {
+      id: "p",
+      type: "pen",
+      position: { x: 0, y: 0 },
+      size: { w: 100, h: 100 },
+      z: "a0",
+      color: "ink",
+      width: "M",
+      points: [
+        [0, 0, 0.5],
+        [100, 100, 0.5],
+      ],
+    } as ElementWithId
+    expect(hitTest([stroke], { x: 50, y: 52 }, 1)).toBe("p") // near the diagonal
+    expect(hitTest([stroke], { x: 90, y: 10 }, 1)).toBeNull() // inside the box, far from the line
+  })
+
   it("respects the ellipse shape", () => {
     const ellipse = { ...rect("e", 0, "a0"), type: "ellipse" } as ElementWithId
     expect(hitTest([ellipse], { x: 50, y: 50 }, 1)).toBe("e")

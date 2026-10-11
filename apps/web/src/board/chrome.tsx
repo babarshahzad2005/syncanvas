@@ -3,8 +3,10 @@ import {
   type Fill,
   PALETTE_COLORS,
   type PaletteColor,
+  type PenWidth,
   recolorElement,
   setFill,
+  setPenWidth,
 } from "@syncanvas/board-model"
 import { paletteShades } from "@syncanvas/renderer"
 import {
@@ -50,7 +52,7 @@ const TOOLS: {
   icon: typeof Square
 }[] = [
   { id: "select", label: "Select", shortcut: "V", icon: MousePointer2 },
-  { id: null, label: "Pen", shortcut: "P", icon: Pencil },
+  { id: "pen", label: "Pen", shortcut: "P", icon: Pencil },
   { id: "rect", label: "Rectangle", shortcut: "R", icon: Square },
   { id: "ellipse", label: "Ellipse", shortcut: "O", icon: Circle },
   { id: null, label: "Arrow", shortcut: "A", icon: MoveUpRight },
@@ -63,6 +65,13 @@ const TOOLS: {
 
 /** Element types that have a fill (spec: style tray per type). */
 const SHAPE_TYPES = new Set(["rect", "ellipse"])
+const PEN_TYPES = new Set(["pen"])
+
+const WIDTHS: { width: PenWidth; label: string }[] = [
+  { width: "S", label: "Thin" },
+  { width: "M", label: "Medium" },
+  { width: "L", label: "Thick" },
+]
 
 const FILLS: { fill: Fill; label: string }[] = [
   { fill: "none", label: "No fill" },
@@ -103,7 +112,7 @@ export function Dock({ doc, origin, canEdit }: { doc: Y.Doc; origin: object; can
   const tool = useBoardUi((s) => s.tool)
   const setTool = useBoardUi((s) => s.setTool)
   const selection = useBoardUi((s) => s.selection)
-  const showTray = canEdit && selection.size > 0
+  const tray = !canEdit ? null : selection.size > 0 ? "selection" : tool === "pen" ? "pen" : null
 
   return (
     <div
@@ -112,7 +121,8 @@ export function Dock({ doc, origin, canEdit }: { doc: Y.Doc; origin: object; can
         "fixed bottom-3 left-1/2 flex -translate-x-1/2 flex-col overflow-hidden rounded-xl",
       )}
     >
-      {showTray && <StyleTray doc={doc} origin={origin} selection={selection} />}
+      {tray === "selection" && <SelectionTray doc={doc} origin={origin} selection={selection} />}
+      {tray === "pen" && <PenToolTray />}
       <div
         role="toolbar"
         aria-label="Tools"
@@ -149,7 +159,8 @@ export function Dock({ doc, origin, canEdit }: { doc: Y.Doc; origin: object; can
   )
 }
 
-function StyleTray({
+/** The tray for a selection: shows and edits what the selected Elements have. */
+function SelectionTray({
   doc,
   origin,
   selection,
@@ -158,7 +169,6 @@ function StyleTray({
   origin: object
   selection: ReadonlySet<string>
 }) {
-  const theme = useResolvedTheme()
   // Re-read on every document change, so the marked controls follow edits (local or remote).
   // The snapshot is a string so React can compare it cheaply.
   const snapshot = useSyncExternalStore(
@@ -171,15 +181,71 @@ function StyleTray({
       const elements = elementsOf(doc)
       const fields = [...selection].map((id) => elements.get(id))
       const first = fields[0]
-      const allShapes = fields.every((f) => SHAPE_TYPES.has(f?.get("type") as string))
+      const all = (types: Set<string>) => fields.every((f) => types.has(f?.get("type") as string))
       return JSON.stringify([
-        first?.get("color"),
-        allShapes ? (first?.get("fill") ?? "light") : null,
+        first?.get("color") ?? null,
+        all(SHAPE_TYPES) ? (first?.get("fill") ?? "light") : null,
+        all(PEN_TYPES) ? (first?.get("width") ?? null) : null,
       ])
     },
   )
-  const [current, currentFill] = JSON.parse(snapshot) as [PaletteColor | undefined, Fill | null]
-  const currentShades = paletteShades(current ?? "ink", theme)
+  const [color, fill, width] = JSON.parse(snapshot) as [
+    PaletteColor | null,
+    Fill | null,
+    PenWidth | null,
+  ]
+  return (
+    <TrayControls
+      color={color}
+      fill={fill}
+      width={width}
+      onColor={(value) => {
+        for (const id of selection) recolorElement(doc, id, value, origin)
+      }}
+      onFill={(value) => {
+        for (const id of selection) setFill(doc, id, value, origin)
+      }}
+      onWidth={(value) => {
+        for (const id of selection) setPenWidth(doc, id, value, origin)
+      }}
+    />
+  )
+}
+
+/** The tray while the pen tool is active: the color and width of the next strokes. */
+function PenToolTray() {
+  const pen = useBoardUi((s) => s.pen)
+  const setPen = useBoardUi((s) => s.setPen)
+  return (
+    <TrayControls
+      color={pen.color}
+      fill={null}
+      width={pen.width}
+      onColor={(color) => setPen({ ...pen, color })}
+      onFill={() => {}}
+      onWidth={(width) => setPen({ ...pen, width })}
+    />
+  )
+}
+
+/** Style tray controls (DESIGN.md: only the ones that apply). A null value hides its group. */
+function TrayControls({
+  color,
+  fill,
+  width,
+  onColor,
+  onFill,
+  onWidth,
+}: {
+  color: PaletteColor | null
+  fill: Fill | null
+  width: PenWidth | null
+  onColor: (color: PaletteColor) => void
+  onFill: (fill: Fill) => void
+  onWidth: (width: PenWidth) => void
+}) {
+  const theme = useResolvedTheme()
+  const currentShades = paletteShades(color ?? "ink", theme)
 
   return (
     <div
@@ -187,51 +253,70 @@ function StyleTray({
       aria-label="Style"
       className="flex animate-in items-center gap-1 border-b bg-muted/50 px-2 py-1.5 duration-(--duration-panel) ease-out fade-in slide-in-from-bottom-2"
     >
-      {PALETTE_COLORS.map((color) => {
-        const shades = paletteShades(color, theme)
+      {PALETTE_COLORS.map((option) => {
+        const shades = paletteShades(option, theme)
         return (
           <button
-            key={color}
+            key={option}
             type="button"
-            aria-label={`Color ${color}`}
-            aria-pressed={current === color}
-            onClick={() => {
-              for (const id of selection) recolorElement(doc, id, color, origin)
-            }}
+            aria-label={`Color ${option}`}
+            aria-pressed={color === option}
+            onClick={() => onColor(option)}
             className={cn(
               "size-6 rounded-full border-2 transition-transform duration-(--duration-press) ease-out active:scale-90 pointer-coarse:size-9",
-              current === color && "ring-2 ring-primary ring-offset-2 ring-offset-muted",
+              color === option && "ring-2 ring-primary ring-offset-2 ring-offset-muted",
             )}
             style={{ background: shades.fill, borderColor: shades.stroke }}
           />
         )
       })}
-      {currentFill !== null && (
+      {fill !== null && (
         <>
           <span className="mx-1.5 h-5 w-px bg-border" />
-          {FILLS.map(({ fill, label }) => (
-            <Hint key={fill} label={label}>
+          {FILLS.map((option) => (
+            <Hint key={option.fill} label={option.label}>
               <button
                 type="button"
-                aria-label={label}
-                aria-pressed={currentFill === fill}
-                onClick={() => {
-                  for (const id of selection) setFill(doc, id, fill, origin)
-                }}
+                aria-label={option.label}
+                aria-pressed={fill === option.fill}
+                onClick={() => onFill(option.fill)}
                 className={cn(
                   "size-6 rounded-sm border-2 transition-transform duration-(--duration-press) ease-out active:scale-90 pointer-coarse:size-9",
-                  currentFill === fill && "ring-2 ring-primary ring-offset-2 ring-offset-muted",
+                  fill === option.fill && "ring-2 ring-primary ring-offset-2 ring-offset-muted",
                 )}
                 style={{
                   borderColor: currentShades.stroke,
                   background:
-                    fill === "none"
+                    option.fill === "none"
                       ? "transparent"
-                      : fill === "solid"
+                      : option.fill === "solid"
                         ? currentShades.stroke
                         : currentShades.fill,
                 }}
               />
+            </Hint>
+          ))}
+        </>
+      )}
+      {width !== null && (
+        <>
+          <span className="mx-1.5 h-5 w-px bg-border" />
+          {WIDTHS.map((option) => (
+            <Hint key={option.width} label={option.label}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={option.label}
+                aria-pressed={width === option.width}
+                onClick={() => onWidth(option.width)}
+                className={cn(
+                  "type-label",
+                  width === option.width &&
+                    "bg-primary-subtle text-primary hover:bg-primary-subtle",
+                )}
+              >
+                {option.width}
+              </Button>
             </Hint>
           ))}
         </>

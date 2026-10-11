@@ -11,6 +11,8 @@ declare global {
         size?: { w: number; h: number }
         color: string
         fill?: string
+        points?: number[][]
+        width?: string
       }[]
       camera: () => { x: number; y: number; zoom: number }
     }

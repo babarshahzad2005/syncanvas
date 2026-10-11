@@ -4,10 +4,14 @@ import {
   hasBox,
   indexById,
   type PaletteColor,
+  type PenElement,
+  type PenWidth,
   type Point,
   resolveConnector,
   type Size,
+  type StrokePoint,
 } from "@syncanvas/board-model"
+import { getStroke } from "perfect-freehand"
 
 // Canvas2D drawing shared by the screen (and later PNG export and thumbnails).
 // No DOM access beyond the 2D context it's handed.
@@ -176,6 +180,18 @@ export function hitTest(
       if (distanceToSegment(world, start, end) <= tolerance) return e.id
       continue
     }
+    if (e.type === "pen") {
+      // Along the stroke itself, not its box.
+      const reach = tolerance + PEN_WIDTHS[e.width] / 2
+      const points = absolutePoints(e)
+      for (let j = 0; j < points.length; j++) {
+        const a = points[j] as StrokePoint
+        const b = points[j + 1] ?? a
+        const d = distanceToSegment(world, { x: a[0], y: a[1] }, { x: b[0], y: b[1] })
+        if (d <= reach) return e.id
+      }
+      continue
+    }
     if (e.type === "ellipse") {
       // Inside the ellipse grown by the tolerance on each axis.
       const rx = e.size.w / 2 + tolerance
@@ -210,13 +226,11 @@ export type Scene = {
   /** Positions overriding the document while a local drag is in progress. */
   dragging?: ReadonlyMap<string, Point>
   /** The rectangle being drawn, in world coordinates (not yet in the document). */
-  preview?: {
-    type: "rect" | "ellipse"
-    position: Point
-    size: Size
-    color: PaletteColor
-    fill: Fill
-  } | null
+  /** What's being drawn right now, in world coordinates (not yet in the document). */
+  preview?:
+    | { type: "rect" | "ellipse"; position: Point; size: Size; color: PaletteColor; fill: Fill }
+    | { type: "pen"; points: readonly StrokePoint[]; color: PaletteColor; width: PenWidth }
+    | null
   showGrid?: boolean
 }
 
@@ -240,7 +254,10 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
     : scene.elements
   const byId = indexById(elements)
   for (const e of elements) drawElement(ctx, e, byId, theme, camera.zoom)
-  if (scene.preview) {
+  if (scene.preview?.type === "pen") {
+    const p = scene.preview
+    drawStroke(ctx, p.points, p.width, paletteShades(p.color, theme).stroke, false)
+  } else if (scene.preview) {
     const p = scene.preview
     const position = {
       x: p.size.w < 0 ? p.position.x + p.size.w : p.position.x,
@@ -314,12 +331,7 @@ function drawElement(
       drawEllipse(ctx, e.position, e.size, e.fill, shades, zoom)
       return
     case "pen":
-      drawPolyline(
-        ctx,
-        e.points.map(([x, y]) => ({ x: e.position.x + x, y: e.position.y + y })),
-        shades.stroke,
-        zoom,
-      )
+      drawStroke(ctx, absolutePoints(e), e.width, shades.stroke, true)
       return
     case "arrow":
       drawPolyline(
@@ -352,6 +364,44 @@ function drawElement(
       ctx.strokeRect(e.position.x, e.position.y, e.size.w, e.size.h)
       return
   }
+}
+
+// ---------- Pen strokes ----------
+
+/** Stroke widths in world units (DESIGN.md → Canvas). */
+export const PEN_WIDTHS: Record<PenWidth, number> = { S: 2, M: 4, L: 8 }
+
+function absolutePoints(e: PenElement): StrokePoint[] {
+  return e.points.map(([x, y, pressure]) => [e.position.x + x, e.position.y + y, pressure])
+}
+
+/**
+ * Draws a stroke as a filled perfect-freehand outline. Pressure always comes from the
+ * points: a mouse or finger records a constant 0.5, which gives a constant width.
+ */
+function drawStroke(
+  ctx: CanvasRenderingContext2D,
+  points: readonly StrokePoint[],
+  width: PenWidth,
+  color: string,
+  complete: boolean,
+) {
+  const outline = getStroke(points as StrokePoint[], {
+    size: PEN_WIDTHS[width],
+    thinning: 0.6,
+    smoothing: 0.5,
+    streamline: 0.5,
+    simulatePressure: false,
+    last: complete,
+  })
+  const [first, ...rest] = outline
+  if (!first) return
+  ctx.beginPath()
+  ctx.moveTo(first[0] ?? 0, first[1] ?? 0)
+  for (const [x = 0, y = 0] of rest) ctx.lineTo(x, y)
+  ctx.closePath()
+  ctx.fillStyle = color
+  ctx.fill()
 }
 
 function drawPolyline(ctx: CanvasRenderingContext2D, points: Point[], color: string, zoom: number) {

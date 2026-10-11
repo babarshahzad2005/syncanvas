@@ -34,6 +34,7 @@ export type Shape = {
   h: number
   color: string
   fill?: string
+  points?: number[][]
 }
 
 /** Elements with a box, rounded to whole pixels. */
@@ -52,6 +53,7 @@ export async function elements(page: Page): Promise<Shape[]> {
                 h: Math.round(e.size.h),
                 color: e.color,
                 fill: e.fill,
+                points: e.points,
               },
             ]
           : [],
