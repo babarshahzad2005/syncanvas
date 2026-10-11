@@ -274,7 +274,8 @@ shadcn/ui on **Base UI** with the **nova** style and Lucide icons. Only the comp
 
 - **Dot grid:** a 1px dot every 24 canvas units in `grid-dot`. Below 50% zoom the spacing doubles. Below 25% the grid fades out entirely. It can be toggled in the Board menu.
 - **Local selection:** a 1.5px `primary` outline. Handles are 8×8px white squares with a 1.5px `primary` border and 2px radius. They keep a constant screen size at any zoom.
-- **Marquee:** `primary` at 8% opacity, with a 1px `primary` border.
+- **Multi-selection:** each member gets a 1px `primary` outline (lines get a 1px line along them), and the selection as a whole gets the local selection box and handles.
+- **Marquee:** `primary` at 8% opacity, with a 1px `primary` border. It selects what lies entirely inside it; Shift+drag adds to the selection.
 - **Remote selection:** a 1.5px outline in the Collaborator's presence color, plus a small name tag.
 - **Cursors:** a 16px arrow in the presence color with a 1.5px white outline. The label pill sits below and to the right, with white `label` text, and fades out after 3s without movement. Motion is smoothed with `perfect-cursors`.
 - **Comment pins:** a 28px teardrop pointing to its anchor, on `surface` with panel elevation, showing the author's initials or the reply count. A Detached Thread pin is at 50% opacity with a dashed border. Resolved pins are hidden unless the filter is on.

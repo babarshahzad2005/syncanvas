@@ -9,10 +9,11 @@ import {
   elementsOf,
   hasBox,
   listElements,
-  moveElement,
+  moveElements,
   type PaletteColor,
   type PenWidth,
   type Point,
+  readElement,
   type StrokePoint,
   setTextStyle,
   textOf,
@@ -22,6 +23,7 @@ import {
   type Camera,
   clearTextLayoutCache,
   drawScene,
+  ElementIndex,
   fitCamera,
   hitTest,
   LINE_HEIGHT,
@@ -47,6 +49,15 @@ const MOVE_SEND_INTERVAL_MS = 50
 const PEN_TOLERANCE_PX = 0.5
 /** Shapes smaller than this (in screen px) are treated as a click, not a drag. */
 const MIN_DRAW_PX = 4
+/** Arrow keys nudge the selection this far (canvas units), or further with Shift. */
+const NUDGE = 1
+const NUDGE_SHIFT = 10
+const ARROWS: Record<string, Point> = {
+  ArrowLeft: { x: -1, y: 0 },
+  ArrowRight: { x: 1, y: 0 },
+  ArrowUp: { x: 0, y: -1 },
+  ArrowDown: { x: 0, y: 1 },
+}
 
 export type CanvasHandle = {
   zoomBy: (factor: number) => void
@@ -60,13 +71,24 @@ type Gesture =
   | { kind: "draw"; pointerId: number; tool: DragTool; start: Point; current: Point }
   | { kind: "stroke"; pointerId: number; points: StrokePoint[] }
   | {
+      // Moving the selection: every member keeps its offset from where it started.
       kind: "move"
       pointerId: number
-      id: string
-      grab: Point
-      position: Point
+      start: Point
+      origins: Map<string, Point>
+      offset: Point
       moved: boolean
       lastSent: number
+      /** Pressed on a member of a multi-selection: a click without a drag selects just it. */
+      collapseTo: string | null
+    }
+  | {
+      kind: "marquee"
+      pointerId: number
+      start: Point
+      current: Point
+      /** Selected before the drag (kept when Shift is held). */
+      base: ReadonlySet<string>
     }
 
 type Props = {
@@ -82,6 +104,13 @@ declare global {
     __SYNCANVAS_TEST__?: boolean
     __syncanvas?: { elements: () => ElementWithId[]; camera: () => Camera }
   }
+}
+
+/** Where each dragged Element is right now, during a move. */
+function draggedPositions(g: Extract<Gesture, { kind: "move" }>): Map<string, Point> {
+  const positions = new Map<string, Point>()
+  for (const [id, p] of g.origins) positions.set(id, { x: p.x + g.offset.x, y: p.y + g.offset.y })
+  return positions
 }
 
 /** What the gesture in progress is drawing, for the renderer to show before it's written. */
@@ -127,7 +156,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     cameraReady: false,
     size: { w: 0, h: 0 },
     dpr: 1,
-    elements: [] as ElementWithId[],
+    index: new ElementIndex(),
     gesture: null as Gesture | null,
     pointers: new Map<number, Point>(),
     spaceHeld: false,
@@ -141,7 +170,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const s = state.current
     const editor = editorRef.current
     const id = useBoardUi.getState().editing?.id
-    const element = s.elements.find((el) => el.id === id)
+    const element = id ? s.index.byId.get(id) : undefined
     if (!editor || !element || !hasBox(element)) return
     const p = worldToScreen(s.camera, element.position)
     editor.style.transform = `translate(${p.x}px, ${p.y}px) scale(${s.camera.zoom})`
@@ -157,15 +186,36 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       if (!ctx) return
       const g = s.gesture
       const ui = useBoardUi.getState()
+      const dragging = g?.kind === "move" ? draggedPositions(g) : undefined
+      // Only what's in view (with a margin for strokes), plus whatever is being dragged.
+      const topLeft = screenToWorld(s.camera, { x: 0, y: 0 })
+      const margin = 16 / s.camera.zoom
+      const visible = s.index.query(
+        {
+          x: topLeft.x - margin,
+          y: topLeft.y - margin,
+          w: s.size.w / s.camera.zoom + margin * 2,
+          h: s.size.h / s.camera.zoom + margin * 2,
+        },
+        dragging?.keys(),
+      )
       drawScene(ctx, {
-        elements: s.elements,
+        elements: visible,
+        byId: s.index.byId,
         camera: s.camera,
         theme: s.theme,
         size: s.size,
         dpr: s.dpr,
         selection: ui.selection,
-        dragging: g?.kind === "move" ? new Map([[g.id, g.position]]) : undefined,
+        dragging,
         preview: previewOf(g, ui.pen),
+        marquee:
+          g?.kind === "marquee"
+            ? {
+                position: g.start,
+                size: { w: g.current.x - g.start.x, h: g.current.y - g.start.y },
+              }
+            : null,
         editing: ui.editing?.id ?? null,
       })
       placeEditor()
@@ -187,7 +237,10 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       const { size, camera } = state.current
       setCamera(zoomAt(camera, { x: size.w / 2, y: size.h / 2 }, zoom / camera.zoom))
     },
-    fit: () => setCamera(fitCamera(boundsOf(state.current.elements), state.current.size)),
+    fit: () => {
+      const { index, size } = state.current
+      setCamera(fitCamera(boundsOf(index.all(), index.byId), size))
+    },
   }))
 
   // Re-render when the theme or the selection changes.
@@ -196,18 +249,31 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     return useBoardUi.subscribe(render)
   })
 
-  // Keep the Element list in sync with the document (local and remote changes alike).
+  // Keep the spatial index in sync with the document (local and remote changes alike),
+  // re-reading only the Elements each change touched.
   useEffect(() => {
     const elements = elementsOf(doc)
-    const refresh = () => {
-      state.current.elements = listElements(doc)
+    state.current.index.reset(listElements(doc))
+    const refresh = (events: Y.YEvent<Y.AbstractType<unknown>>[]) => {
+      const changed = new Set<string>()
+      for (const event of events) {
+        if (event.target === elements) for (const id of event.changes.keys.keys()) changed.add(id)
+        else if (typeof event.path[0] === "string") changed.add(event.path[0])
+      }
+      state.current.index.update(
+        [...changed].map((id) => {
+          const fields = elements.get(id)
+          const element = fields ? readElement(fields) : null
+          return [id, element ? { ...element, id } : null] as const
+        }),
+      )
       // Drop selected Elements that someone else deleted.
       const { selection, select } = useBoardUi.getState()
       const alive = [...selection].filter((id) => elements.has(id))
       if (alive.length !== selection.size) select(alive)
       render()
     }
-    refresh()
+    render()
     elements.observeDeep(refresh)
     if (window.__SYNCANVAS_TEST__) {
       window.__syncanvas = { elements: () => listElements(doc), camera: () => state.current.camera }
@@ -225,6 +291,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     ]).then(() => {
       if (cancelled) return
       clearTextLayoutCache()
+      // Text and sticky boxes were measured with the fallback font: index them again.
+      state.current.index.reset(state.current.index.all())
       render()
     })
     return () => {
@@ -291,9 +359,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       }
       if (mod && e.key.toLowerCase() === "b") {
         // Bold for selected texts and stickies, toggled together from the first one's state.
-        const texts = state.current.elements.filter(
-          (el) => ui().selection.has(el.id) && (el.type === "text" || el.type === "sticky"),
-        )
+        const texts = selectedElements().filter((el) => el.type === "text" || el.type === "sticky")
         const first = texts[0]
         if (!canEdit || !(first?.type === "text" || first?.type === "sticky")) return
         e.preventDefault()
@@ -309,7 +375,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       // Typing while one text or sticky is selected starts editing it (Enter just opens the
       // editor).
       const selected = ui().selection.size === 1 ? [...ui().selection][0] : undefined
-      const element = state.current.elements.find((el) => el.id === selected)
+      const element = selected ? state.current.index.byId.get(selected) : undefined
       if (
         canEdit &&
         (element?.type === "text" || element?.type === "sticky") &&
@@ -326,7 +392,31 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         return
       }
       if (e.shiftKey && e.code === "Digit1") {
-        setCamera(fitCamera(boundsOf(state.current.elements), state.current.size))
+        const { index, size } = state.current
+        setCamera(fitCamera(boundsOf(index.all(), index.byId), size))
+        return
+      }
+      const arrow = ARROWS[e.key]
+      if (arrow && ui().selection.size > 0) {
+        // Each press is its own undo step (holding the key repeats it).
+        e.preventDefault()
+        if (!canEdit) return
+        const step = e.shiftKey ? NUDGE_SHIFT : NUDGE
+        undoManager.stopCapturing()
+        moveElements(
+          doc,
+          selectedElements().flatMap((el) =>
+            hasBox(el)
+              ? [
+                  [
+                    el.id,
+                    { x: el.position.x + arrow.x * step, y: el.position.y + arrow.y * step },
+                  ] as const,
+                ]
+              : [],
+          ),
+          origin,
+        )
         return
       }
       switch (e.key.toLowerCase()) {
@@ -430,29 +520,71 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       return
     }
 
-    const hit = hitTest(s.elements, world, s.camera.zoom)
+    const hit = hitAt(world)
     if (!hit) {
-      ui.select([])
       // On touch, dragging empty canvas pans (there's no Space key).
       if (e.pointerType === "touch") {
+        ui.select([])
         s.gesture = { kind: "pan", pointerId: e.pointerId, start: point, camera: s.camera }
+        return
       }
+      // A marquee; with Shift it adds to the selection. Viewers can select too.
+      const base = e.shiftKey ? ui.selection : new Set<string>()
+      if (!e.shiftKey) ui.select([])
+      s.gesture = { kind: "marquee", pointerId: e.pointerId, start: world, current: world, base }
       return
     }
-    ui.select([hit])
+    if (e.shiftKey) {
+      // Shift+click toggles membership and starts nothing else.
+      const next = new Set(ui.selection)
+      if (next.has(hit)) next.delete(hit)
+      else next.add(hit)
+      ui.select(next)
+      return
+    }
+    // Pressing a member of the selection keeps the selection, so it can be dragged together.
+    const keep = ui.selection.has(hit)
+    if (!keep) ui.select([hit])
     if (!canEdit) return
-    const element = s.elements.find((el) => el.id === hit)
-    if (!element || !hasBox(element)) return // connectors follow their ends; moving them comes later
+    const origins = new Map<string, Point>()
+    for (const id of useBoardUi.getState().selection) {
+      const element = s.index.byId.get(id)
+      // Connectors follow their ends; moving them comes with ticket 12.
+      if (element && hasBox(element)) origins.set(id, element.position)
+    }
+    if (origins.size === 0) return
     undoManager.stopCapturing()
     s.gesture = {
       kind: "move",
       pointerId: e.pointerId,
-      id: hit,
-      grab: { x: world.x - element.position.x, y: world.y - element.position.y },
-      position: element.position,
+      start: world,
+      origins,
+      offset: { x: 0, y: 0 },
       moved: false,
       lastSent: 0,
+      collapseTo: keep && ui.selection.size > 1 ? hit : null,
     }
+  }
+
+  /** The topmost Element at a world point, looking only at Elements near it. */
+  function hitAt(world: Point): string | null {
+    const { index, camera } = state.current
+    const reach = 16 / camera.zoom
+    const nearby = index.query({
+      x: world.x - reach,
+      y: world.y - reach,
+      w: reach * 2,
+      h: reach * 2,
+    })
+    return hitTest(nearby, world, camera.zoom, index.byId)
+  }
+
+  function selectedElements(): ElementWithId[] {
+    const { byId } = state.current.index
+    return [...useBoardUi.getState().selection].flatMap((id) => {
+      const element = byId.get(id)
+      return element ? [element] : []
+    })
   }
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -494,13 +626,25 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       render()
     } else if (g.kind === "move") {
       const world = screenToWorld(s.camera, point)
-      g.position = { x: world.x - g.grab.x, y: world.y - g.grab.y }
+      g.offset = { x: world.x - g.start.x, y: world.y - g.start.y }
+      // A few pixels of jitter in a click isn't a move.
+      if (!g.moved && Math.hypot(g.offset.x, g.offset.y) * s.camera.zoom < MIN_DRAW_PX) return
       g.moved = true
       const now = performance.now()
       if (now - g.lastSent >= MOVE_SEND_INTERVAL_MS) {
         g.lastSent = now
-        moveElement(doc, g.id, g.position, origin)
+        moveElements(doc, draggedPositions(g), origin)
       }
+      render()
+    } else if (g.kind === "marquee") {
+      g.current = screenToWorld(s.camera, point)
+      const inside = s.index.inside({
+        x: g.start.x,
+        y: g.start.y,
+        w: g.current.x - g.start.x,
+        h: g.current.y - g.start.y,
+      })
+      useBoardUi.getState().select(new Set([...g.base, ...inside]))
       render()
     }
   }
@@ -577,8 +721,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         },
         origin,
       )
-    } else if (g.kind === "move" && g.moved) {
-      moveElement(doc, g.id, g.position, origin)
+    } else if (g.kind === "move") {
+      if (g.moved) moveElements(doc, draggedPositions(g), origin)
+      else if (g.collapseTo) useBoardUi.getState().select([g.collapseTo])
     }
     render()
   }
@@ -599,8 +744,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
   function onDoubleClick(e: React.MouseEvent<HTMLCanvasElement>) {
     if (!canEdit) return
     const s = state.current
-    const hit = hitTest(s.elements, screenToWorld(s.camera, local(e)), s.camera.zoom)
-    const element = s.elements.find((el) => el.id === hit)
+    const hit = hitAt(screenToWorld(s.camera, local(e)))
+    const element = hit ? s.index.byId.get(hit) : undefined
     if (element?.type !== "text" && element?.type !== "sticky") return
     useBoardUi.getState().select([element.id])
     useBoardUi.getState().setEditing({ id: element.id, continuing: false })

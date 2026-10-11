@@ -18,6 +18,7 @@ import {
 import { getStroke } from "perfect-freehand"
 import { layoutText, TEXT_SIZES, type TextLayout, textFont } from "./text"
 
+export * from "./spatial"
 export * from "./text"
 
 // Canvas2D drawing shared by the screen (and later PNG export and thumbnails).
@@ -68,9 +69,11 @@ export function fitCamera(
   }
 }
 
-export function boundsOf(elements: readonly ElementWithId[]) {
+export function boundsOf(
+  elements: readonly ElementWithId[],
+  byId: ReadonlyMap<string, ElementWithId> = indexById(elements),
+) {
   if (elements.length === 0) return null
-  const byId = indexById(elements)
   let minX = Number.POSITIVE_INFINITY
   let minY = Number.POSITIVE_INFINITY
   let maxX = Number.NEGATIVE_INFINITY
@@ -186,14 +189,18 @@ function distanceToSegment(p: Point, a: Point, b: Point): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
 }
 
-/** The topmost Element under a world point, with a small screen-space tolerance. */
+/**
+ * The topmost Element under a world point, with a small screen-space tolerance. `elements`
+ * may be just the candidates near the point (in drawing order); `byId` must then hold every
+ * Element, so connectors can find what they attach to.
+ */
 export function hitTest(
   elements: readonly ElementWithId[],
   world: Point,
   zoom: number,
+  byId: ReadonlyMap<string, ElementWithId> = indexById(elements),
 ): string | null {
   const tolerance = 4 / zoom
-  const byId = indexById(elements)
   for (let i = elements.length - 1; i >= 0; i--) {
     const e = elements[i]
     if (!e) continue
@@ -242,7 +249,10 @@ export function hitTest(
 // ---------- Drawing ----------
 
 export type Scene = {
+  /** What to draw, in drawing order: the whole Board, or just what's near the viewport. */
   elements: readonly ElementWithId[]
+  /** Every Element by id (connectors look up their ends here); defaults to `elements`. */
+  byId?: ReadonlyMap<string, ElementWithId>
   camera: Camera
   theme: Theme
   /** CSS pixel size of the canvas. */
@@ -251,7 +261,6 @@ export type Scene = {
   selection: ReadonlySet<string>
   /** Positions overriding the document while a local drag is in progress. */
   dragging?: ReadonlyMap<string, Point>
-  /** The rectangle being drawn, in world coordinates (not yet in the document). */
   /** What's being drawn right now, in world coordinates (not yet in the document). */
   preview?:
     | { type: "rect" | "ellipse"; position: Point; size: Size; color: PaletteColor; fill: Fill }
@@ -259,6 +268,8 @@ export type Scene = {
     | { type: "arrow"; from: Point; to: Point; color: PaletteColor }
     | null
   showGrid?: boolean
+  /** The marquee being dragged, in world coordinates. */
+  marquee?: { position: Point; size: Size } | null
   /** The text or sticky being edited in the textarea overlay: its text isn't drawn on the canvas. */
   editing?: string | null
 }
@@ -275,13 +286,20 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
 
   ctx.setTransform(dpr * camera.zoom, 0, 0, dpr * camera.zoom, dpr * camera.x, dpr * camera.y)
   // Apply local drags first, so connectors follow the shapes being dragged.
-  const elements = scene.dragging?.size
-    ? scene.elements.map((e) => {
-        const position = scene.dragging?.get(e.id)
-        return position && hasBox(e) ? { ...e, position } : e
-      })
-    : scene.elements
-  const byId = indexById(elements)
+  const dragged = (e: ElementWithId) => {
+    const position = scene.dragging?.get(e.id)
+    return position && hasBox(e) ? { ...e, position } : e
+  }
+  const elements = scene.dragging?.size ? scene.elements.map(dragged) : scene.elements
+  let byId: ReadonlyMap<string, ElementWithId> = scene.byId ?? indexById(scene.elements)
+  if (scene.dragging?.size) {
+    const copy = new Map(byId)
+    for (const id of scene.dragging.keys()) {
+      const e = copy.get(id)
+      if (e) copy.set(id, dragged(e))
+    }
+    byId = copy
+  }
   for (const e of elements) {
     if (e.id === scene.editing && e.type === "text") continue // the textarea shows it
     drawElement(ctx, e, byId, theme, camera.zoom, e.id === scene.editing)
@@ -306,21 +324,63 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
 
   // Selection chrome is drawn in screen space so handles keep a constant size at any zoom.
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  for (const e of elements) {
-    if (!scene.selection.has(e.id)) continue
-    const line = lineEnds(e, byId)
+  const toScreen = (box: { position: Point; size: Size }) => ({
+    p: worldToScreen(camera, box.position),
+    s: { w: box.size.w * camera.zoom, h: box.size.h * camera.zoom },
+  })
+  const selected = [...scene.selection].flatMap((id) => {
+    const e = byId.get(id)
+    return e ? [e] : []
+  })
+  const [only] = selected
+  if (selected.length === 1 && only) {
+    const line = lineEnds(only, byId)
     if (line) {
       // Lines show their two ends, not a box.
       drawHandles(ctx, [worldToScreen(camera, line.from), worldToScreen(camera, line.to)], colors)
-      continue
+    } else {
+      const { p, s } = toScreen(elementBox(only, byId))
+      drawSelection(ctx, p, s, colors)
     }
-    const box = elementBox(e, byId)
-    drawSelection(
-      ctx,
-      worldToScreen(camera, box.position),
-      { w: box.size.w * camera.zoom, h: box.size.h * camera.zoom },
-      colors,
-    )
+  } else if (selected.length > 1) {
+    // Each member gets a thin outline; the selection as a whole gets the box and handles.
+    ctx.lineWidth = 1
+    ctx.strokeStyle = colors.primary
+    for (const e of selected) {
+      const line = lineEnds(e, byId)
+      if (line) {
+        const from = worldToScreen(camera, line.from)
+        const to = worldToScreen(camera, line.to)
+        ctx.beginPath()
+        ctx.moveTo(from.x, from.y)
+        ctx.lineTo(to.x, to.y)
+        ctx.stroke()
+        continue
+      }
+      const { p, s } = toScreen(elementBox(e, byId))
+      ctx.strokeRect(p.x, p.y, s.w, s.h)
+    }
+    const bounds = boundsOf(selected, byId)
+    if (bounds) {
+      const { p, s } = toScreen({
+        position: { x: bounds.x, y: bounds.y },
+        size: { w: bounds.w, h: bounds.h },
+      })
+      drawSelection(ctx, p, s, colors)
+    }
+  }
+
+  if (scene.marquee) {
+    const { p, s } = toScreen(scene.marquee)
+    const x = Math.min(p.x, p.x + s.w)
+    const y = Math.min(p.y, p.y + s.h)
+    ctx.fillStyle = colors.primary
+    ctx.globalAlpha = 0.08
+    ctx.fillRect(x, y, Math.abs(s.w), Math.abs(s.h))
+    ctx.globalAlpha = 1
+    ctx.lineWidth = 1
+    ctx.strokeStyle = colors.primary
+    ctx.strokeRect(x + 0.5, y + 0.5, Math.abs(s.w), Math.abs(s.h))
   }
 }
 

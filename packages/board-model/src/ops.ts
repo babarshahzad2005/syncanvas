@@ -98,6 +98,20 @@ export function moveElement(doc: Y.Doc, id: string, position: Point, origin: unk
   doc.transact(() => fields.set("position", { x: position.x, y: position.y }), origin)
 }
 
+/** Moves several Elements in one transaction (one undo step, one update on the wire). */
+export function moveElements(
+  doc: Y.Doc,
+  positions: Iterable<readonly [string, Point]>,
+  origin: unknown,
+) {
+  doc.transact(() => {
+    for (const [id, position] of positions) {
+      const fields = elementsOf(doc).get(id)
+      if (fields?.has("position")) fields.set("position", { x: position.x, y: position.y })
+    }
+  }, origin)
+}
+
 /** Sets a color. Sticky notes only take sticky colors; other colors are ignored for them. */
 export function recolorElement(doc: Y.Doc, id: string, color: PaletteColor, origin: unknown) {
   const fields = elementsOf(doc).get(id)

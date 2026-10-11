@@ -18,6 +18,7 @@ import {
   elementsOf,
   listElements,
   moveElement,
+  moveElements,
   PALETTE_COLORS,
   recolorElement,
   STICKY_COLORS,
@@ -314,6 +315,25 @@ const editCommand = fc.oneof(
     arbitrary: fc.record({ op: fc.constant("fill" as const), client: editor, pick, fill }),
   },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("delete" as const), client: editor, pick }) },
+  {
+    // A multi-selection moved together: several Elements by the same offset.
+    weight: 2,
+    arbitrary: fc.record({
+      op: fc.constant("multiMove" as const),
+      client: editor,
+      picks: fc.array(pick, { minLength: 2, maxLength: 5 }),
+      dx: fc.integer({ min: -200, max: 200 }),
+      dy: fc.integer({ min: -200, max: 200 }),
+    }),
+  },
+  {
+    weight: 1,
+    arbitrary: fc.record({
+      op: fc.constant("multiDelete" as const),
+      client: editor,
+      picks: fc.array(pick, { minLength: 2, maxLength: 5 }),
+    }),
+  },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("undo" as const), client: editor }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("redo" as const), client: editor }) },
 )
@@ -343,6 +363,11 @@ type Command = typeof command extends fc.Arbitrary<infer T> ? T : never
 
 function runEdit(client: SimClient, c: EditCommand) {
   const { doc } = client
+  const picked = (picks: number[]) => {
+    const all = listElements(doc)
+    if (all.length === 0) return []
+    return [...new Set(picks.map((p) => all[p % all.length]))].flatMap((e) => (e ? [e] : []))
+  }
   const target = () => {
     if (!("pick" in c)) return undefined
     const all = listElements(doc)
@@ -415,6 +440,22 @@ function runEdit(client: SimClient, c: EditCommand) {
       if (id) setFill(doc, id, c.fill, LOCAL)
       break
     }
+    case "multiMove": {
+      const moved = picked(c.picks).flatMap((e) =>
+        "position" in e
+          ? [[e.id, { x: e.position.x + c.dx, y: e.position.y + c.dy }] as const]
+          : [],
+      )
+      moveElements(doc, moved, LOCAL)
+      break
+    }
+    case "multiDelete":
+      deleteElements(
+        doc,
+        picked(c.picks).map((e) => e.id),
+        LOCAL,
+      )
+      break
     case "delete": {
       const id = target()
       if (id) deleteElements(doc, [id], LOCAL)
