@@ -97,6 +97,12 @@ export type TextElement = Boxed & {
   fontSize: TextSize
   bold: boolean
   align: TextAlign
+  /**
+   * True: the box is as wide as the longest line and only Enter breaks lines. False: lines
+   * wrap at `size.w`. Either way, the drawn height comes from the text's layout; the stored
+   * `size` is the last measured box, a hint for anything that can't lay out text.
+   */
+  autoWidth: boolean
 }
 export type StickyElement = Boxed & {
   type: "sticky"
@@ -199,7 +205,7 @@ const SCHEMA: Record<ElementType, { required: readonly string[]; optional: reado
   connector: { required: ["type", "z", "color", "start", "end", "style"], optional: [] },
   text: {
     required: ["type", "position", "size", "z", "color", "text", "fontSize", "bold", "align"],
-    optional: [],
+    optional: ["autoWidth"],
   },
   sticky: {
     required: ["type", "position", "size", "z", "color", "text", "fontSize", "bold"],
@@ -282,7 +288,9 @@ export function readElement(fields: Y.Map<unknown>): Element | null {
       const align = fields.get("align")
       if (!isPaletteColor(color) || text === null || !isTextSize(fontSize)) return null
       if (typeof bold !== "boolean" || !isAlign(align)) return null
-      return { ...boxed, type, color, text, fontSize, bold, align }
+      const autoWidth = fields.get("autoWidth") ?? false
+      if (typeof autoWidth !== "boolean") return null
+      return { ...boxed, type, color, text, fontSize, bold, align, autoWidth }
     }
     case "sticky": {
       const text = readText(fields.get("text"))

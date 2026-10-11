@@ -25,7 +25,8 @@ export function BoardScreen() {
 
   return (
     <TooltipProvider delay={400}>
-      <div className="fixed inset-0 overflow-hidden bg-background">
+      {/* clip, not hidden: a text editor running off-screen must never scroll the Board. */}
+      <div className="fixed inset-0 overflow-clip bg-background">
         {doc && <BoardSurface doc={doc} editable={role ? canEdit(role) : false} />}
         <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
       </div>

@@ -13,6 +13,10 @@ declare global {
         fill?: string
         points?: number[][]
         width?: string
+        text?: string
+        fontSize?: string
+        bold?: boolean
+        align?: string
         ends?: { from: { x: number; y: number }; to: { x: number; y: number } }
       }[]
       camera: () => { x: number; y: number; zoom: number }

@@ -9,6 +9,8 @@ import {
   addArrow,
   addPen,
   addShape,
+  addText,
+  applyTextChange,
   checkUpdate,
   createUndoManager,
   deleteElements,
@@ -18,6 +20,7 @@ import {
   PALETTE_COLORS,
   recolorElement,
   setFill,
+  textOf,
   validateBoardDoc,
 } from "./index"
 
@@ -244,6 +247,30 @@ const editCommand = fc.oneof(
     }),
   },
   {
+    weight: 1,
+    arbitrary: fc.record({
+      op: fc.constant("text" as const),
+      client: editor,
+      x: coordinate,
+      y: coordinate,
+      width: fc.option(fc.integer({ min: 20, max: 400 }), { nil: null }),
+      content: fc.string({ maxLength: 8 }),
+    }),
+  },
+  {
+    // Typing into (or replacing part of) a text: concurrent edits must merge.
+    weight: 3,
+    arbitrary: fc.record({
+      op: fc.constant("type" as const),
+      client: editor,
+      pick,
+      at: fc.nat({ max: 1000 }),
+      remove: fc.nat({ max: 4 }),
+      // Graphemes include emoji, so edits next to surrogate pairs are covered.
+      insert: fc.string({ maxLength: 6, unit: "grapheme" }),
+    }),
+  },
+  {
     weight: 4,
     arbitrary: fc.record({
       op: fc.constant("move" as const),
@@ -316,6 +343,30 @@ function runEdit(client: SimClient, c: EditCommand) {
     case "arrow":
       addArrow(doc, { from: { x: c.x, y: c.y }, to: { x: c.x2, y: c.y2 }, color: c.color }, LOCAL)
       break
+    case "text":
+      addText(
+        doc,
+        { position: { x: c.x, y: c.y }, width: c.width, lineHeight: 26, content: c.content },
+        LOCAL,
+      )
+      break
+    case "type": {
+      const texts = listElements(doc).filter((e) => e.type === "text")
+      const element = texts[c.pick % Math.max(1, texts.length)]
+      const text = element && textOf(doc, element.id)
+      if (!text) break
+      const before = text.toString()
+      // Like a real caret, never stop between the two halves of an emoji.
+      const snap = (i: number) => {
+        const code = before.charCodeAt(i)
+        return i > 0 && code >= 0xdc00 && code <= 0xdfff ? i - 1 : i
+      }
+      const at = snap(c.at % (before.length + 1))
+      const to = snap(Math.min(before.length, at + c.remove))
+      const after = before.slice(0, at) + c.insert + before.slice(to)
+      applyTextChange(text, before, after, LOCAL)
+      break
+    }
     case "move": {
       const id = target()
       if (id) moveElement(doc, id, { x: c.x, y: c.y }, LOCAL)

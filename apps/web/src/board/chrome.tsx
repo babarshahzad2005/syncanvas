@@ -7,9 +7,16 @@ import {
   recolorElement,
   setFill,
   setPenWidth,
+  setTextStyle,
+  type TextAlign,
+  type TextSize,
 } from "@syncanvas/board-model"
 import { paletteShades } from "@syncanvas/renderer"
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Bold,
   ChevronDown,
   Circle,
   Ellipsis,
@@ -57,7 +64,7 @@ const TOOLS: {
   { id: "ellipse", label: "Ellipse", shortcut: "O", icon: Circle },
   { id: "arrow", label: "Arrow", shortcut: "A", icon: MoveUpRight },
   { id: null, label: "Connector", shortcut: "C", icon: Spline },
-  { id: null, label: "Text", shortcut: "T", icon: Type },
+  { id: "text", label: "Text", shortcut: "T", icon: Type },
   { id: null, label: "Sticky note", shortcut: "S", icon: StickyNote },
   { id: null, label: "Image", icon: Image },
   { id: null, label: "Comment", icon: MessageCircle },
@@ -66,6 +73,56 @@ const TOOLS: {
 /** Element types that have a fill (spec: style tray per type). */
 const SHAPE_TYPES = new Set(["rect", "ellipse"])
 const PEN_TYPES = new Set(["pen"])
+
+const TEXT_TYPES = new Set(["text"])
+
+type TextStyle = { fontSize: TextSize; bold: boolean; align: TextAlign }
+
+const TEXT_SIZES_UI: { size: TextSize; label: string }[] = [
+  { size: "S", label: "Size S" },
+  { size: "M", label: "Size M" },
+  { size: "L", label: "Size L" },
+  { size: "XL", label: "Size XL" },
+]
+
+const ALIGNS: { align: TextAlign; label: string; icon: typeof AlignLeft }[] = [
+  { align: "left", label: "Align left", icon: AlignLeft },
+  { align: "center", label: "Align center", icon: AlignCenter },
+  { align: "right", label: "Align right", icon: AlignRight },
+]
+
+/** A tray button that's on or off, marked like an active tool (`primary-subtle`). */
+function ToggleButton({
+  label,
+  shortcut,
+  pressed,
+  onClick,
+  children,
+}: {
+  label: string
+  shortcut?: string
+  pressed: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <Hint label={label} shortcut={shortcut}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={label}
+        aria-pressed={pressed}
+        onClick={onClick}
+        className={cn(
+          "type-label",
+          pressed && "bg-primary-subtle text-primary hover:bg-primary-subtle",
+        )}
+      >
+        {children}
+      </Button>
+    </Hint>
+  )
+}
 
 const WIDTHS: { width: PenWidth; label: string }[] = [
   { width: "S", label: "Thin" },
@@ -186,21 +243,33 @@ function SelectionTray({
         first?.get("color") ?? null,
         all(SHAPE_TYPES) ? (first?.get("fill") ?? "light") : null,
         all(PEN_TYPES) ? (first?.get("width") ?? null) : null,
+        all(TEXT_TYPES)
+          ? {
+              fontSize: first?.get("fontSize"),
+              bold: first?.get("bold"),
+              align: first?.get("align"),
+            }
+          : null,
       ])
     },
   )
-  const [color, fill, width] = JSON.parse(snapshot) as [
+  const [color, fill, width, text] = JSON.parse(snapshot) as [
     PaletteColor | null,
     Fill | null,
     PenWidth | null,
+    TextStyle | null,
   ]
   return (
     <TrayControls
       color={color}
       fill={fill}
       width={width}
+      text={text}
       onColor={(value) => {
         for (const id of selection) recolorElement(doc, id, value, origin)
+      }}
+      onText={(value) => {
+        for (const id of selection) setTextStyle(doc, id, value, origin)
       }}
       onFill={(value) => {
         for (const id of selection) setFill(doc, id, value, origin)
@@ -221,8 +290,8 @@ function PenToolTray() {
       color={pen.color}
       fill={null}
       width={pen.width}
+      text={null}
       onColor={(color) => setPen({ ...pen, color })}
-      onFill={() => {}}
       onWidth={(width) => setPen({ ...pen, width })}
     />
   )
@@ -233,16 +302,20 @@ function TrayControls({
   color,
   fill,
   width,
+  text,
   onColor,
   onFill,
   onWidth,
+  onText,
 }: {
   color: PaletteColor | null
   fill: Fill | null
   width: PenWidth | null
+  text: TextStyle | null
   onColor: (color: PaletteColor) => void
-  onFill: (fill: Fill) => void
-  onWidth: (width: PenWidth) => void
+  onFill?: (fill: Fill) => void
+  onWidth?: (width: PenWidth) => void
+  onText?: (style: Partial<TextStyle>) => void
 }) {
   const theme = useResolvedTheme()
   const currentShades = paletteShades(color ?? "ink", theme)
@@ -251,6 +324,8 @@ function TrayControls({
     <div
       role="toolbar"
       aria-label="Style"
+      // Keep focus where it is (the text being typed into stays in edit mode).
+      onMouseDown={(e) => e.preventDefault()}
       className="flex animate-in items-center gap-1 border-b bg-muted/50 px-2 py-1.5 duration-(--duration-panel) ease-out fade-in slide-in-from-bottom-2"
     >
       {PALETTE_COLORS.map((option) => {
@@ -279,7 +354,7 @@ function TrayControls({
                 type="button"
                 aria-label={option.label}
                 aria-pressed={fill === option.fill}
-                onClick={() => onFill(option.fill)}
+                onClick={() => onFill?.(option.fill)}
                 className={cn(
                   "size-6 rounded-sm border-2 transition-transform duration-(--duration-press) ease-out active:scale-90 pointer-coarse:size-9",
                   fill === option.fill && "ring-2 ring-primary ring-offset-2 ring-offset-muted",
@@ -302,22 +377,48 @@ function TrayControls({
         <>
           <span className="mx-1.5 h-5 w-px bg-border" />
           {WIDTHS.map((option) => (
-            <Hint key={option.width} label={option.label}>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={option.label}
-                aria-pressed={width === option.width}
-                onClick={() => onWidth(option.width)}
-                className={cn(
-                  "type-label",
-                  width === option.width &&
-                    "bg-primary-subtle text-primary hover:bg-primary-subtle",
-                )}
-              >
-                {option.width}
-              </Button>
-            </Hint>
+            <ToggleButton
+              key={option.width}
+              label={option.label}
+              pressed={width === option.width}
+              onClick={() => onWidth?.(option.width)}
+            >
+              {option.width}
+            </ToggleButton>
+          ))}
+        </>
+      )}
+      {text !== null && (
+        <>
+          <span className="mx-1.5 h-5 w-px bg-border" />
+          {TEXT_SIZES_UI.map((option) => (
+            <ToggleButton
+              key={option.size}
+              label={option.label}
+              pressed={text.fontSize === option.size}
+              onClick={() => onText?.({ fontSize: option.size })}
+            >
+              {option.size}
+            </ToggleButton>
+          ))}
+          <ToggleButton
+            label="Bold"
+            shortcut="Ctrl B"
+            pressed={text.bold}
+            onClick={() => onText?.({ bold: !text.bold })}
+          >
+            <Bold />
+          </ToggleButton>
+          <span className="mx-1.5 h-5 w-px bg-border" />
+          {ALIGNS.map((option) => (
+            <ToggleButton
+              key={option.align}
+              label={option.label}
+              pressed={text.align === option.align}
+              onClick={() => onText?.({ align: option.align })}
+            >
+              <option.icon />
+            </ToggleButton>
           ))}
         </>
       )}

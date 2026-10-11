@@ -2,6 +2,7 @@ import {
   addArrow,
   addPen,
   addShape,
+  addText,
   deleteElements,
   type ElementWithId,
   elementsOf,
@@ -12,21 +13,28 @@ import {
   type PenWidth,
   type Point,
   type StrokePoint,
+  setTextStyle,
+  textOf,
 } from "@syncanvas/board-model"
 import {
   boundsOf,
   type Camera,
+  clearTextLayoutCache,
   drawScene,
   fitCamera,
   hitTest,
+  LINE_HEIGHT,
   type Scene,
   screenToWorld,
+  TEXT_SIZES,
+  worldToScreen,
   zoomAt,
 } from "@syncanvas/renderer"
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react"
 import type * as Y from "yjs"
 import { useResolvedTheme } from "@/lib/theme"
 import { type DragTool, isDragTool, useBoardUi } from "./store"
+import { TextEditor } from "./text-editor"
 
 // The Board canvas: Canvas2D rendering plus pointer/keyboard input (DESIGN.md → Canvas).
 // The document is only written at gesture boundaries (and throttled during drags), so local
@@ -83,6 +91,16 @@ function previewOf(
   if (g?.kind === "stroke") return { type: "pen", points: g.points, ...pen }
   if (g?.kind !== "draw") return null
   if (g.tool === "arrow") return { type: "arrow", from: g.start, to: g.current, color: "ink" }
+  if (g.tool === "text") {
+    // Dragging with T sets the text's width; show the box being dragged out.
+    return {
+      type: "rect",
+      position: g.start,
+      size: { w: g.current.x - g.start.x, h: g.current.y - g.start.y },
+      color: "gray",
+      fill: "none",
+    }
+  }
   return {
     type: g.tool,
     position: g.start,
@@ -97,8 +115,10 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const editorRef = useRef<HTMLTextAreaElement | null>(null)
   const theme = useResolvedTheme()
   const tool = useBoardUi((s) => s.tool)
+  const editing = useBoardUi((s) => s.editing)
 
   // Mutable rendering state lives in refs: it changes at pointer rate, not React rate.
   const state = useRef({
@@ -114,6 +134,17 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     theme,
   })
   state.current.theme = theme
+
+  // Keeps the text editor exactly over its Element (world units, scaled by the zoom).
+  const placeEditor = useCallback(() => {
+    const s = state.current
+    const editor = editorRef.current
+    const id = useBoardUi.getState().editing?.id
+    const element = s.elements.find((el) => el.id === id)
+    if (!editor || !element || !hasBox(element)) return
+    const p = worldToScreen(s.camera, element.position)
+    editor.style.transform = `translate(${p.x}px, ${p.y}px) scale(${s.camera.zoom})`
+  }, [])
 
   // Stable: it only reads refs and the store, so effects can depend on it safely.
   const render = useCallback(() => {
@@ -134,9 +165,11 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         selection: ui.selection,
         dragging: g?.kind === "move" ? new Map([[g.id, g.position]]) : undefined,
         preview: previewOf(g, ui.pen),
+        editing: ui.editing?.id ?? null,
       })
+      placeEditor()
     })
-  }, [])
+  }, [placeEditor])
 
   const setCamera = (camera: Camera) => {
     state.current.camera = camera
@@ -180,6 +213,23 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     }
     return () => elements.unobserveDeep(refresh)
   }, [doc, render])
+
+  // Text is measured with Geist; until the web font loads, measurements use a fallback font.
+  // Re-measure once it's ready.
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([
+      document.fonts.load('400 20px "Geist Variable"'),
+      document.fonts.load('600 20px "Geist Variable"'),
+    ]).then(() => {
+      if (cancelled) return
+      clearTextLayoutCache()
+      render()
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [render])
 
   // Size the canvas to its box at device-pixel resolution.
   useEffect(() => {
@@ -238,12 +288,37 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         else undoManager.undo()
         return
       }
+      if (mod && e.key.toLowerCase() === "b") {
+        // Bold for selected texts, toggled together from the first one's state.
+        const texts = state.current.elements.filter(
+          (el) => ui().selection.has(el.id) && el.type === "text",
+        )
+        const first = texts[0]
+        if (!canEdit || first?.type !== "text") return
+        e.preventDefault()
+        for (const el of texts) setTextStyle(doc, el.id, { bold: !first.bold }, origin)
+        return
+      }
       if (mod && e.key.toLowerCase() === "y") {
         e.preventDefault()
         if (canEdit) undoManager.redo()
         return
       }
       if (mod) return
+      // Typing while one text is selected starts editing it (Enter just opens the editor).
+      const selected = ui().selection.size === 1 ? [...ui().selection][0] : undefined
+      const element = state.current.elements.find((el) => el.id === selected)
+      if (canEdit && element?.type === "text" && (e.key === "Enter" || e.key.length === 1)) {
+        e.preventDefault()
+        const text = textOf(doc, element.id)
+        if (e.key !== "Enter" && text) {
+          undoManager.stopCapturing()
+          const key = e.key
+          doc.transact(() => text.insert(text.length, key), origin)
+        }
+        ui().setEditing({ id: element.id, continuing: e.key !== "Enter" })
+        return
+      }
       if (e.shiftKey && e.code === "Digit1") {
         setCamera(fitCamera(boundsOf(state.current.elements), state.current.size))
         return
@@ -263,6 +338,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
           return
         case "a":
           if (canEdit) ui().setTool("arrow")
+          return
+        case "t":
+          if (canEdit) ui().setTool("text")
           return
         case "escape":
           state.current.gesture = null
@@ -435,7 +513,32 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       const h = g.current.y - g.start.y
       const minWorld = MIN_DRAW_PX / s.camera.zoom
       // One transaction for the whole Element, so one undo removes it (FLOWS §2).
-      if (g.tool === "arrow") {
+      if (g.tool === "text") {
+        // A click places auto-width text with the click at the middle of its first line;
+        // a drag sets a fixed width that wraps.
+        const lineHeight = TEXT_SIZES.M * LINE_HEIGHT
+        const dragged = Math.abs(w) >= minWorld
+        const id = addText(
+          doc,
+          dragged
+            ? {
+                position: {
+                  x: Math.min(g.start.x, g.current.x),
+                  y: Math.min(g.start.y, g.current.y),
+                },
+                width: Math.abs(w),
+                lineHeight,
+              }
+            : {
+                position: { x: g.start.x, y: g.start.y - lineHeight / 2 },
+                width: null,
+                lineHeight,
+              },
+          origin,
+        )
+        useBoardUi.getState().select([id])
+        useBoardUi.getState().setEditing({ id, continuing: true })
+      } else if (g.tool === "arrow") {
         if (Math.hypot(w, h) >= minWorld) {
           const id = addArrow(doc, { from: g.start, to: g.current }, origin)
           useBoardUi.getState().select([id])
@@ -468,18 +571,50 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     return [world.x, world.y, e.pointerType === "pen" ? e.pressure : 0.5]
   }
 
-  const cursor = (isDragTool(tool) || tool === "pen") && canEdit ? "crosshair" : "default"
+  const cursor =
+    tool === "text" && canEdit
+      ? "text"
+      : (isDragTool(tool) || tool === "pen") && canEdit
+        ? "crosshair"
+        : "default"
+
+  function onDoubleClick(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!canEdit) return
+    const s = state.current
+    const hit = hitTest(s.elements, screenToWorld(s.camera, local(e)), s.camera.zoom)
+    const element = s.elements.find((el) => el.id === hit)
+    if (element?.type !== "text") return
+    useBoardUi.getState().select([element.id])
+    useBoardUi.getState().setEditing({ id: element.id, continuing: false })
+  }
 
   return (
-    <canvas
-      ref={canvasRef}
-      aria-label="Board canvas"
-      className="absolute inset-0 size-full touch-none select-none"
-      style={{ cursor }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        aria-label="Board canvas"
+        className="absolute inset-0 size-full touch-none select-none"
+        style={{ cursor }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onDoubleClick={onDoubleClick}
+      />
+      {editing && canEdit && (
+        <TextEditor
+          key={editing.id}
+          ref={(node) => {
+            editorRef.current = node
+            placeEditor()
+          }}
+          doc={doc}
+          id={editing.id}
+          continuing={editing.continuing}
+          origin={origin}
+          undoManager={undoManager}
+        />
+      )}
+    </>
   )
 })

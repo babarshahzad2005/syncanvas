@@ -2,10 +2,10 @@ import type { PaletteColor, PenWidth } from "@syncanvas/board-model"
 import { create } from "zustand"
 
 /** Local, per-tab UI state for the Board screen (TECH_STACK §3: Zustand for UI state). */
-export type Tool = "select" | "pen" | "rect" | "ellipse" | "arrow"
+export type Tool = "select" | "pen" | "rect" | "ellipse" | "arrow" | "text"
 
 /** Tools that drag out an Element from one corner (or end) to the other. */
-export const DRAG_TOOLS = ["rect", "ellipse", "arrow"] as const
+export const DRAG_TOOLS = ["rect", "ellipse", "arrow", "text"] as const
 export type DragTool = (typeof DRAG_TOOLS)[number]
 export const isDragTool = (tool: Tool): tool is DragTool =>
   (DRAG_TOOLS as readonly Tool[]).includes(tool)
@@ -17,6 +17,9 @@ type BoardUi = {
   /** Color and width for the next pen strokes. */
   pen: { color: PaletteColor; width: PenWidth }
   setPen: (pen: { color: PaletteColor; width: PenWidth }) => void
+  /** The text being typed into, if any (`continuing`: see TextEditor). */
+  editing: { id: string; continuing: boolean } | null
+  setEditing: (editing: { id: string; continuing: boolean } | null) => void
   setTool: (tool: Tool) => void
   select: (ids: Iterable<string>) => void
   setZoom: (zoom: number) => void
@@ -28,6 +31,8 @@ export const useBoardUi = create<BoardUi>((set) => ({
   zoom: 1,
   pen: { color: "ink", width: "M" },
   setPen: (pen) => set({ pen }),
+  editing: null,
+  setEditing: (editing) => set({ editing }),
   setTool: (tool) => set({ tool }),
   select: (ids) => set({ selection: new Set(ids) }),
   setZoom: (zoom) => set({ zoom }),

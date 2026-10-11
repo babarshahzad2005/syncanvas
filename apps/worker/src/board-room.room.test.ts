@@ -1,5 +1,5 @@
 import { env, evictDurableObject, SELF } from "cloudflare:test"
-import { ELEMENT_CAP, elementsOf } from "@syncanvas/board-model"
+import { ELEMENT_CAP, elementsOf, TEXT_LIMIT } from "@syncanvas/board-model"
 import type { Role } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
@@ -251,6 +251,30 @@ describe("BoardRoom", () => {
     const b = await join(board, "editor")
     expect(b.rect("bad-pen")).toBeUndefined()
     b.close()
+  })
+
+  it("rejects text longer than the per-Element limit", async () => {
+    const board = newBoardId()
+    const a = await join(board, "editor")
+    a.doc.transact(() => {
+      const fields = new Y.Map<unknown>()
+      for (const [k, v] of Object.entries({
+        type: "text",
+        position: { x: 0, y: 0 },
+        size: { w: 0, h: 26 },
+        z: "a0",
+        color: "ink",
+        text: new Y.Text("x".repeat(TEXT_LIMIT + 1)),
+        fontSize: "M",
+        bold: false,
+        align: "left",
+        autoWidth: true,
+      }))
+        fields.set(k, v)
+      elementsOf(a.doc).set("long", fields)
+    })
+    await until(() => a.closed !== null, "the over-long text to be refused")
+    expect(a.closed?.code).toBe(CLOSE.invalidUpdate)
   })
 
   it("enforces the Element cap", async () => {

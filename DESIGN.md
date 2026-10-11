@@ -215,6 +215,7 @@ Twelve saturated colors, separate from the palette and the accent, so a cursor n
   - **Sticky notes:** sticky colors, text size S/M/L, bold.
   - **Shapes:** Palette color, plus fill none / light / solid (small squares previewing each fill in the current color).
   - **Arrows:** Palette color only.
+  - **Text:** Palette color, size S / M / L / XL, bold (B, Ctrl/Cmd+B), and align left / center / right. Pressing tray controls keeps the text in edit mode.
   - **Pen strokes:** Palette color, plus width S / M / L (letter buttons, active one in `primary-subtle`). While the pen tool is active with nothing selected, the same tray sets the color and width of the next strokes.
   - **Always:** lock and "more".
 - **Bottom right:** a pill with undo and redo, then the zoom percentage. Clicking the percentage opens a menu: zoom in, zoom out, zoom to fit, 100%.
@@ -279,6 +280,7 @@ shadcn/ui on **Base UI** with the **nova** style and Lucide icons. Only the comp
 - **Comment pins:** a 28px teardrop pointing to its anchor, on `surface` with panel elevation, showing the author's initials or the reply count. A Detached Thread pin is at 50% opacity with a dashed border. Resolved pins are hidden unless the filter is on.
 - **Lock:** a locked Element shows a small lock badge on hover, with no other visual change.
 - **Arrows and connectors:** a 2px line in the stroke shade (thicker in canvas units when zoomed out below 50%, like shape outlines) ending in a filled arrowhead about 10px long with a ~26° half-angle; short lines get a smaller head. Selected, they show a handle at each end instead of a box.
+- **Text:** Geist at the `typography.canvas` sizes, line height 1.3, regular (400) or bold (600), in the stroke shade. A click with T places auto-width text (it grows as you type; only Enter breaks lines). Dragging with T sets a fixed width that wraps at word boundaries, breaking over-long words anywhere. Editing happens in a textarea laid exactly over the text, so the canvas and the editor break lines identically.
 - **Pen strokes:** drawn with `perfect-freehand` (thinning 0.6, smoothing 0.5, streamline 0.5) in the stroke shade. Widths S / M / L are 2 / 4 / 8 canvas units. A stylus varies the width with pressure; mouse and touch draw at a constant width.
 
 ## Motion

@@ -10,8 +10,12 @@ import {
   resolveConnector,
   type Size,
   type StrokePoint,
+  type TextElement,
 } from "@syncanvas/board-model"
 import { getStroke } from "perfect-freehand"
+import { layoutText, TEXT_SIZES, type TextLayout, textFont } from "./text"
+
+export * from "./text"
 
 // Canvas2D drawing shared by the screen (and later PNG export and thumbnails).
 // No DOM access beyond the 2D context it's handed.
@@ -204,11 +208,12 @@ export function hitTest(
       if ((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1) return e.id
       continue
     }
+    const size = e.type === "text" ? textSize(e) : e.size
     if (
       world.x >= e.position.x - tolerance &&
-      world.x <= e.position.x + e.size.w + tolerance &&
+      world.x <= e.position.x + size.w + tolerance &&
       world.y >= e.position.y - tolerance &&
-      world.y <= e.position.y + e.size.h + tolerance
+      world.y <= e.position.y + size.h + tolerance
     ) {
       return e.id
     }
@@ -236,6 +241,8 @@ export type Scene = {
     | { type: "arrow"; from: Point; to: Point; color: PaletteColor }
     | null
   showGrid?: boolean
+  /** The text being edited in the textarea overlay: its content isn't drawn on the canvas. */
+  editing?: string | null
 }
 
 export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
@@ -257,7 +264,10 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
       })
     : scene.elements
   const byId = indexById(elements)
-  for (const e of elements) drawElement(ctx, e, byId, theme, camera.zoom)
+  for (const e of elements) {
+    if (e.id === scene.editing && e.type === "text") continue // the textarea shows it
+    drawElement(ctx, e, byId, theme, camera.zoom)
+  }
   if (scene.preview?.type === "arrow") {
     const p = scene.preview
     drawArrow(ctx, p.from, p.to, paletteShades(p.color, theme).stroke, camera.zoom)
@@ -315,11 +325,46 @@ export function elementBox(
   e: ElementWithId,
   byId: ReadonlyMap<string, ElementWithId>,
 ): { position: Point; size: Size } {
+  if (e.type === "text") return { position: e.position, size: textSize(e) }
   if (hasBox(e)) return { position: e.position, size: e.size }
   const { start, end } = resolveConnector(e, byId)
   return {
     position: { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y) },
     size: { w: Math.abs(end.x - start.x), h: Math.abs(end.y - start.y) },
+  }
+}
+
+// ---------- Text ----------
+
+/** A text Element's layout: auto width lays out unwrapped, otherwise it wraps at `size.w`. */
+export function textLayoutOf(e: TextElement): TextLayout {
+  return layoutText(e.text, {
+    fontSize: TEXT_SIZES[e.fontSize],
+    bold: e.bold,
+    width: e.autoWidth ? null : e.size.w,
+  })
+}
+
+/** The box a text Element really covers: its layout height, and its width when auto. */
+export function textSize(e: TextElement): Size {
+  const layout = textLayoutOf(e)
+  return { w: e.autoWidth ? layout.width : e.size.w, h: layout.height }
+}
+
+function drawText(ctx: CanvasRenderingContext2D, e: TextElement, color: string) {
+  const layout = textLayoutOf(e)
+  const width = e.autoWidth ? layout.width : e.size.w
+  ctx.font = textFont(TEXT_SIZES[e.fontSize], e.bold)
+  ctx.fillStyle = color
+  ctx.textBaseline = "alphabetic"
+  for (const [i, line] of layout.lines.entries()) {
+    const offset =
+      e.align === "center" ? (width - line.width) / 2 : e.align === "right" ? width - line.width : 0
+    ctx.fillText(
+      line.text,
+      e.position.x + offset,
+      e.position.y + i * layout.lineHeight + layout.baseline,
+    )
   }
 }
 
@@ -353,11 +398,7 @@ function drawElement(
       return
     }
     case "text":
-      ctx.setLineDash([4 / zoom, 4 / zoom])
-      ctx.lineWidth = 1 / zoom
-      ctx.strokeStyle = shades.stroke
-      ctx.strokeRect(e.position.x, e.position.y, e.size.w, e.size.h)
-      ctx.setLineDash([])
+      drawText(ctx, e, shades.stroke)
       return
     case "sticky":
       ctx.fillStyle = shades.fill
