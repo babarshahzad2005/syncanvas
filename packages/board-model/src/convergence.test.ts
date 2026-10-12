@@ -11,18 +11,24 @@ import {
   addShape,
   addSticky,
   addText,
+  alignUnits,
   applyTextChange,
   checkUpdate,
   createUndoManager,
   deleteElements,
+  distributeUnits,
+  type ElementWithId,
   elementsOf,
   expandToGroups,
   groupElements,
+  isOrderKey,
   listElements,
   moveElement,
   moveElements,
+  moveUnits,
   PALETTE_COLORS,
   recolorElement,
+  reorderElements,
   STICKY_COLORS,
   scaledGeometry,
   setFill,
@@ -213,6 +219,10 @@ const fill = fc.constantFrom("none" as const, "light" as const, "solid" as const
 /** Which Element to act on: an index into the client's own Element list, modulo its length. */
 const pick = fc.nat({ max: 1000 })
 
+/** An Element's stored box (the UI uses drawn boxes; any box works for convergence). */
+const storedBox = (e: ElementWithId) =>
+  "position" in e ? { x: e.position.x, y: e.position.y, w: e.size.w, h: e.size.h } : null
+
 const editCommand = fc.oneof(
   {
     weight: 3,
@@ -366,6 +376,33 @@ const editCommand = fc.oneof(
       client: editor,
       picks: fc.array(pick, { minLength: 1, maxLength: 3 }),
       locked: fc.boolean(),
+    }),
+  },
+  {
+    weight: 2,
+    arbitrary: fc.record({
+      op: fc.constant("reorder" as const),
+      client: editor,
+      picks: fc.array(pick, { minLength: 1, maxLength: 3 }),
+      direction: fc.constantFrom("forward" as const, "backward" as const),
+    }),
+  },
+  {
+    weight: 1,
+    arbitrary: fc.record({
+      op: fc.constant("align" as const),
+      client: editor,
+      picks: fc.array(pick, { minLength: 2, maxLength: 4 }),
+      mode: fc.constantFrom(
+        "left" as const,
+        "center" as const,
+        "right" as const,
+        "top" as const,
+        "middle" as const,
+        "bottom" as const,
+        "horizontal" as const,
+        "vertical" as const,
+      ),
     }),
   },
   {
@@ -543,6 +580,27 @@ function runEdit(client: SimClient, c: EditCommand) {
         LOCAL,
       )
       break
+    case "reorder":
+      reorderElements(
+        doc,
+        picked(c.picks).map((e) => e.id),
+        c.direction,
+        storedBox,
+        LOCAL,
+      )
+      break
+    case "align": {
+      const units = picked(c.picks).flatMap((e) => {
+        const box = storedBox(e)
+        return box ? [{ ids: [e.id], box }] : []
+      })
+      const offsets =
+        c.mode === "horizontal" || c.mode === "vertical"
+          ? distributeUnits(units, c.mode)
+          : alignUnits(units, c.mode)
+      moveUnits(doc, units, offsets, LOCAL)
+      break
+    }
     case "multiDelete":
       deleteElements(
         doc,
@@ -604,6 +662,10 @@ function simulate(commands: Command[]) {
       // S1: the same document state (state vector + delete set) and the same Board.
       expect(Y.equalSnapshots(Y.snapshot(doc), Y.snapshot(server.doc))).toBe(true)
       expect(listElements(doc)).toEqual(expected)
+      // Reordering never loses or duplicates an Element in the z order, and every key stays
+      // valid (so the next reorder or new Element can always find a key).
+      expect(new Set(listElements(doc).map((e) => e.id)).size).toBe(elementsOf(doc).size)
+      expect(listElements(doc).every((e) => isOrderKey(e.z))).toBe(true)
       expect(elementsOf(doc).toJSON()).toEqual(expectedJson)
       // S2: every update the server accepted is already contained in this document.
       if (allAccepted) {

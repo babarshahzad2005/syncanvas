@@ -1,3 +1,4 @@
+import { generateKeyBetween } from "fractional-indexing"
 import * as Y from "yjs"
 
 // ---------- Colors (GLOSSARY: Palette color; ADR 0008) ----------
@@ -134,6 +135,29 @@ export function hasBox(element: Element): element is BoxedElement {
 
 // ---------- Reading and validating one Element ----------
 
+/** Longest z-order key accepted (keys grow slowly as Elements are reordered between others). */
+const ORDER_KEY_LIMIT = 128
+const validKeys = new Set<string>()
+
+/**
+ * True for a valid fractional-index key (ADR 0002 → z order). Anything else would make key
+ * generation throw for everyone working on the Board, so the validator refuses it.
+ */
+export function isOrderKey(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > ORDER_KEY_LIMIT) {
+    return false
+  }
+  if (validKeys.has(value)) return true
+  try {
+    generateKeyBetween(value, null) // throws on a malformed key
+  } catch {
+    return false
+  }
+  if (validKeys.size > 50_000) validKeys.clear()
+  validKeys.add(value)
+  return true
+}
+
 const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v)
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v)
@@ -235,7 +259,7 @@ export function readElement(fields: Y.Map<unknown>): Element | null {
   if (!hasOnlyKnownFields(fields, type as ElementType)) return null
 
   const z = fields.get("z")
-  if (typeof z !== "string" || z.length === 0) return null
+  if (!isOrderKey(z)) return null
   const locked = fields.get("locked")
   if (locked !== undefined && typeof locked !== "boolean") return null
   const groupId = fields.get("groupId")

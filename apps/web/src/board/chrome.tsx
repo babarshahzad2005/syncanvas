@@ -1,4 +1,5 @@
 import {
+  type Alignment,
   elementsOf,
   type Fill,
   PALETTE_COLORS,
@@ -16,8 +17,16 @@ import {
 import { paletteShades, stickyBackground } from "@syncanvas/renderer"
 import {
   AlignCenter,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalSpaceAround,
   AlignLeft,
   AlignRight,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalSpaceAround,
   Bold,
   ChevronDown,
   Circle,
@@ -42,13 +51,24 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useResolvedTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
-import { groupSelection, selectionCommands, toggleLock, ungroupSelection } from "./actions"
+import {
+  arrangeSelection,
+  groupSelection,
+  reorderSelection,
+  selectionCommands,
+  toggleLock,
+  ungroupSelection,
+} from "./actions"
 import type { CanvasHandle } from "./board-canvas"
 import { type Tool, useBoardUi } from "./store"
 
@@ -94,11 +114,28 @@ const TEXT_SIZES_UI: { size: TextSize; label: string }[] = [
   { size: "XL", label: "Size XL" },
 ]
 
+/** The ⋯ menu's Align entries (aligning the selection, not text). */
+const ALIGNMENTS: { alignment: Alignment; label: string; icon: typeof AlignLeft }[] = [
+  { alignment: "left", label: "Left", icon: AlignStartVertical },
+  { alignment: "center", label: "Center", icon: AlignCenterVertical },
+  { alignment: "right", label: "Right", icon: AlignEndVertical },
+  { alignment: "top", label: "Top", icon: AlignStartHorizontal },
+  { alignment: "middle", label: "Middle", icon: AlignCenterHorizontal },
+  { alignment: "bottom", label: "Bottom", icon: AlignEndHorizontal },
+]
+
 const ALIGNS: { align: TextAlign; label: string; icon: typeof AlignLeft }[] = [
   { align: "left", label: "Align left", icon: AlignLeft },
   { align: "center", label: "Align center", icon: AlignCenter },
   { align: "right", label: "Align right", icon: AlignRight },
 ]
+
+/**
+ * Board menus give focus back to their button only when used from the keyboard. After a
+ * pointer pick the focus is let go, so Board shortcuts (Escape, Delete, Ctrl+Z…) keep
+ * working: a focused menu button would swallow Escape.
+ */
+const keyboardOnlyFinalFocus = (closeType: string) => closeType === "keyboard"
 
 /** A tray button that's on or off, marked like an active tool (`primary-subtle`). */
 function ToggleButton({
@@ -520,7 +557,57 @@ function SelectionActions({
             <Ellipsis />
           </DropdownMenuTrigger>
         </Hint>
-        <DropdownMenuContent align="end" side="top" className="w-52">
+        <DropdownMenuContent
+          align="end"
+          side="top"
+          className="w-56"
+          finalFocus={keyboardOnlyFinalFocus}
+        >
+          <DropdownMenuItem
+            disabled={!commands.canReorder}
+            onClick={() => reorderSelection(context, "forward")}
+          >
+            Bring forward
+            <DropdownMenuShortcut>Ctrl ]</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!commands.canReorder}
+            onClick={() => reorderSelection(context, "backward")}
+          >
+            Send backward
+            <DropdownMenuShortcut>Ctrl [</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger disabled={!commands.canAlign}>Align</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-44">
+              {ALIGNMENTS.map((option) => (
+                <DropdownMenuItem
+                  key={option.alignment}
+                  onClick={() => arrangeSelection(context, option.alignment)}
+                >
+                  <option.icon />
+                  {option.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger disabled={!commands.canDistribute}>
+              Distribute
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-44">
+              <DropdownMenuItem onClick={() => arrangeSelection(context, "horizontal")}>
+                <AlignHorizontalSpaceAround />
+                Horizontally
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => arrangeSelection(context, "vertical")}>
+                <AlignVerticalSpaceAround />
+                Vertically
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuSeparator />
           <DropdownMenuItem disabled={!commands.canGroup} onClick={() => groupSelection(context)}>
             Group
             <DropdownMenuShortcut>Ctrl G</DropdownMenuShortcut>
@@ -612,7 +699,12 @@ export function UndoZoomPill({
           {Math.round(zoom * 100)}%
           <ChevronDown className="size-3.5" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" side="top" className="w-44">
+        <DropdownMenuContent
+          align="end"
+          side="top"
+          className="w-44"
+          finalFocus={keyboardOnlyFinalFocus}
+        >
           <DropdownMenuItem onClick={() => canvas.current?.zoomBy(1.25)}>Zoom in</DropdownMenuItem>
           <DropdownMenuItem onClick={() => canvas.current?.zoomBy(0.8)}>Zoom out</DropdownMenuItem>
           <DropdownMenuItem onClick={() => canvas.current?.fit()}>

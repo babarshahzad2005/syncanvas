@@ -47,7 +47,7 @@ import {
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react"
 import type * as Y from "yjs"
 import { useResolvedTheme } from "@/lib/theme"
-import { groupSelection, toggleLock, ungroupSelection } from "./actions"
+import { groupSelection, reorderSelection, toggleLock, ungroupSelection } from "./actions"
 import { type DragTool, isDragTool, useBoardUi } from "./store"
 import { TextEditor } from "./text-editor"
 
@@ -429,6 +429,13 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         if (!canEdit) return
         if (e.shiftKey) ungroupSelection({ doc, origin, undoManager })
         else groupSelection({ doc, origin, undoManager })
+        return
+      }
+      if (mod && (e.key === "]" || e.key === "[")) {
+        e.preventDefault()
+        if (canEdit) {
+          reorderSelection({ doc, origin, undoManager }, e.key === "]" ? "forward" : "backward")
+        }
         return
       }
       if (mod && e.shiftKey && e.key.toLowerCase() === "l") {
