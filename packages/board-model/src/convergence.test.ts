@@ -16,6 +16,8 @@ import {
   createUndoManager,
   deleteElements,
   elementsOf,
+  expandToGroups,
+  groupElements,
   listElements,
   moveElement,
   moveElements,
@@ -25,8 +27,10 @@ import {
   scaledGeometry,
   setFill,
   setGeometry,
+  setLocked,
   setTextStyle,
   textOf,
+  ungroupElements,
   validateBoardDoc,
 } from "./index"
 
@@ -340,6 +344,31 @@ const editCommand = fc.oneof(
     }),
   },
   {
+    weight: 2,
+    arbitrary: fc.record({
+      op: fc.constant("group" as const),
+      client: editor,
+      picks: fc.array(pick, { minLength: 2, maxLength: 4 }),
+    }),
+  },
+  {
+    weight: 1,
+    arbitrary: fc.record({
+      op: fc.constant("ungroup" as const),
+      client: editor,
+      picks: fc.array(pick, { minLength: 1, maxLength: 3 }),
+    }),
+  },
+  {
+    weight: 1,
+    arbitrary: fc.record({
+      op: fc.constant("lock" as const),
+      client: editor,
+      picks: fc.array(pick, { minLength: 1, maxLength: 3 }),
+      locked: fc.boolean(),
+    }),
+  },
+  {
     weight: 1,
     arbitrary: fc.record({
       op: fc.constant("multiDelete" as const),
@@ -488,6 +517,32 @@ function runEdit(client: SimClient, c: EditCommand) {
       )
       break
     }
+    case "group":
+      // Like the UI: grouping a member takes its whole group along (groups merge).
+      groupElements(
+        doc,
+        expandToGroups(
+          picked(c.picks).map((e) => e.id),
+          listElements(doc),
+        ),
+        LOCAL,
+      )
+      break
+    case "ungroup":
+      ungroupElements(
+        doc,
+        picked(c.picks).map((e) => e.id),
+        LOCAL,
+      )
+      break
+    case "lock":
+      setLocked(
+        doc,
+        picked(c.picks).map((e) => e.id),
+        c.locked,
+        LOCAL,
+      )
+      break
     case "multiDelete":
       deleteElements(
         doc,

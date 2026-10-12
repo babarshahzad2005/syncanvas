@@ -42,11 +42,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useResolvedTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
+import { groupSelection, selectionCommands, toggleLock, ungroupSelection } from "./actions"
 import type { CanvasHandle } from "./board-canvas"
 import { type Tool, useBoardUi } from "./store"
 
@@ -172,7 +174,17 @@ function Hint({
 }
 
 /** Bottom-center dock: the tool row, with a style tray that grows out of it for a selection. */
-export function Dock({ doc, origin, canEdit }: { doc: Y.Doc; origin: object; canEdit: boolean }) {
+export function Dock({
+  doc,
+  origin,
+  undoManager,
+  canEdit,
+}: {
+  doc: Y.Doc
+  origin: object
+  undoManager: Y.UndoManager
+  canEdit: boolean
+}) {
   const tool = useBoardUi((s) => s.tool)
   const setTool = useBoardUi((s) => s.setTool)
   const selection = useBoardUi((s) => s.selection)
@@ -185,7 +197,9 @@ export function Dock({ doc, origin, canEdit }: { doc: Y.Doc; origin: object; can
         "fixed bottom-3 left-1/2 flex -translate-x-1/2 flex-col overflow-hidden rounded-xl",
       )}
     >
-      {tray === "selection" && <SelectionTray doc={doc} origin={origin} selection={selection} />}
+      {tray === "selection" && (
+        <SelectionTray doc={doc} origin={origin} undoManager={undoManager} selection={selection} />
+      )}
       {tray === "pen" && <PenToolTray />}
       <div
         role="toolbar"
@@ -227,10 +241,12 @@ export function Dock({ doc, origin, canEdit }: { doc: Y.Doc; origin: object; can
 function SelectionTray({
   doc,
   origin,
+  undoManager,
   selection,
 }: {
   doc: Y.Doc
   origin: object
+  undoManager: Y.UndoManager
   selection: ReadonlySet<string>
 }) {
   // Re-read on every document change, so the marked controls follow edits (local or remote).
@@ -249,6 +265,7 @@ function SelectionTray({
       const stickies = all(STICKY_TYPES)
       const anySticky = fields.some((f) => f?.get("type") === "sticky")
       return JSON.stringify([
+        selectionCommands(doc, selection),
         first?.get("color") ?? null,
         // Sticky notes have their own colors, so a mix with other types shows no colors.
         stickies ? "sticky" : anySticky ? null : "palette",
@@ -264,13 +281,30 @@ function SelectionTray({
       ])
     },
   )
-  const [color, colors, fill, width, text] = JSON.parse(snapshot) as [
+  const [commands, color, colors, fill, width, text] = JSON.parse(snapshot) as [
+    ReturnType<typeof selectionCommands>,
     PaletteColor | null,
     ColorSet | null,
     Fill | null,
     PenWidth | null,
     TextStyle | null,
   ]
+  const context = { doc, origin, undoManager }
+  const actions = <SelectionActions context={context} commands={commands} />
+  // Locked: hands off until unlocked, so the tray offers nothing else.
+  if (commands.locked) {
+    return (
+      <TrayControls
+        color={null}
+        colors={null}
+        fill={null}
+        width={null}
+        text={null}
+        onColor={() => {}}
+        actions={actions}
+      />
+    )
+  }
   return (
     <TrayControls
       color={color}
@@ -278,6 +312,7 @@ function SelectionTray({
       fill={fill}
       width={width}
       text={text}
+      actions={actions}
       onColor={(value) => {
         for (const id of selection) recolorElement(doc, id, value, origin)
         // The next sticky note gets the color last picked for one.
@@ -320,6 +355,7 @@ function TrayControls({
   fill,
   width,
   text,
+  actions,
   onColor,
   onFill,
   onWidth,
@@ -330,6 +366,8 @@ function TrayControls({
   fill: Fill | null
   width: PenWidth | null
   text: TextStyle | null
+  /** Lock and ⋯, for a selection. */
+  actions?: React.ReactNode
   onColor: (color: PaletteColor) => void
   onFill?: (fill: Fill) => void
   onWidth?: (width: PenWidth) => void
@@ -344,7 +382,7 @@ function TrayControls({
       aria-label="Style"
       // Keep focus where it is (the text being typed into stays in edit mode).
       onMouseDown={(e) => e.preventDefault()}
-      className="flex animate-in items-center gap-1 border-b bg-muted/50 px-2 py-1.5 duration-(--duration-panel) ease-out fade-in slide-in-from-bottom-2"
+      className="flex animate-in items-center justify-center gap-1 border-b bg-muted/50 px-2 py-1.5 duration-(--duration-panel) ease-out fade-in slide-in-from-bottom-2"
     >
       {(colors === "sticky" ? STICKY_COLORS : colors === "palette" ? PALETTE_COLORS : []).map(
         (option) => {
@@ -450,18 +488,57 @@ function TrayControls({
             ))}
         </>
       )}
-      <span className="mx-1.5 h-5 w-px bg-border" />
-      <Hint label="Lock (coming soon)">
-        <Button variant="ghost" size="icon-sm" aria-label="Lock" disabled>
-          <Lock />
-        </Button>
-      </Hint>
-      <Hint label="More (coming soon)">
-        <Button variant="ghost" size="icon-sm" aria-label="More" disabled>
-          <Ellipsis />
-        </Button>
-      </Hint>
+      {actions && (colors !== null || fill !== null || width !== null || text !== null) && (
+        <span className="mx-1.5 h-5 w-px bg-border" />
+      )}
+      {actions}
     </div>
+  )
+}
+
+/** Lock and the ⋯ menu (group, ungroup, Lock), at the end of every selection tray. */
+function SelectionActions({
+  context,
+  commands,
+}: {
+  context: Parameters<typeof toggleLock>[0]
+  commands: ReturnType<typeof selectionCommands>
+}) {
+  return (
+    <>
+      <ToggleButton
+        label={commands.locked ? "Unlock" : "Lock"}
+        shortcut="Shift Ctrl L"
+        pressed={commands.locked}
+        onClick={() => toggleLock(context)}
+      >
+        <Lock />
+      </ToggleButton>
+      <DropdownMenu>
+        <Hint label="More">
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="More" />}>
+            <Ellipsis />
+          </DropdownMenuTrigger>
+        </Hint>
+        <DropdownMenuContent align="end" side="top" className="w-52">
+          <DropdownMenuItem disabled={!commands.canGroup} onClick={() => groupSelection(context)}>
+            Group
+            <DropdownMenuShortcut>Ctrl G</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!commands.canUngroup}
+            onClick={() => ungroupSelection(context)}
+          >
+            Ungroup
+            <DropdownMenuShortcut>Shift Ctrl G</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => toggleLock(context)}>
+            {commands.locked ? "Unlock" : "Lock"}
+            <DropdownMenuShortcut>Shift Ctrl L</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   )
 }
 

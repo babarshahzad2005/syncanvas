@@ -8,9 +8,11 @@ import {
   deleteElements,
   type ElementWithId,
   elementsOf,
+  expandToGroups,
   type Geometry,
   hasBox,
   listElements,
+  liveGroups,
   MIN_STICKY_WIDTH,
   MIN_TEXT_WIDTH,
   moveElements,
@@ -34,6 +36,7 @@ import {
   fitCamera,
   hitTest,
   LINE_HEIGHT,
+  lockBadgeRect,
   type Scene,
   screenToWorld,
   selectionFrame,
@@ -44,6 +47,7 @@ import {
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react"
 import type * as Y from "yjs"
 import { useResolvedTheme } from "@/lib/theme"
+import { groupSelection, toggleLock, ungroupSelection } from "./actions"
 import { type DragTool, isDragTool, useBoardUi } from "./store"
 import { TextEditor } from "./text-editor"
 
@@ -92,8 +96,8 @@ type Gesture =
       offset: Point
       moved: boolean
       lastSent: number
-      /** Pressed on a member of a multi-selection: a click without a drag selects just it. */
-      collapseTo: string | null
+      /** Pressed inside a bigger selection: a click without a drag selects just this (group). */
+      collapseTo: string[] | null
     }
   | {
       // Resizing from a corner handle, or dragging one end of an arrow.
@@ -207,6 +211,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     size: { w: 0, h: 0 },
     dpr: 1,
     index: new ElementIndex(),
+    /** A locked Element under the pointer, showing its lock badge. */
+    hoverLocked: null as string | null,
     gesture: null as Gesture | null,
     pointers: new Map<number, Point>(),
     spaceHeld: false,
@@ -259,6 +265,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         selection: ui.selection,
         overrides,
         preview: previewOf(g, ui.pen),
+        lockBadge: s.hoverLocked,
+        handles: ![...ui.selection].some((id) => s.index.byId.get(id)?.locked),
         marquee:
           g?.kind === "marquee"
             ? {
@@ -416,6 +424,18 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         for (const el of texts) setTextStyle(doc, el.id, { bold: !first.bold }, origin)
         return
       }
+      if (mod && e.key.toLowerCase() === "g") {
+        e.preventDefault()
+        if (!canEdit) return
+        if (e.shiftKey) ungroupSelection({ doc, origin, undoManager })
+        else groupSelection({ doc, origin, undoManager })
+        return
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "l") {
+        e.preventDefault()
+        if (canEdit) toggleLock({ doc, origin, undoManager })
+        return
+      }
       if (mod && e.key.toLowerCase() === "y") {
         e.preventDefault()
         if (canEdit) undoManager.redo()
@@ -456,7 +476,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         moveElements(
           doc,
           selectedElements().flatMap((el) =>
-            hasBox(el)
+            hasBox(el) && !el.locked
               ? [
                   [
                     el.id,
@@ -500,7 +520,14 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         case "backspace":
           if (canEdit && ui().selection.size > 0) {
             undoManager.stopCapturing()
-            deleteElements(doc, ui().selection, origin)
+            // Locked Elements stay (only unlocking them is allowed).
+            deleteElements(
+              doc,
+              selectedElements()
+                .filter((el) => !el.locked)
+                .map((el) => el.id),
+              origin,
+            )
             ui().select([])
           }
           return
@@ -570,6 +597,16 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       return
     }
 
+    // The lock badge of a locked Element selects it, so it can be unlocked.
+    const badged = s.hoverLocked ? s.index.byId.get(s.hoverLocked) : undefined
+    if (badged) {
+      const r = lockBadgeRect(badged, s.index.byId, s.camera)
+      if (point.x >= r.x && point.x <= r.x + r.w && point.y >= r.y && point.y <= r.y + r.h) {
+        ui.select([badged.id])
+        return
+      }
+    }
+
     // Handles win over everything under them, Shift included (Shift keeps proportions).
     const handle = handleAt(point)
     if (handle) {
@@ -587,6 +624,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     }
 
     const hit = hitAt(world)
+    // Touch has no hover: tapping a locked Element shows its badge instead.
+    if (e.pointerType === "touch") setHoverLocked(hit ? null : lockedAt(world))
     if (!hit) {
       // On touch, dragging empty canvas pans (there's no Space key).
       if (e.pointerType === "touch") {
@@ -600,23 +639,29 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       s.gesture = { kind: "marquee", pointerId: e.pointerId, start: world, current: world, base }
       return
     }
+    // Clicking a group member means the whole group.
+    const unit = [...expandToGroups([hit], s.index.all())]
     if (e.shiftKey) {
-      // Shift+click toggles membership and starts nothing else.
+      // Shift+click toggles membership (of the whole group) and starts nothing else.
       const next = new Set(ui.selection)
-      if (next.has(hit)) next.delete(hit)
-      else next.add(hit)
+      const all = unit.every((id) => next.has(id))
+      for (const id of unit) {
+        if (all) next.delete(id)
+        else next.add(id)
+      }
       ui.select(next)
       return
     }
     // Pressing a member of the selection keeps the selection, so it can be dragged together.
+    // (A member picked out of its group by double-click stays picked out.)
     const keep = ui.selection.has(hit)
-    if (!keep) ui.select([hit])
+    if (!keep) ui.select(unit)
     if (!canEdit) return
     const origins = new Map<string, Point>()
     for (const id of useBoardUi.getState().selection) {
       const element = s.index.byId.get(id)
-      // Connectors follow their ends; moving them comes with ticket 12.
-      if (element && hasBox(element)) origins.set(id, element.position)
+      // Connectors follow their ends (ticket 12); locked Elements stay put.
+      if (element && hasBox(element) && !element.locked) origins.set(id, element.position)
     }
     if (origins.size === 0) return
     undoManager.stopCapturing()
@@ -628,21 +673,50 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       offset: { x: 0, y: 0 },
       moved: false,
       lastSent: 0,
-      collapseTo: keep && ui.selection.size > 1 ? hit : null,
+      collapseTo: keep && ui.selection.size > unit.length ? unit : null,
     }
   }
 
-  /** The topmost Element at a world point, looking only at Elements near it. */
-  function hitAt(world: Point): string | null {
+  /** Elements near a world point (in drawing order), for hit-testing it. */
+  function nearby(world: Point): ElementWithId[] {
     const { index, camera } = state.current
     const reach = 16 / camera.zoom
-    const nearby = index.query({
-      x: world.x - reach,
-      y: world.y - reach,
-      w: reach * 2,
-      h: reach * 2,
+    return index.query({ x: world.x - reach, y: world.y - reach, w: reach * 2, h: reach * 2 })
+  }
+
+  /** The topmost selectable Element at a world point (locked ones are skipped). */
+  function hitAt(world: Point): string | null {
+    const { index, camera } = state.current
+    const candidates = nearby(world).filter((el) => !el.locked)
+    return hitTest(candidates, world, camera.zoom, index.byId)
+  }
+
+  /** The topmost Element at a world point if it's locked (it then shows its lock badge). */
+  function lockedAt(world: Point): string | null {
+    const { index, camera } = state.current
+    const id = hitTest(nearby(world), world, camera.zoom, index.byId)
+    return id && index.byId.get(id)?.locked ? id : null
+  }
+
+  function setHoverLocked(id: string | null) {
+    if (state.current.hoverLocked === id) return
+    state.current.hoverLocked = id
+    render()
+  }
+
+  /**
+   * What a marquee selects: unlocked Elements entirely inside it, and groups only when every
+   * member is inside (then the whole group).
+   */
+  function marqueeSelection(rect: Rect): string[] {
+    const { index } = state.current
+    const inside = new Set(index.inside(rect).filter((id) => !index.byId.get(id)?.locked))
+    const groups = liveGroups(index.all())
+    return [...inside].filter((id) => {
+      const groupId = index.byId.get(id)?.groupId
+      const members = groupId === undefined ? undefined : groups.get(groupId)
+      return !members || members.every((member) => inside.has(member))
     })
-    return hitTest(nearby, world, camera.zoom, index.byId)
   }
 
   /**
@@ -657,6 +731,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const { index, camera } = state.current
     if (!canEdit || useBoardUi.getState().tool !== "select") return null
     const selected = selectedElements()
+    if (selected.some((el) => el.locked)) return null // locked: only unlocking is allowed
     const frame = selectionFrame(selected, index.byId)
     if (!frame) return null
     const originals = new Map(selected.map((e) => [e.id, e]))
@@ -744,9 +819,18 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     if (s.pointers.has(e.pointerId)) s.pointers.set(e.pointerId, point)
     const g = s.gesture
     if (!g) {
-      // Show a resize cursor over the selection's handles.
-      if (e.pointerType === "mouse")
+      if (e.pointerType === "mouse") {
+        // Show a resize cursor over the selection's handles, and badges on locked Elements.
         e.currentTarget.style.cursor = handleAt(point)?.cursor ?? cursor
+        const world = screenToWorld(s.camera, point)
+        // Keep the badge while the pointer is on it (it pokes out past the Element).
+        const badged = s.hoverLocked ? s.index.byId.get(s.hoverLocked) : undefined
+        const r = badged && lockBadgeRect(badged, s.index.byId, s.camera)
+        const onBadge =
+          r && point.x >= r.x && point.x <= r.x + r.w && point.y >= r.y && point.y <= r.y + r.h
+        if (onBadge) e.currentTarget.style.cursor = "pointer"
+        else setHoverLocked(lockedAt(world))
+      }
       return
     }
 
@@ -806,7 +890,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       render()
     } else if (g.kind === "marquee") {
       g.current = screenToWorld(s.camera, point)
-      const inside = s.index.inside({
+      const inside = marqueeSelection({
         x: g.start.x,
         y: g.start.y,
         w: g.current.x - g.start.x,
@@ -891,7 +975,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       )
     } else if (g.kind === "move") {
       if (g.moved) moveElements(doc, draggedPositions(g), origin)
-      else if (g.collapseTo) useBoardUi.getState().select([g.collapseTo])
+      else if (g.collapseTo) useBoardUi.getState().select(g.collapseTo)
     } else if (g.kind === "resize" && g.moved) {
       setGeometry(doc, g.geometry, origin)
     }
@@ -916,8 +1000,16 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const s = state.current
     const hit = hitAt(screenToWorld(s.camera, local(e)))
     const element = hit ? s.index.byId.get(hit) : undefined
-    if (element?.type !== "text" && element?.type !== "sticky") return
-    useBoardUi.getState().select([element.id])
+    if (!element) return
+    const { selection, select } = useBoardUi.getState()
+    // In a group, the first double-click picks out the one member; the next one edits it.
+    const grouped = expandToGroups([element.id], s.index.all()).size > 1
+    if (grouped && !(selection.size === 1 && selection.has(element.id))) {
+      select([element.id])
+      return
+    }
+    if (element.type !== "text" && element.type !== "sticky") return
+    select([element.id])
     useBoardUi.getState().setEditing({ id: element.id, continuing: false })
   }
 

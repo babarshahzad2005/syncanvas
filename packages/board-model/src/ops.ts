@@ -1,5 +1,6 @@
 import { generateKeyBetween } from "fractional-indexing"
 import * as Y from "yjs"
+import { cleanStaleGroups } from "./groups"
 import {
   elementsOf,
   type Fill,
@@ -86,7 +87,10 @@ export function setFill(doc: Y.Doc, id: string, fill: Fill, origin: unknown) {
   const fields = elementsOf(doc).get(id)
   const type = fields?.get("type")
   if (!fields || (type !== "rect" && type !== "ellipse")) return
-  doc.transact(() => fields.set("fill", fill), origin)
+  doc.transact(() => {
+    fields.set("fill", fill)
+    cleanStaleGroups(doc, [id])
+  }, origin)
 }
 
 /**
@@ -106,10 +110,14 @@ export function moveElements(
   origin: unknown,
 ) {
   doc.transact(() => {
+    const moved: string[] = []
     for (const [id, position] of positions) {
       const fields = elementsOf(doc).get(id)
-      if (fields?.has("position")) fields.set("position", { x: position.x, y: position.y })
+      if (!fields?.has("position")) continue
+      fields.set("position", { x: position.x, y: position.y })
+      moved.push(id)
     }
+    cleanStaleGroups(doc, moved)
   }, origin)
 }
 
@@ -118,12 +126,27 @@ export function recolorElement(doc: Y.Doc, id: string, color: PaletteColor, orig
   const fields = elementsOf(doc).get(id)
   if (!fields) return
   if (fields.get("type") === "sticky" && !isStickyColor(color)) return
-  doc.transact(() => fields.set("color", color), origin)
+  doc.transact(() => {
+    fields.set("color", color)
+    cleanStaleGroups(doc, [id])
+  }, origin)
 }
 
 export function deleteElements(doc: Y.Doc, ids: Iterable<string>, origin: unknown) {
+  const elements = elementsOf(doc)
   doc.transact(() => {
-    for (const id of ids) elementsOf(doc).delete(id)
+    const groups = new Set<unknown>()
+    for (const id of ids) {
+      groups.add(elements.get(id)?.get("groupId"))
+      elements.delete(id)
+    }
+    // A group deleted down to one member dissolves: clean the survivor's groupId.
+    groups.delete(undefined)
+    if (groups.size === 0) return
+    const survivors = [...elements].flatMap(([id, fields]) =>
+      groups.has(fields.get("groupId")) ? [id] : [],
+    )
+    cleanStaleGroups(doc, survivors)
   }, origin)
 }
 

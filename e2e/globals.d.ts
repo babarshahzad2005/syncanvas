@@ -18,6 +18,8 @@ declare global {
         bold?: boolean
         align?: string
         ends?: { from: { x: number; y: number }; to: { x: number; y: number } }
+        groupId?: string
+        locked?: boolean
       }[]
       camera: () => { x: number; y: number; zoom: number }
     }

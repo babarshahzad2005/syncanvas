@@ -167,8 +167,25 @@ export function stickyBackground(color: StickyColor, theme: Theme): string {
 }
 
 const CANVAS = {
-  light: { background: "#F8F7F4", gridDot: "#D9D5CE", primary: "#5145CD", handleFill: "#FFFFFF" },
-  dark: { background: "#161514", gridDot: "#45423D", primary: "#8C82F6", handleFill: "#FFFFFF" },
+  light: {
+    background: "#F8F7F4",
+    gridDot: "#D9D5CE",
+    primary: "#5145CD",
+    handleFill: "#FFFFFF",
+    // The lock badge uses the chrome's surface, border, and muted-foreground.
+    surface: "#FFFFFF",
+    border: "#E6E3DD",
+    mutedForeground: "#6B6760",
+  },
+  dark: {
+    background: "#161514",
+    gridDot: "#45423D",
+    primary: "#8C82F6",
+    handleFill: "#FFFFFF",
+    surface: "#1F1E1C",
+    border: "#3A3834",
+    mutedForeground: "#A39F98",
+  },
 } as const
 
 export function paletteShades(color: PaletteColor, theme: Theme): Shades {
@@ -268,6 +285,10 @@ export type Scene = {
     | { type: "arrow"; from: Point; to: Point; color: PaletteColor }
     | null
   showGrid?: boolean
+  /** A locked Element under the pointer: it shows its lock badge. */
+  lockBadge?: string | null
+  /** False hides the selection's resize handles (a locked selection can't be resized). */
+  handles?: boolean
   /** The marquee being dragged, in world coordinates. */
   marquee?: { position: Point; size: Size } | null
   /** The text or sticky being edited in the textarea overlay: its text isn't drawn on the canvas. */
@@ -356,8 +377,11 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
       position: { x: frame.rect.x, y: frame.rect.y },
       size: { w: frame.rect.w, h: frame.rect.h },
     })
-    drawSelection(ctx, p, s, colors)
+    drawSelection(ctx, p, s, colors, scene.handles !== false)
   }
+
+  const locked = scene.lockBadge ? byId.get(scene.lockBadge) : undefined
+  if (locked) drawLockBadge(ctx, lockBadgeRect(locked, byId, camera), colors)
 
   if (scene.marquee) {
     const { p, s } = toScreen(scene.marquee)
@@ -740,10 +764,12 @@ function drawSelection(
   p: Point,
   s: Size,
   colors: (typeof CANVAS)[Theme],
+  handles = true,
 ) {
   ctx.lineWidth = 1.5
   ctx.strokeStyle = colors.primary
   ctx.strokeRect(p.x, p.y, s.w, s.h)
+  if (!handles) return
   drawHandles(
     ctx,
     [
@@ -754,4 +780,54 @@ function drawSelection(
     ],
     colors,
   )
+}
+
+// ---------- Lock badge (DESIGN.md → Canvas → Lock) ----------
+
+/** Badge size in screen px. */
+const BADGE = 20
+
+/**
+ * Where a locked Element's badge sits, in screen px: centered on the top-right corner of its
+ * box (for a line, on its end). Clicking it selects the Element so it can be unlocked.
+ */
+export function lockBadgeRect(
+  e: ElementWithId,
+  byId: ReadonlyMap<string, ElementWithId>,
+  camera: Camera,
+): { x: number; y: number; w: number; h: number } {
+  const line = lineEnds(e, byId)
+  const box = elementBox(e, byId)
+  const corner = line ? line.to : { x: box.position.x + box.size.w, y: box.position.y }
+  const p = worldToScreen(camera, corner)
+  return { x: p.x - BADGE / 2, y: p.y - BADGE / 2, w: BADGE, h: BADGE }
+}
+
+function drawLockBadge(
+  ctx: CanvasRenderingContext2D,
+  r: { x: number; y: number; w: number; h: number },
+  colors: (typeof CANVAS)[Theme],
+) {
+  ctx.beginPath()
+  ctx.roundRect(r.x, r.y, r.w, r.h, 6)
+  ctx.fillStyle = colors.surface
+  ctx.fill()
+  ctx.lineWidth = 1
+  ctx.strokeStyle = colors.border
+  ctx.stroke()
+  // A padlock: a shackle arc over a rounded body.
+  const cx = r.x + r.w / 2
+  const cy = r.y + r.h / 2
+  ctx.strokeStyle = colors.mutedForeground
+  ctx.fillStyle = colors.mutedForeground
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.arc(cx, cy - 1.5, 3, Math.PI, 0)
+  ctx.lineTo(cx + 3, cy + 0.5)
+  ctx.moveTo(cx - 3, cy - 1.5)
+  ctx.lineTo(cx - 3, cy + 0.5)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.roundRect(cx - 4.5, cy, 9, 6.5, 1.5)
+  ctx.fill()
 }

@@ -1,4 +1,5 @@
 import type * as Y from "yjs"
+import { cleanStaleGroups } from "./groups"
 import { type ElementWithId, elementsOf, type Point } from "./model"
 
 // ---------- Resize (spec: Resize) ----------
@@ -100,12 +101,15 @@ export function setGeometry(
   origin: unknown,
 ) {
   doc.transact(() => {
+    const changed: string[] = []
     for (const [id, geometry] of changes) {
       const fields = elementsOf(doc).get(id)
       if (!fields?.has("position")) continue // deleted meanwhile
       for (const [key, value] of Object.entries(geometry)) {
         if (value !== undefined) fields.set(key, value)
       }
+      changed.push(id)
     }
+    cleanStaleGroups(doc, changed)
   }, origin)
 }

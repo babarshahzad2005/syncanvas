@@ -63,7 +63,7 @@ function BoardSurface({ doc, editable }: { doc: Y.Doc; editable: boolean }) {
         undoManager={undoManager}
         canEdit={editable}
       />
-      <Dock doc={doc} origin={origin} canEdit={editable} />
+      <Dock doc={doc} origin={origin} undoManager={undoManager} canEdit={editable} />
       <UndoZoomPill undoManager={undoManager} canvas={canvas} canEdit={editable} />
     </>
   )

@@ -1,4 +1,5 @@
 import * as Y from "yjs"
+import { cleanStaleGroups } from "./groups"
 import {
   elementsOf,
   type PaletteColor,
@@ -178,6 +179,7 @@ export function setTextStyle(
     }
     if (style.bold !== undefined) fields.set("bold", style.bold)
     if (style.align !== undefined && type === "text") fields.set("align", style.align)
+    cleanStaleGroups(doc, [id])
   }, origin)
 }
 

@@ -1,4 +1,5 @@
 import type * as Y from "yjs"
+import { cleanStaleGroups } from "./groups"
 import { elementsOf, type PaletteColor, PEN_POINT_LIMIT, type PenWidth } from "./model"
 import { addElement } from "./ops"
 
@@ -122,5 +123,8 @@ export function addPen(
 export function setPenWidth(doc: Y.Doc, id: string, width: PenWidth, origin: unknown) {
   const fields = elementsOf(doc).get(id)
   if (fields?.get("type") !== "pen") return
-  doc.transact(() => fields.set("width", width), origin)
+  doc.transact(() => {
+    fields.set("width", width)
+    cleanStaleGroups(doc, [id])
+  }, origin)
 }

@@ -1,4 +1,5 @@
-import type { ElementWithId } from "./model"
+import type * as Y from "yjs"
+import { type ElementWithId, elementsOf } from "./model"
 
 // ---------- Groups (GLOSSARY: Group) ----------
 //
@@ -50,4 +51,77 @@ export function expandToGroups(
     if (members) for (const member of members) out.add(member)
   }
   return out
+}
+
+// ---------- Writing groups and Lock ----------
+
+/**
+ * Removes the `groupId` of each Element whose group has dissolved (fewer than 2 existing
+ * members). Called inside the transaction of every local write that touches those Elements
+ * (spec: stale groupIds are cleaned up on the next local write that touches them).
+ */
+export function cleanStaleGroups(doc: Y.Doc, ids: Iterable<string>) {
+  const elements = elementsOf(doc)
+  const grouped: [Y.Map<unknown>, string][] = []
+  for (const id of ids) {
+    const fields = elements.get(id)
+    const groupId = fields?.get("groupId")
+    if (fields && typeof groupId === "string") grouped.push([fields, groupId])
+  }
+  if (grouped.length === 0) return // the usual case: nothing to count
+  const wanted = new Set(grouped.map(([, groupId]) => groupId))
+  const counts = new Map<string, number>()
+  for (const fields of elements.values()) {
+    const groupId = fields.get("groupId")
+    if (typeof groupId === "string" && wanted.has(groupId)) {
+      counts.set(groupId, (counts.get(groupId) ?? 0) + 1)
+    }
+  }
+  for (const [fields, groupId] of grouped) {
+    if ((counts.get(groupId) ?? 0) < 2) fields.delete("groupId")
+  }
+}
+
+/**
+ * Groups Elements into one new flat group (no nesting: members of other groups move into
+ * it). Returns the new groupId, or null for fewer than 2 existing Elements.
+ */
+export function groupElements(doc: Y.Doc, ids: Iterable<string>, origin: unknown): string | null {
+  const elements = elementsOf(doc)
+  const members = [...new Set(ids)].filter((id) => elements.has(id))
+  if (members.length < 2) return null
+  const groupId = crypto.randomUUID()
+  const before = new Set(members.map((id) => elements.get(id)?.get("groupId")))
+  doc.transact(() => {
+    for (const id of members) elements.get(id)?.set("groupId", groupId)
+    // Groups merged away may have left a lone member behind.
+    const leftBehind = [...elements].flatMap(([id, fields]) =>
+      before.has(fields.get("groupId")) ? [id] : [],
+    )
+    cleanStaleGroups(doc, leftBehind)
+  }, origin)
+  return groupId
+}
+
+/** Takes Elements out of their groups. */
+export function ungroupElements(doc: Y.Doc, ids: Iterable<string>, origin: unknown) {
+  const elements = elementsOf(doc)
+  doc.transact(() => {
+    for (const id of ids) elements.get(id)?.delete("groupId")
+  }, origin)
+}
+
+/** Locks or unlocks Elements. Unlocked Elements carry no `locked` field at all. */
+export function setLocked(doc: Y.Doc, ids: Iterable<string>, locked: boolean, origin: unknown) {
+  const elements = elementsOf(doc)
+  ids = [...ids]
+  doc.transact(() => {
+    for (const id of ids) {
+      const fields = elements.get(id)
+      if (!fields) continue
+      if (locked) fields.set("locked", true)
+      else fields.delete("locked")
+    }
+    cleanStaleGroups(doc, ids)
+  }, origin)
 }
