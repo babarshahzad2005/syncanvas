@@ -1,5 +1,13 @@
 import { ChevronDown, Loader2, Plus, Share2, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,8 +18,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Kbd } from "@/components/ui/kbd"
 import { Label } from "@/components/ui/label"
+import { Toaster } from "@/components/ui/toaster"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { keyName } from "@/lib/keys"
 import { Section } from "./foundations"
 import { previewState, StateMatrix } from "./state-matrix"
 
@@ -160,6 +171,48 @@ export function Components() {
               <DropdownMenuItem variant="destructive">Delete board</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+        </Block>
+
+        <Block
+          title="Dialog"
+          when="The shortcut sheet; later share and settings. Dialog elevation, 240ms in (none when opened from the keyboard)."
+        >
+          <Dialog>
+            <DialogTrigger render={<Button variant="outline" className="w-fit" />}>
+              Open dialog
+            </DialogTrigger>
+            <DialogContent>
+              <DialogTitle>Rename board</DialogTitle>
+              <DialogDescription>Titles show on the dashboard and in the tab.</DialogDescription>
+              <Input defaultValue="Q3 retro" aria-label="Title" />
+            </DialogContent>
+          </Dialog>
+        </Block>
+
+        <Block
+          title="Toast and Kbd"
+          when="Toasts say what happened and what to do next. Kbd marks keys in sheets and menus."
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="outline"
+              className="w-fit"
+              onClick={() =>
+                toast.error("This Board is full", {
+                  description:
+                    "20,000 Elements is the limit. Delete some to make room, or paste into another Board.",
+                })
+              }
+            >
+              Show toast
+            </Button>
+            <span className="flex items-center gap-1">
+              <Kbd>{keyName("Mod")}</Kbd>
+              <Kbd>{keyName("Shift")}</Kbd>
+              <Kbd>G</Kbd>
+            </span>
+          </div>
+          <Toaster placement="page" />
         </Block>
       </div>
     </Section>

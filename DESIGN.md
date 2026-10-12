@@ -215,9 +215,11 @@ Twelve saturated colors, separate from the palette and the accent, so a cursor n
   - **Sticky notes:** sticky colors, text size S/M/L, bold.
   - **Shapes:** Palette color, plus fill none / light / solid (small squares previewing each fill in the current color).
   - **Arrows:** Palette color only.
+  - **Connectors:** Palette color, plus Straight / Elbow.
   - **Text:** Palette color, size S / M / L / XL, bold (B, Ctrl/Cmd+B), and align left / center / right. Pressing tray controls keeps the text in edit mode.
   - **Pen strokes:** Palette color, plus width S / M / L (letter buttons, active one in `primary-subtle`). While the pen tool is active with nothing selected, the same tray sets the color and width of the next strokes.
-  - **Always:** lock and "more".
+  - **Always:** Lock and ⋯ (layering, Align ▸, Distribute ▸, Group, Ungroup, Lock). A locked selection shows only these.
+  - **Mixed selections** show only the controls the whole selection shares: colors when every Element takes the same kind (Palette or sticky), fill when all are shapes, width when all are pens, size and bold when all are text or stickies (XL and alignment only when all are text), Straight / Elbow when all are connectors. An option shows pressed only when every selected Element has it; Bold shows pressed only when all are bold, and pressing it makes them all bold.
 - **Bottom right:** a pill with undo and redo, then the zoom percentage. Clicking the percentage opens a menu: zoom in, zoom out, zoom to fit, 100%.
 - **Comment Threads open inline** as a popover card beside their pin, never covering the pinned Element. The card is placed on the side with the most free space. Escape or a click on the Board closes it. There's no permanent comments side panel.
 - **Prototype source:** branch `prototype/board-screen` (variants A–C). Variant C won because it's thumb-friendly on iPad and keeps the canvas open, with controls next to the dock.
@@ -265,6 +267,7 @@ Use the radius scale only: 4 / 6 / 8 / 12 / 16 / pill. Controls are 8, floating 
 shadcn/ui on **Base UI** with the **nova** style and Lucide icons. Only the components we use are installed (see Known Gaps).
 
 - **Buttons:** 36px tall (44px on touch). Variants: `default` (primary), `outline` (secondary), `ghost`, `destructive`, `link`. Pressing scales the button to 0.97 for 120ms.
+- **Shortcut sheet:** "?" (or the zoom menu's "Keyboard shortcuts") opens a dialog listing every Board shortcut in four groups: Tools, Selection, Editing, Navigation. Two columns on wide screens, one on phones, each key a `kbd`. Shortcuts read ⌘ / ⇧ / ⌥ on Apple devices and Ctrl / Shift / Alt elsewhere, everywhere they're shown (tooltips, menus, the sheet).
 - **Tool buttons:** 32px squares (44px on touch), ghost when idle. The compact dock is part of the Dock tray layout. The active tool gets a `primary-subtle` fill with a `primary` icon. Tooltips show the name plus the shortcut in a `kbd`.
 - **Inputs:** 36px, 8px radius, hairline border, 2px focus ring with a 2px offset.
 - **Menus and popovers:** popover elevation and 12px radius. Items are 32px tall with 6px radius, and the highlight uses `accent`.
@@ -295,6 +298,7 @@ shadcn/ui on **Base UI** with the **nova** style and Lucide icons. Only the comp
 
 Motion confirms what you did and never slows you down (emil-design-eng).
 
+- **Keyboard-opened dialogs** (the shortcut sheet from "?") appear and close with no animation; opened from a menu they animate as dialogs do. Tool and toggle buttons change state instantly (their press still scales).
 - **Never animate:** keyboard-triggered actions, switching tools, drawing, panning, zooming, selection changes, or any change to Elements made by you or by others.
 - **Animate:** popovers and menus (scale from 0.96 plus fade, origin-aware, 180ms), tooltips (150ms; after the first tooltip opens, the next ones show instantly), panels (220ms), dialogs (240ms), button presses (scale 0.97, 120ms), and toasts.
 - **Easing:** `ease-out` for anything entering, `ease-in-out` for movement on screen, and `ease` for color changes. **Never ease-in.** Exits run at 75% of the enter duration.

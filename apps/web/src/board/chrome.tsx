@@ -62,6 +62,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { keyLabel } from "@/lib/keys"
 import { useResolvedTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 import {
@@ -112,9 +113,22 @@ const CONNECTOR_STYLES: { style: ConnectorStyle; label: string; icon: typeof Spl
 
 const TEXT_TYPES = new Set(["text"])
 const STICKY_TYPES = new Set(["sticky"])
+const TEXT_OR_STICKY_TYPES = new Set(["text", "sticky"])
 
-/** Text style controls; `align` is null for sticky notes (no alignment, no XL). */
-type TextStyle = { fontSize: TextSize; bold: boolean; align: TextAlign | null }
+/** A selection whose Elements disagree on a value: the tray shows no option pressed. */
+const MIXED = "mixed"
+type Shared<T> = T | typeof MIXED
+
+/**
+ * Text style controls. `bold` is pressed only when everything is bold. `align` is null and
+ * `xl` false when sticky notes are selected (they have neither).
+ */
+type TextStyle = {
+  fontSize: Shared<TextSize>
+  bold: boolean
+  align: Shared<TextAlign> | null
+  xl: boolean
+}
 
 const TEXT_SIZES_UI: { size: TextSize; label: string }[] = [
   { size: "S", label: "Size S" },
@@ -169,7 +183,8 @@ function ToggleButton({
         aria-pressed={pressed}
         onClick={onClick}
         className={cn(
-          "type-label",
+          // Keys toggle these too (Ctrl+B): only the press scales, the state change is instant.
+          "type-label transition-transform",
           pressed && "bg-primary-subtle text-primary hover:bg-primary-subtle",
         )}
       >
@@ -213,7 +228,7 @@ function Hint({
       <TooltipTrigger render={children} />
       <TooltipContent side="top">
         {label}
-        {shortcut ? <Kbd>{shortcut}</Kbd> : null}
+        {shortcut ? <Kbd>{keyLabel(shortcut)}</Kbd> : null}
       </TooltipContent>
     </Tooltip>
   )
@@ -268,6 +283,8 @@ export function Dock({
                 disabled={!available}
                 onClick={() => t.id && setTool(t.id)}
                 className={cn(
+                  // Switching tools never animates (DESIGN.md Motion); only the press scales.
+                  "transition-transform",
                   t.id !== null &&
                     tool === t.id &&
                     "bg-primary-subtle text-primary hover:bg-primary-subtle",
@@ -306,36 +323,44 @@ function SelectionTray({
     () => {
       const elements = elementsOf(doc)
       const fields = [...selection].map((id) => elements.get(id))
-      const first = fields[0]
       const all = (types: Set<string>) => fields.every((f) => types.has(f?.get("type") as string))
+      // A value every selected Element shares, or MIXED (no option shows pressed).
+      const shared = (key: string, fallback?: unknown) => {
+        const values = new Set(fields.map((f) => f?.get(key) ?? fallback))
+        return values.size === 1 ? [...values][0] : MIXED
+      }
       const stickies = all(STICKY_TYPES)
       const anySticky = fields.some((f) => f?.get("type") === "sticky")
+      const texts = all(TEXT_TYPES)
+      // Only the controls the whole selection shares (spec: style tray per type).
       return JSON.stringify([
         selectionCommands(doc, selection),
-        first?.get("color") ?? null,
+        shared("color"),
         // Sticky notes have their own colors, so a mix with other types shows no colors.
         stickies ? "sticky" : anySticky ? null : "palette",
-        all(SHAPE_TYPES) ? (first?.get("fill") ?? "light") : null,
-        all(PEN_TYPES) ? (first?.get("width") ?? null) : null,
-        all(TEXT_TYPES) || stickies
+        all(SHAPE_TYPES) ? shared("fill", "light") : null,
+        all(PEN_TYPES) ? shared("width") : null,
+        // Text and stickies share size (S/M/L) and bold; alignment and XL are text-only.
+        texts || all(TEXT_OR_STICKY_TYPES)
           ? {
-              fontSize: first?.get("fontSize"),
-              bold: first?.get("bold"),
-              align: stickies ? null : first?.get("align"),
+              fontSize: shared("fontSize"),
+              bold: fields.every((f) => f?.get("bold") === true),
+              align: texts ? shared("align") : null,
+              xl: texts,
             }
           : null,
-        all(CONNECTOR_TYPES) ? (first?.get("style") ?? null) : null,
+        all(CONNECTOR_TYPES) ? shared("style") : null,
       ])
     },
   )
   const [commands, color, colors, fill, width, text, style] = JSON.parse(snapshot) as [
     ReturnType<typeof selectionCommands>,
-    PaletteColor | null,
+    Shared<PaletteColor> | null,
     ColorSet | null,
-    Fill | null,
-    PenWidth | null,
+    Shared<Fill> | null,
+    Shared<PenWidth> | null,
     TextStyle | null,
-    ConnectorStyle | null,
+    Shared<ConnectorStyle> | null,
   ]
   const context = { doc, origin, undoManager }
   const actions = <SelectionActions context={context} commands={commands} />
@@ -417,13 +442,13 @@ function TrayControls({
   onText,
   onStyle,
 }: {
-  color: PaletteColor | null
+  color: Shared<PaletteColor> | null
   colors: ColorSet | null
-  fill: Fill | null
-  width: PenWidth | null
+  fill: Shared<Fill> | null
+  width: Shared<PenWidth> | null
   text: TextStyle | null
   /** A connector's straight or elbow. */
-  style?: ConnectorStyle | null
+  style?: Shared<ConnectorStyle> | null
   /** Lock and ⋯, for a selection. */
   actions?: React.ReactNode
   onColor: (color: PaletteColor) => void
@@ -433,7 +458,8 @@ function TrayControls({
   onStyle?: (style: ConnectorStyle) => void
 }) {
   const theme = useResolvedTheme()
-  const currentShades = paletteShades(color ?? "ink", theme)
+  // Fill previews use the selection's color, or ink when colors are mixed.
+  const currentShades = paletteShades(color && color !== MIXED ? color : "ink", theme)
 
   return (
     <div
@@ -454,7 +480,7 @@ function TrayControls({
               aria-pressed={color === option}
               onClick={() => onColor(option)}
               className={cn(
-                "size-6 rounded-full border-2 transition-transform duration-(--duration-press) ease-out active:scale-90 pointer-coarse:size-9",
+                "size-6 rounded-full border-2 transition-transform duration-(--duration-press) ease-out active:scale-[0.95] pointer-coarse:size-9",
                 colors === "sticky" && "rounded-sm border border-foreground/15",
                 color === option && "ring-2 ring-primary ring-offset-2 ring-offset-muted",
               )}
@@ -478,7 +504,7 @@ function TrayControls({
                 aria-pressed={fill === option.fill}
                 onClick={() => onFill?.(option.fill)}
                 className={cn(
-                  "size-6 rounded-sm border-2 transition-transform duration-(--duration-press) ease-out active:scale-90 pointer-coarse:size-9",
+                  "size-6 rounded-sm border-2 transition-transform duration-(--duration-press) ease-out active:scale-[0.95] pointer-coarse:size-9",
                   fill === option.fill && "ring-2 ring-primary ring-offset-2 ring-offset-muted",
                 )}
                 style={{
@@ -528,21 +554,19 @@ function TrayControls({
       {text !== null && (
         <>
           {colors !== null && <span className="mx-1.5 h-5 w-px bg-border" />}
-          {TEXT_SIZES_UI.filter((option) => text.align !== null || option.size !== "XL").map(
-            (option) => (
-              <ToggleButton
-                key={option.size}
-                label={option.label}
-                pressed={text.fontSize === option.size}
-                onClick={() => onText?.({ fontSize: option.size })}
-              >
-                {option.size}
-              </ToggleButton>
-            ),
-          )}
+          {TEXT_SIZES_UI.filter((option) => text.xl || option.size !== "XL").map((option) => (
+            <ToggleButton
+              key={option.size}
+              label={option.label}
+              pressed={text.fontSize === option.size}
+              onClick={() => onText?.({ fontSize: option.size })}
+            >
+              {option.size}
+            </ToggleButton>
+          ))}
           <ToggleButton
             label="Bold"
-            shortcut="Ctrl B"
+            shortcut="Mod B"
             pressed={text.bold}
             onClick={() => onText?.({ bold: !text.bold })}
           >
@@ -583,7 +607,7 @@ function SelectionActions({
     <>
       <ToggleButton
         label={commands.locked ? "Unlock" : "Lock"}
-        shortcut="Shift Ctrl L"
+        shortcut="Mod Shift L"
         pressed={commands.locked}
         onClick={() => toggleLock(context)}
       >
@@ -606,14 +630,14 @@ function SelectionActions({
             onClick={() => reorderSelection(context, "forward")}
           >
             Bring forward
-            <DropdownMenuShortcut>Ctrl ]</DropdownMenuShortcut>
+            <DropdownMenuShortcut>{keyLabel("Mod ]")}</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={!commands.canReorder}
             onClick={() => reorderSelection(context, "backward")}
           >
             Send backward
-            <DropdownMenuShortcut>Ctrl [</DropdownMenuShortcut>
+            <DropdownMenuShortcut>{keyLabel("Mod [")}</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuSub>
@@ -648,18 +672,18 @@ function SelectionActions({
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled={!commands.canGroup} onClick={() => groupSelection(context)}>
             Group
-            <DropdownMenuShortcut>Ctrl G</DropdownMenuShortcut>
+            <DropdownMenuShortcut>{keyLabel("Mod G")}</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={!commands.canUngroup}
             onClick={() => ungroupSelection(context)}
           >
             Ungroup
-            <DropdownMenuShortcut>Shift Ctrl G</DropdownMenuShortcut>
+            <DropdownMenuShortcut>{keyLabel("Mod Shift G")}</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => toggleLock(context)}>
             {commands.locked ? "Unlock" : "Lock"}
-            <DropdownMenuShortcut>Shift Ctrl L</DropdownMenuShortcut>
+            <DropdownMenuShortcut>{keyLabel("Mod Shift L")}</DropdownMenuShortcut>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -701,7 +725,7 @@ export function UndoZoomPill({
     <div className={cn(PANEL, "fixed right-3 bottom-3 flex items-center gap-0.5 rounded-full p-1")}>
       {canEdit && (
         <>
-          <Hint label="Undo" shortcut="Ctrl Z">
+          <Hint label="Undo" shortcut="Mod Z">
             <Button
               variant="ghost"
               size="icon-sm"
@@ -713,7 +737,7 @@ export function UndoZoomPill({
               <Undo2 />
             </Button>
           </Hint>
-          <Hint label="Redo" shortcut="Shift Ctrl Z">
+          <Hint label="Redo" shortcut="Mod Shift Z">
             <Button
               variant="ghost"
               size="icon-sm"
@@ -750,6 +774,11 @@ export function UndoZoomPill({
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => canvas.current?.zoomTo(1)}>
             Zoom to 100%
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => useBoardUi.getState().setShortcutsOpen("pointer")}>
+            Keyboard shortcuts
+            <DropdownMenuShortcut>?</DropdownMenuShortcut>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

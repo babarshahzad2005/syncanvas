@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import type * as Y from "yjs"
 import { BoardCanvas, type CanvasHandle } from "@/board/board-canvas"
 import { Dock, UndoZoomPill } from "@/board/chrome"
+import { ShortcutSheet } from "@/board/shortcut-sheet"
 import { useBoardUi } from "@/board/store"
 import { BrandMark } from "@/components/brand"
 import { Button } from "@/components/ui/button"
@@ -32,6 +33,7 @@ export function BoardScreen() {
         <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
       </div>
       <Toaster placement="board" />
+      <ShortcutSheet />
     </TooltipProvider>
   )
 }

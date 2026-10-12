@@ -543,6 +543,11 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         ui().setEditing({ id: element.id, continuing: e.key !== "Enter" })
         return
       }
+      if (e.key === "?") {
+        e.preventDefault()
+        ui().setShortcutsOpen("keyboard")
+        return
+      }
       if (e.shiftKey && e.code === "Digit1") {
         const { index, size } = state.current
         setCamera(fitCamera(boundsOf(index.all(), index.byId), size))

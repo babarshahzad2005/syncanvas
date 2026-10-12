@@ -16,6 +16,7 @@ import {
   alignUnits,
   anchorPoint,
   applyTextChange,
+  arrowGeometry,
   type ConnectorEnd,
   checkUpdate,
   copyPayload,
@@ -41,9 +42,12 @@ import {
   resolveConnectorEnd,
   STICKY_COLORS,
   scaledGeometry,
+  setConnectorStyle,
   setFill,
   setGeometry,
   setLocked,
+  setPenWidth,
+  setSize,
   setTextStyle,
   textOf,
   ungroupElements,
@@ -308,6 +312,7 @@ const editCommand = fc.oneof(
       pick,
       fontSize: fc.constantFrom("S" as const, "M" as const, "L" as const, "XL" as const),
       bold: fc.boolean(),
+      align: fc.constantFrom("left" as const, "center" as const, "right" as const),
     }),
   },
   {
@@ -435,7 +440,8 @@ const editCommand = fc.oneof(
     // Dragging one end of a connector onto another Element, or off into empty space.
     weight: 2,
     arbitrary: fc.record({
-      op: fc.constant("reconnect" as const),
+      // Not "reconnect": that name is the network command's.
+      op: fc.constant("reattach" as const),
       client: editor,
       pick,
       target: fc.option(pick, { nil: null }),
@@ -454,6 +460,22 @@ const editCommand = fc.oneof(
       picks: fc.array(pick, { minLength: 1, maxLength: 4 }),
       dx: coordinate,
       dy: coordinate,
+    }),
+  },
+  {
+    // The rest of the tray and handles: pen width, connector style, an arrow's end, and
+    // the box a text records when editing ends.
+    weight: 2,
+    arbitrary: fc.record({
+      op: fc.constant("tweak" as const),
+      client: editor,
+      pick,
+      width: fc.constantFrom("S" as const, "M" as const, "L" as const),
+      style: fc.constantFrom("straight" as const, "elbow" as const),
+      x: coordinate,
+      y: coordinate,
+      w: fc.integer({ min: 1, max: 400 }),
+      h: fc.integer({ min: 1, max: 400 }),
     }),
   },
   {
@@ -535,7 +557,7 @@ function runEdit(client: SimClient, c: EditCommand) {
       break
     case "style": {
       const id = target()
-      if (id) setTextStyle(doc, id, { fontSize: c.fontSize, bold: c.bold }, LOCAL)
+      if (id) setTextStyle(doc, id, { fontSize: c.fontSize, bold: c.bold, align: c.align }, LOCAL)
       break
     }
     case "type": {
@@ -675,7 +697,7 @@ function runEdit(client: SimClient, c: EditCommand) {
       )
       break
     }
-    case "reconnect": {
+    case "reattach": {
       const connectors = listElements(doc).filter((e) => e.type === "connector")
       const connector = connectors[c.pick % Math.max(1, connectors.length)]
       if (!connector) break
@@ -713,6 +735,20 @@ function runEdit(client: SimClient, c: EditCommand) {
       )
       break
     }
+    case "tweak": {
+      const id = target()
+      const e = listElements(doc).find((el) => el.id === id)
+      if (!e) break
+      if (e.type === "pen") setPenWidth(doc, e.id, c.width, LOCAL)
+      else if (e.type === "connector") setConnectorStyle(doc, e.id, c.style, LOCAL)
+      else if (e.type === "arrow") {
+        const from = { x: e.position.x + e.ends.from.x, y: e.position.y + e.ends.from.y }
+        setGeometry(doc, [[e.id, arrowGeometry(from, { x: c.x, y: c.y })]], LOCAL)
+      } else if (e.type === "text" || e.type === "sticky") {
+        setSize(doc, e.id, { w: c.w, h: c.h }, LOCAL)
+      }
+      break
+    }
     case "multiDelete":
       deleteElements(
         doc,
@@ -738,6 +774,35 @@ function runEdit(client: SimClient, c: EditCommand) {
 // ---------- The property ----------
 
 let editsRun = 0
+/** Every edit command that ran at least once: a command that never runs tests nothing. */
+const editOpsRun = new Set<string>()
+const EDIT_OPS = [
+  "align",
+  "arrow",
+  "connect",
+  "create",
+  "delete",
+  "fill",
+  "group",
+  "lock",
+  "move",
+  "multiDelete",
+  "multiMove",
+  "paste",
+  "pen",
+  "reattach",
+  "recolor",
+  "redo",
+  "reorder",
+  "scale",
+  "sticky",
+  "style",
+  "text",
+  "tweak",
+  "type",
+  "undo",
+  "ungroup",
+]
 
 function simulate(commands: Command[]) {
   // Deterministic Element ids, so a seed replays exactly.
@@ -759,6 +824,7 @@ function simulate(commands: Command[]) {
       else {
         runEdit(client, c)
         editsRun++
+        editOpsRun.add(c.op)
       }
     }
     server.quiesce()
@@ -800,5 +866,6 @@ describe("convergence", () => {
     })
     // At least 10,000 edits per run of the suite (spec), counted across all cases.
     expect(editsRun).toBeGreaterThanOrEqual(10_000)
+    expect(EDIT_OPS.filter((op) => !editOpsRun.has(op))).toEqual([])
   }, 120_000)
 })

@@ -26,6 +26,9 @@ type BoardUi = {
   /** Style of the next connector: the style last picked in the tray (elbow at first). */
   connectorStyle: ConnectorStyle
   setConnectorStyle: (style: ConnectorStyle) => void
+  /** The "?" shortcut sheet: closed, or open from the keyboard (no animation) or a menu. */
+  shortcutsOpen: false | "keyboard" | "pointer"
+  setShortcutsOpen: (open: false | "keyboard" | "pointer") => void
   /** The text being typed into, if any (`continuing`: see TextEditor). */
   editing: { id: string; continuing: boolean } | null
   setEditing: (editing: { id: string; continuing: boolean } | null) => void
@@ -44,6 +47,8 @@ export const useBoardUi = create<BoardUi>((set) => ({
   setStickyColor: (stickyColor) => set({ stickyColor }),
   connectorStyle: "elbow",
   setConnectorStyle: (connectorStyle) => set({ connectorStyle }),
+  shortcutsOpen: false,
+  setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   editing: null,
   setEditing: (editing) => set({ editing }),
   setTool: (tool) => set({ tool }),
