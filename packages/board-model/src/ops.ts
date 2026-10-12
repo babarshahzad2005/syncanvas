@@ -1,7 +1,10 @@
 import { generateKeyBetween } from "fractional-indexing"
 import * as Y from "yjs"
+import { refreshFallbacks } from "./connectors"
 import { cleanStaleGroups } from "./groups"
 import {
+  type ConnectorEnd,
+  type ConnectorStyle,
   elementsOf,
   type Fill,
   isStickyColor,
@@ -118,6 +121,7 @@ export function moveElements(
       moved.push(id)
     }
     cleanStaleGroups(doc, moved)
+    refreshFallbacks(doc, moved)
   }, origin)
 }
 
@@ -134,7 +138,10 @@ export function recolorElement(doc: Y.Doc, id: string, color: PaletteColor, orig
 
 export function deleteElements(doc: Y.Doc, ids: Iterable<string>, origin: unknown) {
   const elements = elementsOf(doc)
+  ids = [...ids]
   doc.transact(() => {
+    // Connectors attached to what's deleted keep their ends where it was.
+    refreshFallbacks(doc, ids)
     const groups = new Set<unknown>()
     for (const id of ids) {
       groups.add(elements.get(id)?.get("groupId"))
@@ -164,4 +171,40 @@ export function addArrow(
     { type: "arrow", ...arrowGeometry(arrow.from, arrow.to), color: arrow.color ?? "ink" },
     origin,
   )
+}
+
+/**
+ * Adds a connector between two ends (each attached to an Element's side, or free at its
+ * fallback). It always has an arrowhead at `end`.
+ */
+export function addConnector(
+  doc: Y.Doc,
+  connector: {
+    start: ConnectorEnd
+    end: ConnectorEnd
+    style: ConnectorStyle
+    color?: PaletteColor
+  },
+  origin: unknown,
+): string {
+  return addElement(
+    doc,
+    {
+      type: "connector",
+      color: connector.color ?? "ink",
+      start: connectorEnd(connector.start),
+      end: connectorEnd(connector.end),
+      style: connector.style,
+    },
+    origin,
+  )
+}
+
+/** A connector end as stored: only the fields it uses (undefined ones would fail validation). */
+export function connectorEnd(end: ConnectorEnd): ConnectorEnd {
+  return {
+    ...(end.elementId !== undefined ? { elementId: end.elementId } : {}),
+    ...(end.anchor !== undefined ? { anchor: end.anchor } : {}),
+    fallback: { x: end.fallback.x, y: end.fallback.y },
+  }
 }

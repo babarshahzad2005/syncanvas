@@ -1,8 +1,14 @@
 import {
+  type Anchor,
+  type AttachBox,
+  anchorPoint,
+  attachedTarget,
+  type ConnectorStyle,
   type ElementWithId,
   type Fill,
   hasBox,
   indexById,
+  isAttachable,
   type PaletteColor,
   type PenElement,
   type PenWidth,
@@ -221,10 +227,11 @@ export function hitTest(
   for (let i = elements.length - 1; i >= 0; i--) {
     const e = elements[i]
     if (!e) continue
-    const line = lineEnds(e, byId)
-    if (line) {
-      if (distanceToSegment(world, line.from, line.to) <= tolerance + strokeWidth(zoom) / 2) {
-        return e.id
+    const path = linePath(e, byId)
+    if (path) {
+      const reach = tolerance + strokeWidth(zoom) / 2
+      for (let j = 1; j < path.length; j++) {
+        if (distanceToSegment(world, path[j - 1] as Point, path[j] as Point) <= reach) return e.id
       }
       continue
     }
@@ -283,8 +290,19 @@ export type Scene = {
     | { type: "rect" | "ellipse"; position: Point; size: Size; color: PaletteColor; fill: Fill }
     | { type: "pen"; points: readonly StrokePoint[]; color: PaletteColor; width: PenWidth }
     | { type: "arrow"; from: Point; to: Point; color: PaletteColor }
+    | {
+        type: "connector"
+        start: Point
+        startAnchor?: Anchor
+        end: Point
+        endAnchor?: Anchor
+        style: ConnectorStyle
+        color: PaletteColor
+      }
     | null
   showGrid?: boolean
+  /** Snap points shown while drawing or re-attaching a connector; `active` is where it snaps. */
+  snap?: { points: readonly Point[]; active: Point | null } | null
   /** A locked Element under the pointer: it shows its lock badge. */
   lockBadge?: string | null
   /** False hides the selection's resize handles (a locked selection can't be resized). */
@@ -323,7 +341,11 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
   }
   if (scene.preview?.type === "arrow") {
     const p = scene.preview
-    drawArrow(ctx, p.from, p.to, paletteShades(p.color, theme).stroke, camera.zoom)
+    drawArrow(ctx, [p.from, p.to], paletteShades(p.color, theme).stroke, camera.zoom)
+  } else if (scene.preview?.type === "connector") {
+    const p = scene.preview
+    const path = connectorPath(p.start, p.startAnchor, p.end, p.endAnchor, p.style)
+    drawArrow(ctx, path, paletteShades(p.color, theme).stroke, camera.zoom)
   } else if (scene.preview?.type === "pen") {
     const p = scene.preview
     drawStroke(ctx, p.points, p.width, paletteShades(p.color, theme).stroke, false)
@@ -354,13 +376,14 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
     ctx.lineWidth = 1
     ctx.strokeStyle = colors.primary
     for (const e of selected) {
-      const line = lineEnds(e, byId)
-      if (line) {
-        const from = worldToScreen(camera, line.from)
-        const to = worldToScreen(camera, line.to)
+      const path = linePath(e, byId)
+      if (path) {
         ctx.beginPath()
-        ctx.moveTo(from.x, from.y)
-        ctx.lineTo(to.x, to.y)
+        for (const [j, p] of path.entries()) {
+          const q = worldToScreen(camera, p)
+          if (j === 0) ctx.moveTo(q.x, q.y)
+          else ctx.lineTo(q.x, q.y)
+        }
         ctx.stroke()
         continue
       }
@@ -379,6 +402,8 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
     })
     drawSelection(ctx, p, s, colors, scene.handles !== false)
   }
+
+  if (scene.snap) drawSnapPoints(ctx, scene.snap, camera, colors)
 
   const locked = scene.lockBadge ? byId.get(scene.lockBadge) : undefined
   if (locked) drawLockBadge(ctx, lockBadgeRect(locked, byId, camera), colors)
@@ -440,11 +465,12 @@ export function elementBox(
   if (e.type === "text") return { position: e.position, size: textSize(e) }
   if (e.type === "sticky") return { position: e.position, size: stickySize(e) }
   if (hasBox(e)) return { position: e.position, size: e.size }
-  const { start, end } = resolveConnector(e, byId)
-  return {
-    position: { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y) },
-    size: { w: Math.abs(end.x - start.x), h: Math.abs(end.y - start.y) },
-  }
+  const path = linePath(e, byId) ?? []
+  const xs = path.map((p) => p.x)
+  const ys = path.map((p) => p.y)
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  return { position: { x, y }, size: { w: Math.max(...xs) - x, h: Math.max(...ys) - y } }
 }
 
 // ---------- Text ----------
@@ -591,8 +617,8 @@ function drawElement(
       return
     case "arrow":
     case "connector": {
-      const line = lineEnds(e, byId)
-      if (line) drawArrow(ctx, line.from, line.to, shades.stroke, zoom)
+      const path = linePath(e, byId)
+      if (path) drawArrow(ctx, path, shades.stroke, zoom)
       return
     }
     case "text":
@@ -615,7 +641,7 @@ export function lineEnds(
     }
   }
   if (e.type === "connector") {
-    const { start, end } = resolveConnector(e, byId)
+    const { start, end } = connectorEnds(e, byId)
     return { from: start, to: end }
   }
   return null
@@ -625,28 +651,33 @@ export function lineEnds(
 const ARROWHEAD_LENGTH = 5
 const ARROWHEAD_ANGLE = 0.45
 
-/** A straight line with a filled arrowhead at `to`. */
+/** A line through `points` with a filled arrowhead at the last point. */
 function drawArrow(
   ctx: CanvasRenderingContext2D,
-  from: Point,
-  to: Point,
+  points: readonly Point[],
   color: string,
   zoom: number,
 ) {
+  const to = points.at(-1)
+  const from = points.at(-2)
+  if (!to || !from) return
   const width = strokeWidth(zoom)
   const length = Math.hypot(to.x - from.x, to.y - from.y)
   const angle = Math.atan2(to.y - from.y, to.x - from.x)
-  // Short arrows get a smaller head, so the head never swallows the line.
+  // Short last segments get a smaller head, so the head never swallows the line.
   const head = Math.min(width * ARROWHEAD_LENGTH, length / 2)
   const base = {
     x: to.x - Math.cos(angle) * head * Math.cos(ARROWHEAD_ANGLE),
     y: to.y - Math.sin(angle) * head * Math.cos(ARROWHEAD_ANGLE),
   }
   ctx.beginPath()
-  ctx.moveTo(from.x, from.y)
+  const [first, ...rest] = points
+  ctx.moveTo(first?.x ?? 0, first?.y ?? 0)
+  for (const p of rest.slice(0, -1)) ctx.lineTo(p.x, p.y)
   ctx.lineTo(base.x, base.y)
   ctx.lineWidth = width
   ctx.lineCap = "round"
+  ctx.lineJoin = "round"
   ctx.strokeStyle = color
   ctx.stroke()
   if (head <= 0) return
@@ -662,9 +693,114 @@ function drawArrow(
   )
   ctx.closePath()
   ctx.fillStyle = color
-  ctx.lineJoin = "round"
   ctx.fill()
   ctx.stroke()
+}
+
+// ---------- Connector routing (spec: Connectors) ----------
+
+const ANCHOR_DIRECTIONS: Record<Anchor, Point> = {
+  top: { x: 0, y: -1 },
+  right: { x: 1, y: 0 },
+  bottom: { x: 0, y: 1 },
+  left: { x: -1, y: 0 },
+}
+
+/**
+ * The path of a connector: a straight line, or an elbow of 2–3 orthogonal segments (no
+ * obstacle avoidance, PRD). An attached end leaves its side perpendicularly; a free end
+ * goes along whichever axis covers more distance.
+ */
+export function connectorPath(
+  start: Point,
+  startAnchor: Anchor | undefined,
+  end: Point,
+  endAnchor: Anchor | undefined,
+  style: ConnectorStyle,
+): Point[] {
+  if (style === "straight") return [start, end]
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const free = Math.abs(dx) >= Math.abs(dy) ? "h" : "v"
+  const axis = (a: Anchor | undefined) => (a ? (ANCHOR_DIRECTIONS[a].x !== 0 ? "h" : "v") : free)
+  const from = axis(startAnchor)
+  const to = axis(endAnchor)
+  let points: Point[]
+  if (from === "h" && to === "h") {
+    const midX = start.x + dx / 2
+    points = [start, { x: midX, y: start.y }, { x: midX, y: end.y }, end]
+  } else if (from === "v" && to === "v") {
+    const midY = start.y + dy / 2
+    points = [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end]
+  } else if (from === "h") {
+    points = [start, { x: end.x, y: start.y }, end]
+  } else {
+    points = [start, { x: start.x, y: end.y }, end]
+  }
+  // Aligned ends make some segments zero-length or straight continuations: drop those points,
+  // so the arrowhead keeps a direction and a level elbow is one segment.
+  const out: Point[] = []
+  for (const p of points) {
+    const last = out.at(-1)
+    if (last && last.x === p.x && last.y === p.y) continue
+    const before = out.at(-2)
+    if (
+      last &&
+      before &&
+      ((before.x === last.x && last.x === p.x) || (before.y === last.y && last.y === p.y))
+    ) {
+      out[out.length - 1] = p
+      continue
+    }
+    out.push(p)
+  }
+  return out
+}
+
+/** The box connectors attach to: the drawn box (text and sticky boxes come from layout). */
+const attachBox: AttachBox = (e) => {
+  if (!hasBox(e)) return null
+  if (e.type === "text") return { position: e.position, size: textSize(e) }
+  if (e.type === "sticky") return { position: e.position, size: stickySize(e) }
+  return { position: e.position, size: e.size }
+}
+
+/** The four side midpoints a connector end can snap to on an Element. */
+export function snapPoints(e: ElementWithId): { anchor: Anchor; point: Point }[] {
+  const box = isAttachable(e) ? attachBox(e) : null
+  if (!box) return []
+  return (["top", "right", "bottom", "left"] as const).map((anchor) => ({
+    anchor,
+    point: anchorPoint(box.position, box.size, anchor),
+  }))
+}
+
+/** A connector's two ends, resolved against the Elements as drawn. */
+export function connectorEnds(
+  e: Extract<ElementWithId, { type: "connector" }>,
+  byId: ReadonlyMap<string, ElementWithId>,
+): { start: Point; end: Point } {
+  return resolveConnector(e, byId, attachBox)
+}
+
+/** The points a line-like Element is drawn through (an arrow's 2, a connector's 2–4), or null. */
+export function linePath(
+  e: ElementWithId,
+  byId: ReadonlyMap<string, ElementWithId>,
+): Point[] | null {
+  if (e.type === "arrow") {
+    return [
+      { x: e.position.x + e.ends.from.x, y: e.position.y + e.ends.from.y },
+      { x: e.position.x + e.ends.to.x, y: e.position.y + e.ends.to.y },
+    ]
+  }
+  if (e.type === "connector") {
+    const { start, end } = connectorEnds(e, byId)
+    const anchorOf = (side: typeof e.start) =>
+      attachedTarget(side, byId) ? side.anchor : undefined
+    return connectorPath(start, anchorOf(e.start), end, anchorOf(e.end), e.style)
+  }
+  return null
 }
 
 // ---------- Pen strokes ----------
@@ -830,4 +966,25 @@ function drawLockBadge(
   ctx.beginPath()
   ctx.roundRect(cx - 4.5, cy, 9, 6.5, 1.5)
   ctx.fill()
+}
+
+// ---------- Snap indicator (DESIGN.md → Canvas → Connectors) ----------
+
+function drawSnapPoints(
+  ctx: CanvasRenderingContext2D,
+  snap: { points: readonly Point[]; active: Point | null },
+  camera: Camera,
+  colors: (typeof CANVAS)[Theme],
+) {
+  ctx.lineWidth = 1.5
+  ctx.strokeStyle = colors.primary
+  for (const point of snap.points) {
+    const p = worldToScreen(camera, point)
+    const active = snap.active !== null && snap.active.x === point.x && snap.active.y === point.y
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, active ? 6 : 4, 0, Math.PI * 2)
+    ctx.fillStyle = active ? colors.primary : colors.handleFill
+    ctx.fill()
+    ctx.stroke()
+  }
 }

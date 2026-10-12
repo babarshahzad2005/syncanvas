@@ -1,6 +1,7 @@
 import type * as Y from "yjs"
+import { refreshFallbacks } from "./connectors"
 import { cleanStaleGroups } from "./groups"
-import { type ElementWithId, elementsOf, type Point } from "./model"
+import { type ConnectorEnd, type ElementWithId, elementsOf, type Point } from "./model"
 
 // ---------- Resize (spec: Resize) ----------
 //
@@ -22,7 +23,13 @@ export type Geometry = {
   points?: [number, number, number][]
   ends?: { from: Point; to: Point }
   autoWidth?: boolean
+  /** A connector's ends: only free ends move (attached ones follow their Elements). */
+  start?: ConnectorEnd
+  end?: ConnectorEnd
 }
+
+/** Is a connector end attached to an Element that still exists? */
+export type IsAttached = (end: ConnectorEnd) => boolean
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -37,10 +44,14 @@ export function scaledGeometry(
   from: Rect,
   to: Rect,
   single: boolean,
+  isAttached: IsAttached = (end) => end.elementId !== undefined,
 ): Geometry | null {
-  if (e.type === "connector") return null
   const sx = from.w > 0 ? to.w / from.w : 1
   const sy = from.h > 0 ? to.h / from.h : 1
+  if (e.type === "connector") {
+    const map = (p: Point) => ({ x: to.x + (p.x - from.x) * sx, y: to.y + (p.y - from.y) * sy })
+    return freeEnds(e.start, e.end, map, isAttached)
+  }
   const position = {
     x: to.x + (e.position.x - from.x) * sx,
     y: to.y + (e.position.y - from.y) * sy,
@@ -80,6 +91,31 @@ export function scaledGeometry(
   }
 }
 
+/**
+ * Moves an Element by an offset: boxed Elements by their position, connectors by their free
+ * ends. Null when nothing about it moves.
+ */
+export function translatedGeometry(
+  e: ElementWithId,
+  d: Point,
+  isAttached: IsAttached = (end) => end.elementId !== undefined,
+): Geometry | null {
+  if (e.type !== "connector") return { position: { x: e.position.x + d.x, y: e.position.y + d.y } }
+  return freeEnds(e.start, e.end, (p) => ({ x: p.x + d.x, y: p.y + d.y }), isAttached)
+}
+
+function freeEnds(
+  start: ConnectorEnd,
+  end: ConnectorEnd,
+  map: (p: Point) => Point,
+  isAttached: IsAttached,
+): Geometry | null {
+  const out: Geometry = {}
+  if (!isAttached(start)) out.start = { ...start, fallback: map(start.fallback) }
+  if (!isAttached(end)) out.end = { ...end, fallback: map(end.fallback) }
+  return out.start || out.end ? out : null
+}
+
 /** An arrow's box and relative ends for absolute end points (dragging one end). */
 export function arrowGeometry(
   from: Point,
@@ -104,12 +140,21 @@ export function setGeometry(
     const changed: string[] = []
     for (const [id, geometry] of changes) {
       const fields = elementsOf(doc).get(id)
-      if (!fields?.has("position")) continue // deleted meanwhile
+      if (!fields) continue // deleted meanwhile
+      // Connectors take only ends; everything else only box geometry.
+      if (
+        fields.get("type") === "connector"
+          ? !geometry.start && !geometry.end
+          : !fields.has("position")
+      ) {
+        continue
+      }
       for (const [key, value] of Object.entries(geometry)) {
         if (value !== undefined) fields.set(key, value)
       }
       changed.push(id)
     }
     cleanStaleGroups(doc, changed)
+    refreshFallbacks(doc, changed)
   }, origin)
 }

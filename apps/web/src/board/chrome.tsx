@@ -1,5 +1,6 @@
 import {
   type Alignment,
+  type ConnectorStyle,
   elementsOf,
   type Fill,
   PALETTE_COLORS,
@@ -8,6 +9,7 @@ import {
   recolorElement,
   STICKY_COLORS,
   type StickyColor,
+  setConnectorStyle,
   setFill,
   setPenWidth,
   setTextStyle,
@@ -30,6 +32,7 @@ import {
   Bold,
   ChevronDown,
   Circle,
+  CornerDownRight,
   Ellipsis,
   Image,
   Lock,
@@ -87,7 +90,7 @@ const TOOLS: {
   { id: "rect", label: "Rectangle", shortcut: "R", icon: Square },
   { id: "ellipse", label: "Ellipse", shortcut: "O", icon: Circle },
   { id: "arrow", label: "Arrow", shortcut: "A", icon: MoveUpRight },
-  { id: null, label: "Connector", shortcut: "C", icon: Spline },
+  { id: "connector", label: "Connector", shortcut: "C", icon: Spline },
   { id: "text", label: "Text", shortcut: "T", icon: Type },
   { id: "sticky", label: "Sticky note", shortcut: "S", icon: StickyNote },
   { id: null, label: "Image", icon: Image },
@@ -100,6 +103,12 @@ type ColorSet = "palette" | "sticky"
 /** Element types that have a fill (spec: style tray per type). */
 const SHAPE_TYPES = new Set(["rect", "ellipse"])
 const PEN_TYPES = new Set(["pen"])
+const CONNECTOR_TYPES = new Set(["connector"])
+
+const CONNECTOR_STYLES: { style: ConnectorStyle; label: string; icon: typeof Spline }[] = [
+  { style: "straight", label: "Straight", icon: MoveUpRight },
+  { style: "elbow", label: "Elbow", icon: CornerDownRight },
+]
 
 const TEXT_TYPES = new Set(["text"])
 const STICKY_TYPES = new Set(["sticky"])
@@ -315,16 +324,18 @@ function SelectionTray({
               align: stickies ? null : first?.get("align"),
             }
           : null,
+        all(CONNECTOR_TYPES) ? (first?.get("style") ?? null) : null,
       ])
     },
   )
-  const [commands, color, colors, fill, width, text] = JSON.parse(snapshot) as [
+  const [commands, color, colors, fill, width, text, style] = JSON.parse(snapshot) as [
     ReturnType<typeof selectionCommands>,
     PaletteColor | null,
     ColorSet | null,
     Fill | null,
     PenWidth | null,
     TextStyle | null,
+    ConnectorStyle | null,
   ]
   const context = { doc, origin, undoManager }
   const actions = <SelectionActions context={context} commands={commands} />
@@ -349,7 +360,13 @@ function SelectionTray({
       fill={fill}
       width={width}
       text={text}
+      style={style}
       actions={actions}
+      onStyle={(value) => {
+        for (const id of selection) setConnectorStyle(doc, id, value, origin)
+        // The next connector gets the style last picked.
+        useBoardUi.getState().setConnectorStyle(value)
+      }}
       onColor={(value) => {
         for (const id of selection) recolorElement(doc, id, value, origin)
         // The next sticky note gets the color last picked for one.
@@ -392,23 +409,28 @@ function TrayControls({
   fill,
   width,
   text,
+  style = null,
   actions,
   onColor,
   onFill,
   onWidth,
   onText,
+  onStyle,
 }: {
   color: PaletteColor | null
   colors: ColorSet | null
   fill: Fill | null
   width: PenWidth | null
   text: TextStyle | null
+  /** A connector's straight or elbow. */
+  style?: ConnectorStyle | null
   /** Lock and ⋯, for a selection. */
   actions?: React.ReactNode
   onColor: (color: PaletteColor) => void
   onFill?: (fill: Fill) => void
   onWidth?: (width: PenWidth) => void
   onText?: (style: { fontSize?: TextSize; bold?: boolean; align?: TextAlign }) => void
+  onStyle?: (style: ConnectorStyle) => void
 }) {
   const theme = useResolvedTheme()
   const currentShades = paletteShades(color ?? "ink", theme)
@@ -488,6 +510,21 @@ function TrayControls({
           ))}
         </>
       )}
+      {style !== null && (
+        <>
+          <span className="mx-1.5 h-5 w-px bg-border" />
+          {CONNECTOR_STYLES.map((option) => (
+            <ToggleButton
+              key={option.style}
+              label={option.label}
+              pressed={style === option.style}
+              onClick={() => onStyle?.(option.style)}
+            >
+              <option.icon />
+            </ToggleButton>
+          ))}
+        </>
+      )}
       {text !== null && (
         <>
           {colors !== null && <span className="mx-1.5 h-5 w-px bg-border" />}
@@ -525,9 +562,10 @@ function TrayControls({
             ))}
         </>
       )}
-      {actions && (colors !== null || fill !== null || width !== null || text !== null) && (
-        <span className="mx-1.5 h-5 w-px bg-border" />
-      )}
+      {actions &&
+        (colors !== null || fill !== null || width !== null || text !== null || style !== null) && (
+          <span className="mx-1.5 h-5 w-px bg-border" />
+        )}
       {actions}
     </div>
   )

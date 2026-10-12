@@ -1,21 +1,26 @@
 import {
+  type Anchor,
   addArrow,
+  addConnector,
   addPen,
   addShape,
   addSticky,
   addText,
   arrowGeometry,
+  attachedTarget,
+  type ConnectorEnd,
+  type ConnectorStyle,
   deleteElements,
   type ElementWithId,
   elementsOf,
   expandToGroups,
   type Geometry,
   hasBox,
+  isAttachable,
   listElements,
   liveGroups,
   MIN_STICKY_WIDTH,
   MIN_TEXT_WIDTH,
-  moveElements,
   type PaletteColor,
   type PenWidth,
   type Point,
@@ -26,6 +31,7 @@ import {
   setGeometry,
   setTextStyle,
   textOf,
+  translatedGeometry,
 } from "@syncanvas/board-model"
 import {
   boundsOf,
@@ -33,6 +39,7 @@ import {
   clearTextLayoutCache,
   drawScene,
   ElementIndex,
+  elementBox,
   fitCamera,
   hitTest,
   LINE_HEIGHT,
@@ -40,6 +47,7 @@ import {
   type Scene,
   screenToWorld,
   selectionFrame,
+  snapPoints,
   TEXT_SIZES,
   worldToScreen,
   zoomAt,
@@ -92,7 +100,8 @@ type Gesture =
       kind: "move"
       pointerId: number
       start: Point
-      origins: Map<string, Point>
+      /** The moving Elements as they were when the move started. */
+      originals: ReadonlyMap<string, ElementWithId>
       offset: Point
       moved: boolean
       lastSent: number
@@ -111,6 +120,14 @@ type Gesture =
       geometry: Map<string, Geometry>
       moved: boolean
       lastSent: number
+    }
+  | {
+      // Drawing a connector with C: from where it was pressed to where it's released.
+      kind: "connect"
+      pointerId: number
+      start: ConnectorEnd & { point: Point }
+      current: Point
+      snap: Snap | null
     }
   | {
       kind: "marquee"
@@ -136,11 +153,31 @@ declare global {
   }
 }
 
-/** Where each dragged Element is right now, during a move. */
-function draggedPositions(g: Extract<Gesture, { kind: "move" }>): Map<string, Point> {
-  const positions = new Map<string, Point>()
-  for (const [id, p] of g.origins) positions.set(id, { x: p.x + g.offset.x, y: p.y + g.offset.y })
-  return positions
+/** A connector end snapping to one of an Element's four side midpoints. */
+type Snap = { elementId: string; anchor: Anchor; point: Point; points: Point[] }
+
+/** A connector end at a snap, or free at `point`. */
+function endAt(snap: Snap | null, point: Point): ConnectorEnd {
+  return snap
+    ? { elementId: snap.elementId, anchor: snap.anchor, fallback: snap.point }
+    : { fallback: point }
+}
+
+/**
+ * Where everything moved is right now, during a move: boxed Elements by their position,
+ * connectors by their free ends (attached ends follow their Elements).
+ */
+function draggedGeometry(
+  g: Extract<Gesture, { kind: "move" }>,
+  byId: ReadonlyMap<string, ElementWithId>,
+): Map<string, Geometry> {
+  const attached = (end: ConnectorEnd) => attachedTarget(end, byId) !== undefined
+  const out = new Map<string, Geometry>()
+  for (const [id, e] of g.originals) {
+    const geometry = translatedGeometry(e, g.offset, attached)
+    if (geometry) out.set(id, geometry)
+  }
+  return out
 }
 
 /** The Elements a move or resize in progress shows in place of the document's. */
@@ -150,9 +187,9 @@ function overridesOf(
 ): Map<string, ElementWithId> | undefined {
   if (g?.kind === "move") {
     const out = new Map<string, ElementWithId>()
-    for (const [id, position] of draggedPositions(g)) {
-      const e = byId.get(id)
-      if (e && hasBox(e)) out.set(id, { ...e, position })
+    for (const [id, geometry] of draggedGeometry(g, byId)) {
+      const e = g.originals.get(id)
+      if (e) out.set(id, { ...e, ...geometry } as ElementWithId)
     }
     return out
   }
@@ -170,9 +207,21 @@ function overridesOf(
 /** What the gesture in progress is drawing, for the renderer to show before it's written. */
 function previewOf(
   g: Gesture | null,
-  pen: { color: PaletteColor; width: PenWidth },
+  ui: { pen: { color: PaletteColor; width: PenWidth }; connectorStyle: ConnectorStyle },
 ): Scene["preview"] {
+  const { pen } = ui
   if (g?.kind === "stroke") return { type: "pen", points: g.points, ...pen }
+  if (g?.kind === "connect") {
+    return {
+      type: "connector",
+      start: g.start.point,
+      startAnchor: g.start.anchor,
+      end: g.snap?.point ?? g.current,
+      endAnchor: g.snap?.anchor,
+      style: ui.connectorStyle,
+      color: "ink",
+    }
+  }
   if (g?.kind !== "draw" || g.tool === "sticky") return null
   if (g.tool === "arrow") return { type: "arrow", from: g.start, to: g.current, color: "ink" }
   if (g.tool === "text") {
@@ -211,6 +260,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     size: { w: 0, h: 0 },
     dpr: 1,
     index: new ElementIndex(),
+    /** Connector snap points to show (while the connector tool hovers or drags an end). */
+    snap: null as Scene["snap"],
     /** A locked Element under the pointer, showing its lock badge. */
     hoverLocked: null as string | null,
     gesture: null as Gesture | null,
@@ -264,7 +315,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         dpr: s.dpr,
         selection: ui.selection,
         overrides,
-        preview: previewOf(g, ui.pen),
+        preview: previewOf(g, ui),
+        snap: s.snap,
         lockBadge: s.hoverLocked,
         handles: ![...ui.selection].some((id) => s.index.byId.get(id)?.locked),
         marquee:
@@ -480,18 +532,16 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         if (!canEdit) return
         const step = e.shiftKey ? NUDGE_SHIFT : NUDGE
         undoManager.stopCapturing()
-        moveElements(
+        const { byId } = state.current.index
+        const attached = (end: ConnectorEnd) => attachedTarget(end, byId) !== undefined
+        setGeometry(
           doc,
-          selectedElements().flatMap((el) =>
-            hasBox(el) && !el.locked
-              ? [
-                  [
-                    el.id,
-                    { x: el.position.x + arrow.x * step, y: el.position.y + arrow.y * step },
-                  ] as const,
-                ]
-              : [],
-          ),
+          selectedElements().flatMap((el) => {
+            const geometry = el.locked
+              ? null
+              : translatedGeometry(el, { x: arrow.x * step, y: arrow.y * step }, attached)
+            return geometry ? [[el.id, geometry] as const] : []
+          }),
           origin,
         )
         return
@@ -514,6 +564,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
           return
         case "t":
           if (canEdit) ui().setTool("text")
+          return
+        case "c":
+          if (canEdit) ui().setTool("connector")
           return
         case "s":
           if (canEdit) ui().setTool("sticky")
@@ -591,6 +644,19 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       ui.select([])
       return
     }
+    if (ui.tool === "connector" && canEdit) {
+      undoManager.stopCapturing()
+      const snap = snapAt(world)
+      s.gesture = {
+        kind: "connect",
+        pointerId: e.pointerId,
+        start: { ...endAt(snap, world), point: snap?.point ?? world },
+        current: world,
+        snap: null,
+      }
+      ui.select([])
+      return
+    }
     if (isDragTool(ui.tool) && canEdit) {
       undoManager.stopCapturing()
       s.gesture = {
@@ -664,19 +730,19 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const keep = ui.selection.has(hit)
     if (!keep) ui.select(unit)
     if (!canEdit) return
-    const origins = new Map<string, Point>()
+    const originals = new Map<string, ElementWithId>()
     for (const id of useBoardUi.getState().selection) {
       const element = s.index.byId.get(id)
-      // Connectors follow their ends (ticket 12); locked Elements stay put.
-      if (element && hasBox(element) && !element.locked) origins.set(id, element.position)
+      // Locked Elements stay put; connectors move their free ends.
+      if (element && !element.locked) originals.set(id, element)
     }
-    if (origins.size === 0) return
+    if (originals.size === 0) return
     undoManager.stopCapturing()
     s.gesture = {
       kind: "move",
       pointerId: e.pointerId,
       start: world,
-      origins,
+      originals,
       offset: { x: 0, y: 0 },
       moved: false,
       lastSent: 0,
@@ -689,6 +755,49 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const { index, camera } = state.current
     const reach = 16 / camera.zoom
     return index.query({ x: world.x - reach, y: world.y - reach, w: reach * 2, h: reach * 2 })
+  }
+
+  /**
+   * Where a connector end would snap at a world point: the nearest side midpoint of the
+   * topmost shape, text, or sticky under (or within a few pixels of) it.
+   */
+  function snapAt(world: Point, exclude?: string): Snap | null {
+    const { index, camera } = state.current
+    const reach = 16 / camera.zoom
+    const candidates = nearby(world)
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const e = candidates[i]
+      if (!e || e.id === exclude || !isAttachable(e)) continue
+      const { position: p, size } = elementBox(e, index.byId)
+      const inside =
+        world.x >= p.x - reach &&
+        world.x <= p.x + size.w + reach &&
+        world.y >= p.y - reach &&
+        world.y <= p.y + size.h + reach
+      if (!inside) continue
+      const points = snapPoints(e)
+      let best = points[0]
+      for (const option of points) {
+        const d = Math.hypot(option.point.x - world.x, option.point.y - world.y)
+        if (best && d < Math.hypot(best.point.x - world.x, best.point.y - world.y)) best = option
+      }
+      if (!best) continue
+      return {
+        elementId: e.id,
+        anchor: best.anchor,
+        point: best.point,
+        points: points.map((option) => option.point),
+      }
+    }
+    return null
+  }
+
+  function showSnap(snap: Snap | null, active: boolean) {
+    const s = state.current
+    const next = snap ? { points: snap.points, active: active ? snap.point : null } : null
+    if (JSON.stringify(next) === JSON.stringify(s.snap)) return
+    s.snap = next
+    render()
   }
 
   /** The topmost selectable Element at a world point (locked ones are skipped). */
@@ -748,8 +857,26 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     }
 
     if (frame.kind === "ends") {
-      // Dragging one end of an arrow moves that end. (Connectors get their own ends later.)
-      if (originals.get(frame.id)?.type !== "arrow") return null
+      const line = originals.get(frame.id)
+      if (line?.type === "connector") {
+        // Dragging a connector's end re-attaches it to what it's dropped on, or frees it.
+        for (const which of ["start", "end"] as const) {
+          if (!near(which === "start" ? frame.from : frame.to)) continue
+          const other = line[which === "start" ? "end" : "start"].elementId
+          return {
+            cursor: "move",
+            originals,
+            reshape: (p) => {
+              const snap = snapAt(p, other)
+              showSnap(snap, true)
+              return new Map([[line.id, { [which]: endAt(snap, p) }]])
+            },
+          }
+        }
+        return null
+      }
+      // Dragging one end of an arrow moves that end.
+      if (line?.type !== "arrow") return null
       const { id, from, to } = frame
       if (near(to)) {
         return {
@@ -826,6 +953,10 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     if (s.pointers.has(e.pointerId)) s.pointers.set(e.pointerId, point)
     const g = s.gesture
     if (!g) {
+      // The connector tool shows where an end would snap.
+      if (useBoardUi.getState().tool === "connector" && canEdit) {
+        showSnap(snapAt(screenToWorld(s.camera, point)), false)
+      } else if (s.snap) showSnap(null, false)
       if (e.pointerType === "mouse") {
         // Show a resize cursor over the selection's handles, and badges on locked Elements.
         e.currentTarget.style.cursor = handleAt(point)?.cursor ?? cursor
@@ -880,7 +1011,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       const now = performance.now()
       if (now - g.lastSent >= MOVE_SEND_INTERVAL_MS) {
         g.lastSent = now
-        moveElements(doc, draggedPositions(g), origin)
+        setGeometry(doc, draggedGeometry(g, s.index.byId), origin)
       }
       render()
     } else if (g.kind === "resize") {
@@ -894,6 +1025,11 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         g.lastSent = now
         setGeometry(doc, g.geometry, origin)
       }
+      render()
+    } else if (g.kind === "connect") {
+      g.current = screenToWorld(s.camera, point)
+      g.snap = snapAt(g.current, g.start.elementId)
+      showSnap(g.snap, true)
       render()
     } else if (g.kind === "marquee") {
       g.current = screenToWorld(s.camera, point)
@@ -981,10 +1117,24 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         origin,
       )
     } else if (g.kind === "move") {
-      if (g.moved) moveElements(doc, draggedPositions(g), origin)
+      if (g.moved) setGeometry(doc, draggedGeometry(g, s.index.byId), origin)
       else if (g.collapseTo) useBoardUi.getState().select(g.collapseTo)
-    } else if (g.kind === "resize" && g.moved) {
-      setGeometry(doc, g.geometry, origin)
+    } else if (g.kind === "resize") {
+      s.snap = null
+      if (g.moved) setGeometry(doc, g.geometry, origin)
+    } else if (g.kind === "connect") {
+      s.snap = null
+      const end = endAt(g.snap, g.current)
+      const endPoint = g.snap?.point ?? g.current
+      const length = Math.hypot(endPoint.x - g.start.point.x, endPoint.y - g.start.point.y)
+      // A click without a drag draws nothing; the tool stays on for another try.
+      if (length * s.camera.zoom >= MIN_DRAW_PX) {
+        const { point: _, ...start } = g.start
+        const ui = useBoardUi.getState()
+        const id = addConnector(doc, { start, end, style: ui.connectorStyle }, origin)
+        ui.select([id])
+        ui.setTool("select")
+      }
     }
     render()
   }
@@ -998,7 +1148,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
   const cursor =
     tool === "text" && canEdit
       ? "text"
-      : (isDragTool(tool) || tool === "pen") && canEdit
+      : (isDragTool(tool) || tool === "pen" || tool === "connector") && canEdit
         ? "crosshair"
         : "default"
 

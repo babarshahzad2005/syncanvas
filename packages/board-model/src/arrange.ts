@@ -1,5 +1,6 @@
 import { generateNKeysBetween } from "fractional-indexing"
 import type * as Y from "yjs"
+import { refreshFallbacks } from "./connectors"
 import { cleanStaleGroups } from "./groups"
 import { type ElementWithId, elementsOf, listElements, type Point } from "./model"
 import type { Rect } from "./resize"
@@ -164,5 +165,6 @@ export function moveUnits(
       }
     }
     cleanStaleGroups(doc, moved)
+    refreshFallbacks(doc, moved)
   }, origin)
 }

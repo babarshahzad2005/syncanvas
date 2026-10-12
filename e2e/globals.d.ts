@@ -18,6 +18,9 @@ declare global {
         bold?: boolean
         align?: string
         ends?: { from: { x: number; y: number }; to: { x: number; y: number } }
+        start?: { elementId?: string; anchor?: string; fallback: { x: number; y: number } }
+        end?: { elementId?: string; anchor?: string; fallback: { x: number; y: number } }
+        style?: string
         groupId?: string
         locked?: boolean
       }[]

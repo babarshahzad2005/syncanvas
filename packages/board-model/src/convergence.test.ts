@@ -6,13 +6,17 @@ import { describe, expect, it, vi } from "vitest"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 import {
+  type Anchor,
   addArrow,
+  addConnector,
   addPen,
   addShape,
   addSticky,
   addText,
   alignUnits,
+  anchorPoint,
   applyTextChange,
+  type ConnectorEnd,
   checkUpdate,
   createUndoManager,
   deleteElements,
@@ -21,6 +25,7 @@ import {
   elementsOf,
   expandToGroups,
   groupElements,
+  isAttachable,
   isOrderKey,
   listElements,
   moveElement,
@@ -218,6 +223,7 @@ const color = fc.constantFrom(...PALETTE_COLORS)
 const fill = fc.constantFrom("none" as const, "light" as const, "solid" as const)
 /** Which Element to act on: an index into the client's own Element list, modulo its length. */
 const pick = fc.nat({ max: 1000 })
+const anchor = fc.constantFrom("top" as const, "right" as const, "bottom" as const, "left" as const)
 
 /** An Element's stored box (the UI uses drawn boxes; any box works for convergence). */
 const storedBox = (e: ElementWithId) =>
@@ -403,6 +409,35 @@ const editCommand = fc.oneof(
         "horizontal" as const,
         "vertical" as const,
       ),
+    }),
+  },
+  {
+    // A connector between two Elements (or free where the pick isn't attachable).
+    weight: 2,
+    arbitrary: fc.record({
+      op: fc.constant("connect" as const),
+      client: editor,
+      from: pick,
+      to: pick,
+      fromAnchor: anchor,
+      toAnchor: anchor,
+      x: coordinate,
+      y: coordinate,
+      style: fc.constantFrom("straight" as const, "elbow" as const),
+    }),
+  },
+  {
+    // Dragging one end of a connector onto another Element, or off into empty space.
+    weight: 2,
+    arbitrary: fc.record({
+      op: fc.constant("reconnect" as const),
+      client: editor,
+      pick,
+      target: fc.option(pick, { nil: null }),
+      which: fc.constantFrom("start" as const, "end" as const),
+      anchor,
+      x: coordinate,
+      y: coordinate,
     }),
   },
   {
@@ -599,6 +634,47 @@ function runEdit(client: SimClient, c: EditCommand) {
           ? distributeUnits(units, c.mode)
           : alignUnits(units, c.mode)
       moveUnits(doc, units, offsets, LOCAL)
+      break
+    }
+    case "connect": {
+      const all = listElements(doc).filter(isAttachable)
+      const endAt = (p: number, a: Anchor, x: number, y: number): ConnectorEnd => {
+        const target = all.length > 0 ? all[p % all.length] : undefined
+        return target && "position" in target
+          ? {
+              elementId: target.id,
+              anchor: a,
+              fallback: anchorPoint(target.position, target.size, a),
+            }
+          : { fallback: { x, y } }
+      }
+      addConnector(
+        doc,
+        {
+          start: endAt(c.from, c.fromAnchor, c.x, c.y),
+          end: endAt(c.to, c.toAnchor, c.y, c.x),
+          style: c.style,
+        },
+        LOCAL,
+      )
+      break
+    }
+    case "reconnect": {
+      const connectors = listElements(doc).filter((e) => e.type === "connector")
+      const connector = connectors[c.pick % Math.max(1, connectors.length)]
+      if (!connector) break
+      const targets = listElements(doc).filter(isAttachable)
+      const target =
+        c.target === null || targets.length === 0 ? undefined : targets[c.target % targets.length]
+      const end: ConnectorEnd =
+        target && "position" in target
+          ? {
+              elementId: target.id,
+              anchor: c.anchor,
+              fallback: anchorPoint(target.position, target.size, c.anchor),
+            }
+          : { fallback: { x: c.x, y: c.y } }
+      setGeometry(doc, [[connector.id, { [c.which]: end }]], LOCAL)
       break
     }
     case "multiDelete":
