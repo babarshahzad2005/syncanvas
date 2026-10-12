@@ -14,6 +14,7 @@ import {
   type PenWidth,
   type Point,
   resolveConnector,
+  resolveConnectorEnd,
   type Size,
   type StickyColor,
   type StickyElement,
@@ -775,6 +776,14 @@ export function snapPoints(e: ElementWithId): { anchor: Anchor; point: Point }[]
   }))
 }
 
+/** Where one connector end is drawn right now (the copied fallback, when copying). */
+export function connectorEndAsDrawn(
+  end: Parameters<typeof resolveConnectorEnd>[0],
+  byId: ReadonlyMap<string, ElementWithId>,
+): Point {
+  return resolveConnectorEnd(end, byId, attachBox)
+}
+
 /** A connector's two ends, resolved against the Elements as drawn. */
 export function connectorEnds(
   e: Extract<ElementWithId, { type: "connector" }>,
@@ -987,4 +996,52 @@ function drawSnapPoints(
     ctx.fill()
     ctx.stroke()
   }
+}
+
+// ---------- Pictures (clipboard PNG; later exports and thumbnails) ----------
+
+/** Largest picture side, in pixels: big selections are scaled down to fit. */
+const IMAGE_MAX_SIDE = 4096
+
+/**
+ * The pixel size for a picture of `bounds` (world units) with `padding` around it, at
+ * `scale` pixels per unit, shrunk to fit IMAGE_MAX_SIDE.
+ */
+export function imageSize(
+  bounds: { w: number; h: number },
+  scale = 2,
+  padding = 16,
+): { w: number; h: number; scale: number } {
+  const w = bounds.w + padding * 2
+  const h = bounds.h + padding * 2
+  const fit = Math.min(scale, IMAGE_MAX_SIDE / Math.max(w, h, 1))
+  return { w: Math.max(1, Math.ceil(w * fit)), h: Math.max(1, Math.ceil(h * fit)), scale: fit }
+}
+
+/**
+ * Draws `elements` (with `byId` for connector ends) into a context sized by `imageSize`:
+ * light theme, no grid, no selection, the bounds framed by the padding.
+ */
+export function drawImage(
+  ctx: CanvasRenderingContext2D,
+  elements: readonly ElementWithId[],
+  byId: ReadonlyMap<string, ElementWithId>,
+  bounds: { x: number; y: number; w: number; h: number },
+  size: { w: number; h: number; scale: number },
+  padding = 16,
+) {
+  drawScene(ctx, {
+    elements,
+    byId,
+    camera: {
+      zoom: size.scale,
+      x: (padding - bounds.x) * size.scale,
+      y: (padding - bounds.y) * size.scale,
+    },
+    theme: "light",
+    size: { w: size.w, h: size.h },
+    dpr: 1,
+    selection: new Set(),
+    showGrid: false,
+  })
 }

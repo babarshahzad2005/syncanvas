@@ -9,6 +9,7 @@ import { Dock, UndoZoomPill } from "@/board/chrome"
 import { useBoardUi } from "@/board/store"
 import { BrandMark } from "@/components/brand"
 import { Button } from "@/components/ui/button"
+import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import type { ConnectionStatus } from "@/sync/board-connection"
@@ -30,6 +31,7 @@ export function BoardScreen() {
         {doc && <BoardSurface doc={doc} editable={role ? canEdit(role) : false} />}
         <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
       </div>
+      <Toaster placement="board" />
     </TooltipProvider>
   )
 }

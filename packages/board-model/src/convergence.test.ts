@@ -18,6 +18,7 @@ import {
   applyTextChange,
   type ConnectorEnd,
   checkUpdate,
+  copyPayload,
   createUndoManager,
   deleteElements,
   distributeUnits,
@@ -25,6 +26,7 @@ import {
   elementsOf,
   expandToGroups,
   groupElements,
+  indexById,
   isAttachable,
   isOrderKey,
   listElements,
@@ -32,8 +34,11 @@ import {
   moveElements,
   moveUnits,
   PALETTE_COLORS,
+  parsePayload,
+  pasteElements,
   recolorElement,
   reorderElements,
+  resolveConnectorEnd,
   STICKY_COLORS,
   scaledGeometry,
   setFill,
@@ -441,6 +446,17 @@ const editCommand = fc.oneof(
     }),
   },
   {
+    // Copy some Elements (through JSON, like the clipboard) and paste them back moved.
+    weight: 2,
+    arbitrary: fc.record({
+      op: fc.constant("paste" as const),
+      client: editor,
+      picks: fc.array(pick, { minLength: 1, maxLength: 4 }),
+      dx: coordinate,
+      dy: coordinate,
+    }),
+  },
+  {
     weight: 1,
     arbitrary: fc.record({
       op: fc.constant("multiDelete" as const),
@@ -675,6 +691,26 @@ function runEdit(client: SimClient, c: EditCommand) {
             }
           : { fallback: { x: c.x, y: c.y } }
       setGeometry(doc, [[connector.id, { [c.which]: end }]], LOCAL)
+      break
+    }
+    case "paste": {
+      const all = listElements(doc)
+      const byId = indexById(all)
+      const payload = copyPayload(
+        [
+          ...expandToGroups(
+            picked(c.picks).map((e) => e.id),
+            all,
+          ),
+        ].flatMap((id) => byId.get(id) ?? []),
+        (end) => resolveConnectorEnd(end, byId),
+      )
+      pasteElements(
+        doc,
+        parsePayload(JSON.parse(JSON.stringify(payload))),
+        { x: c.dx, y: c.dy },
+        LOCAL,
+      )
       break
     }
     case "multiDelete":

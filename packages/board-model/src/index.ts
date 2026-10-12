@@ -1,5 +1,6 @@
 export * from "./acceptance"
 export * from "./arrange"
+export * from "./clipboard"
 export * from "./connectors"
 export * from "./groups"
 export * from "./model"

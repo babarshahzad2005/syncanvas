@@ -53,9 +53,17 @@ import {
   zoomAt,
 } from "@syncanvas/renderer"
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react"
+import { toast } from "sonner"
 import type * as Y from "yjs"
 import { useResolvedTheme } from "@/lib/theme"
 import { groupSelection, reorderSelection, toggleLock, ungroupSelection } from "./actions"
+import {
+  copySelection,
+  cutSelection,
+  duplicateSelection,
+  elementsFromPaste,
+  pasteAt,
+} from "./clipboard"
 import { type DragTool, isDragTool, useBoardUi } from "./store"
 import { TextEditor } from "./text-editor"
 
@@ -262,6 +270,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     index: new ElementIndex(),
     /** Connector snap points to show (while the connector tool hovers or drags an end). */
     snap: null as Scene["snap"],
+    /** Where the pointer is over the canvas (world), for pasting at the cursor. */
+    pointer: null as Point | null,
     /** A locked Element under the pointer, showing its lock badge. */
     hoverLocked: null as string | null,
     gesture: null as Gesture | null,
@@ -495,6 +505,19 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         if (canEdit) toggleLock({ doc, origin, undoManager })
         return
       }
+      // Copy works for Viewers; cut, duplicate, and paste need Editor access.
+      if (mod && !e.shiftKey && (e.key.toLowerCase() === "c" || e.key.toLowerCase() === "x")) {
+        if (ui().selection.size === 0) return // nothing of ours: leave the key to the browser
+        e.preventDefault()
+        if (e.key.toLowerCase() === "c") copySelection(clipboardContext())
+        else if (canEdit) cutSelection(clipboardContext())
+        return
+      }
+      if (mod && e.key.toLowerCase() === "d") {
+        e.preventDefault() // not the browser's bookmark shortcut
+        if (canEdit) duplicateSelection(clipboardContext())
+        return
+      }
       if (mod && e.key.toLowerCase() === "y") {
         e.preventDefault()
         if (canEdit) undoManager.redo()
@@ -603,6 +626,36 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       window.removeEventListener("keyup", onKeyUp)
     }
   })
+
+  // Paste (Ctrl/Cmd+V fires a paste event): Syncanvas Elements land at the cursor, or the
+  // viewport's center when the pointer isn't over the Board.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if ((e.target as HTMLElement | null)?.closest?.("input, textarea, [contenteditable]")) return
+      const elements = elementsFromPaste(e)
+      if (!elements) return
+      e.preventDefault()
+      if (!canEdit) {
+        toast("This Board is view-only", {
+          description: "Ask its Owner for edit access to paste here.",
+        })
+        return
+      }
+      const { camera, size, pointer } = state.current
+      pasteAt(
+        clipboardContext(),
+        elements,
+        pointer ?? screenToWorld(camera, { x: size.w / 2, y: size.h / 2 }),
+      )
+    }
+    document.addEventListener("paste", onPaste)
+    return () => document.removeEventListener("paste", onPaste)
+  })
+
+  function clipboardContext() {
+    const { index } = state.current
+    return { doc, origin, undoManager, byId: index.byId, all: index.all() }
+  }
 
   function local(e: { clientX: number; clientY: number }): Point {
     const box = canvasRef.current?.getBoundingClientRect()
@@ -951,6 +1004,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const s = state.current
     const point = local(e)
     if (s.pointers.has(e.pointerId)) s.pointers.set(e.pointerId, point)
+    s.pointer = screenToWorld(s.camera, point)
     const g = s.gesture
     if (!g) {
       // The connector tool shows where an end would snap.
@@ -1181,6 +1235,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onPointerLeave={() => {
+          state.current.pointer = null
+        }}
         onDoubleClick={onDoubleClick}
       />
       {editing && canEdit && (
