@@ -259,8 +259,8 @@ export type Scene = {
   size: Size
   dpr: number
   selection: ReadonlySet<string>
-  /** Positions overriding the document while a local drag is in progress. */
-  dragging?: ReadonlyMap<string, Point>
+  /** Elements overriding the document while a local move or resize is in progress. */
+  overrides?: ReadonlyMap<string, ElementWithId>
   /** What's being drawn right now, in world coordinates (not yet in the document). */
   preview?:
     | { type: "rect" | "ellipse"; position: Point; size: Size; color: PaletteColor; fill: Fill }
@@ -286,18 +286,14 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
 
   ctx.setTransform(dpr * camera.zoom, 0, 0, dpr * camera.zoom, dpr * camera.x, dpr * camera.y)
   // Apply local drags first, so connectors follow the shapes being dragged.
-  const dragged = (e: ElementWithId) => {
-    const position = scene.dragging?.get(e.id)
-    return position && hasBox(e) ? { ...e, position } : e
-  }
-  const elements = scene.dragging?.size ? scene.elements.map(dragged) : scene.elements
+  const overrides = scene.overrides
+  const elements = overrides?.size
+    ? scene.elements.map((e) => overrides.get(e.id) ?? e)
+    : scene.elements
   let byId: ReadonlyMap<string, ElementWithId> = scene.byId ?? indexById(scene.elements)
-  if (scene.dragging?.size) {
+  if (overrides?.size) {
     const copy = new Map(byId)
-    for (const id of scene.dragging.keys()) {
-      const e = copy.get(id)
-      if (e) copy.set(id, dragged(e))
-    }
+    for (const [id, e] of overrides) if (copy.has(id)) copy.set(id, e)
     byId = copy
   }
   for (const e of elements) {
@@ -332,17 +328,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
     const e = byId.get(id)
     return e ? [e] : []
   })
-  const [only] = selected
-  if (selected.length === 1 && only) {
-    const line = lineEnds(only, byId)
-    if (line) {
-      // Lines show their two ends, not a box.
-      drawHandles(ctx, [worldToScreen(camera, line.from), worldToScreen(camera, line.to)], colors)
-    } else {
-      const { p, s } = toScreen(elementBox(only, byId))
-      drawSelection(ctx, p, s, colors)
-    }
-  } else if (selected.length > 1) {
+  if (selected.length > 1) {
     // Each member gets a thin outline; the selection as a whole gets the box and handles.
     ctx.lineWidth = 1
     ctx.strokeStyle = colors.primary
@@ -360,14 +346,17 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
       const { p, s } = toScreen(elementBox(e, byId))
       ctx.strokeRect(p.x, p.y, s.w, s.h)
     }
-    const bounds = boundsOf(selected, byId)
-    if (bounds) {
-      const { p, s } = toScreen({
-        position: { x: bounds.x, y: bounds.y },
-        size: { w: bounds.w, h: bounds.h },
-      })
-      drawSelection(ctx, p, s, colors)
-    }
+  }
+  const frame = selectionFrame(selected, byId)
+  if (frame?.kind === "ends") {
+    // A single line shows its two ends, not a box.
+    drawHandles(ctx, [worldToScreen(camera, frame.from), worldToScreen(camera, frame.to)], colors)
+  } else if (frame) {
+    const { p, s } = toScreen({
+      position: { x: frame.rect.x, y: frame.rect.y },
+      size: { w: frame.rect.w, h: frame.rect.h },
+    })
+    drawSelection(ctx, p, s, colors)
   }
 
   if (scene.marquee) {
@@ -382,6 +371,27 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
     ctx.strokeStyle = colors.primary
     ctx.strokeRect(x + 0.5, y + 0.5, Math.abs(s.w), Math.abs(s.h))
   }
+}
+
+/**
+ * Where the selection's handles are: a single line's two ends, or the box around the
+ * selection (whose corners resize it). Null for an empty selection.
+ */
+export function selectionFrame(
+  selected: readonly ElementWithId[],
+  byId: ReadonlyMap<string, ElementWithId>,
+):
+  | { kind: "ends"; id: string; from: Point; to: Point }
+  | { kind: "box"; rect: { x: number; y: number; w: number; h: number } }
+  | null {
+  const [only] = selected
+  if (!only) return null
+  if (selected.length === 1) {
+    const line = lineEnds(only, byId)
+    if (line) return { kind: "ends", id: only.id, ...line }
+  }
+  const rect = boundsOf(selected, byId)
+  return rect ? { kind: "box", rect } : null
 }
 
 function drawGrid(ctx: CanvasRenderingContext2D, camera: Camera, size: Size, color: string) {

@@ -4,17 +4,24 @@ import {
   addShape,
   addSticky,
   addText,
+  arrowGeometry,
   deleteElements,
   type ElementWithId,
   elementsOf,
+  type Geometry,
   hasBox,
   listElements,
+  MIN_STICKY_WIDTH,
+  MIN_TEXT_WIDTH,
   moveElements,
   type PaletteColor,
   type PenWidth,
   type Point,
+  type Rect,
   readElement,
   type StrokePoint,
+  scaledGeometry,
+  setGeometry,
   setTextStyle,
   textOf,
 } from "@syncanvas/board-model"
@@ -29,6 +36,7 @@ import {
   LINE_HEIGHT,
   type Scene,
   screenToWorld,
+  selectionFrame,
   TEXT_SIZES,
   worldToScreen,
   zoomAt,
@@ -49,6 +57,11 @@ const MOVE_SEND_INTERVAL_MS = 50
 const PEN_TOLERANCE_PX = 0.5
 /** Shapes smaller than this (in screen px) are treated as a click, not a drag. */
 const MIN_DRAW_PX = 4
+/** How close (screen px) the pointer must be to a handle to grab it. */
+const HANDLE_REACH_PX = 6
+/** Smallest a resized selection gets, in canvas units (text and stickies have their own). */
+const MIN_RESIZE = 8
+
 /** Arrow keys nudge the selection this far (canvas units), or further with Shift. */
 const NUDGE = 1
 const NUDGE_SHIFT = 10
@@ -83,6 +96,19 @@ type Gesture =
       collapseTo: string | null
     }
   | {
+      // Resizing from a corner handle, or dragging one end of an arrow.
+      kind: "resize"
+      pointerId: number
+      start: Point
+      /** The Elements as they were when the gesture started. */
+      originals: ReadonlyMap<string, ElementWithId>
+      /** New geometry for each Element, for a pointer position (Shift keeps proportions). */
+      reshape: (pointer: Point, keepRatio: boolean) => Map<string, Geometry>
+      geometry: Map<string, Geometry>
+      moved: boolean
+      lastSent: number
+    }
+  | {
       kind: "marquee"
       pointerId: number
       start: Point
@@ -111,6 +137,30 @@ function draggedPositions(g: Extract<Gesture, { kind: "move" }>): Map<string, Po
   const positions = new Map<string, Point>()
   for (const [id, p] of g.origins) positions.set(id, { x: p.x + g.offset.x, y: p.y + g.offset.y })
   return positions
+}
+
+/** The Elements a move or resize in progress shows in place of the document's. */
+function overridesOf(
+  g: Gesture | null,
+  byId: ReadonlyMap<string, ElementWithId>,
+): Map<string, ElementWithId> | undefined {
+  if (g?.kind === "move") {
+    const out = new Map<string, ElementWithId>()
+    for (const [id, position] of draggedPositions(g)) {
+      const e = byId.get(id)
+      if (e && hasBox(e)) out.set(id, { ...e, position })
+    }
+    return out
+  }
+  if (g?.kind === "resize") {
+    const out = new Map<string, ElementWithId>()
+    for (const [id, geometry] of g.geometry) {
+      const e = g.originals.get(id)
+      if (e) out.set(id, { ...e, ...geometry } as ElementWithId)
+    }
+    return out
+  }
+  return undefined
 }
 
 /** What the gesture in progress is drawing, for the renderer to show before it's written. */
@@ -186,7 +236,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       if (!ctx) return
       const g = s.gesture
       const ui = useBoardUi.getState()
-      const dragging = g?.kind === "move" ? draggedPositions(g) : undefined
+      const overrides = overridesOf(g, s.index.byId)
       // Only what's in view (with a margin for strokes), plus whatever is being dragged.
       const topLeft = screenToWorld(s.camera, { x: 0, y: 0 })
       const margin = 16 / s.camera.zoom
@@ -197,7 +247,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
           w: s.size.w / s.camera.zoom + margin * 2,
           h: s.size.h / s.camera.zoom + margin * 2,
         },
-        dragging?.keys(),
+        overrides?.keys(),
       )
       drawScene(ctx, {
         elements: visible,
@@ -207,7 +257,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         size: s.size,
         dpr: s.dpr,
         selection: ui.selection,
-        dragging,
+        overrides,
         preview: previewOf(g, ui.pen),
         marquee:
           g?.kind === "marquee"
@@ -520,6 +570,22 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       return
     }
 
+    // Handles win over everything under them, Shift included (Shift keeps proportions).
+    const handle = handleAt(point)
+    if (handle) {
+      undoManager.stopCapturing()
+      s.gesture = {
+        kind: "resize",
+        pointerId: e.pointerId,
+        start: world,
+        ...handle,
+        geometry: new Map(),
+        moved: false,
+        lastSent: 0,
+      }
+      return
+    }
+
     const hit = hitAt(world)
     if (!hit) {
       // On touch, dragging empty canvas pans (there's no Space key).
@@ -579,6 +645,91 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     return hitTest(nearby, world, camera.zoom, index.byId)
   }
 
+  /**
+   * The resize handle under a screen point, if any: a corner of the selection's box, or one
+   * end of a single selected arrow. Returns how to reshape the selection from that handle.
+   */
+  function handleAt(point: Point): {
+    cursor: string
+    originals: ReadonlyMap<string, ElementWithId>
+    reshape: (pointer: Point, keepRatio: boolean) => Map<string, Geometry>
+  } | null {
+    const { index, camera } = state.current
+    if (!canEdit || useBoardUi.getState().tool !== "select") return null
+    const selected = selectedElements()
+    const frame = selectionFrame(selected, index.byId)
+    if (!frame) return null
+    const originals = new Map(selected.map((e) => [e.id, e]))
+    const near = (p: Point) => {
+      const screen = worldToScreen(camera, p)
+      return Math.hypot(screen.x - point.x, screen.y - point.y) <= HANDLE_REACH_PX
+    }
+
+    if (frame.kind === "ends") {
+      // Dragging one end of an arrow moves that end. (Connectors get their own ends later.)
+      if (originals.get(frame.id)?.type !== "arrow") return null
+      const { id, from, to } = frame
+      if (near(to)) {
+        return {
+          cursor: "move",
+          originals,
+          reshape: (p) => new Map([[id, arrowGeometry(from, p)]]),
+        }
+      }
+      if (near(from)) {
+        return { cursor: "move", originals, reshape: (p) => new Map([[id, arrowGeometry(p, to)]]) }
+      }
+      return null
+    }
+
+    const r = frame.rect
+    const corners = [
+      { x: r.x, y: r.y },
+      { x: r.x + r.w, y: r.y },
+      { x: r.x + r.w, y: r.y + r.h },
+      { x: r.x, y: r.y + r.h },
+    ]
+    const i = corners.findIndex(near)
+    const corner = corners[i]
+    const anchor = corners[(i + 2) % 4] // the opposite corner stays put
+    if (!corner || !anchor) return null
+    const [only] = selected
+    const single = selected.length === 1
+    // Text and sticky notes resize their width only; their height follows their text.
+    const widthOnly = single && (only?.type === "text" || only?.type === "sticky")
+    const min =
+      single && only?.type === "text"
+        ? MIN_TEXT_WIDTH
+        : single && only?.type === "sticky"
+          ? MIN_STICKY_WIDTH
+          : MIN_RESIZE
+    const dirX = corner.x >= anchor.x ? 1 : -1
+    const dirY = corner.y >= anchor.y ? 1 : -1
+    const reshape = (p: Point, keepRatio: boolean) => {
+      // A side the selection doesn't have (a flat line's height) stays flat.
+      let w = r.w === 0 ? 0 : Math.max(min, (p.x - anchor.x) * dirX)
+      let h = r.h === 0 || widthOnly ? r.h : Math.max(min, (p.y - anchor.y) * dirY)
+      if (keepRatio && !widthOnly && r.w > 0 && r.h > 0) {
+        const k = Math.max(w / r.w, h / r.h)
+        w = r.w * k
+        h = r.h * k
+      }
+      const to: Rect = {
+        x: dirX > 0 ? anchor.x : anchor.x - w,
+        y: widthOnly ? r.y : dirY > 0 ? anchor.y : anchor.y - h,
+        w,
+        h,
+      }
+      const out = new Map<string, Geometry>()
+      for (const e of selected) {
+        const geometry = scaledGeometry(e, r, to, single)
+        if (geometry) out.set(e.id, geometry)
+      }
+      return out
+    }
+    return { cursor: dirX === dirY ? "nwse-resize" : "nesw-resize", originals, reshape }
+  }
+
   function selectedElements(): ElementWithId[] {
     const { byId } = state.current.index
     return [...useBoardUi.getState().selection].flatMap((id) => {
@@ -592,7 +743,12 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const point = local(e)
     if (s.pointers.has(e.pointerId)) s.pointers.set(e.pointerId, point)
     const g = s.gesture
-    if (!g) return
+    if (!g) {
+      // Show a resize cursor over the selection's handles.
+      if (e.pointerType === "mouse")
+        e.currentTarget.style.cursor = handleAt(point)?.cursor ?? cursor
+      return
+    }
 
     if (g.kind === "pinch") {
       const [a, b] = [...s.pointers.values()]
@@ -634,6 +790,18 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       if (now - g.lastSent >= MOVE_SEND_INTERVAL_MS) {
         g.lastSent = now
         moveElements(doc, draggedPositions(g), origin)
+      }
+      render()
+    } else if (g.kind === "resize") {
+      const world = screenToWorld(s.camera, point)
+      const travel = Math.hypot(world.x - g.start.x, world.y - g.start.y) * s.camera.zoom
+      if (!g.moved && travel < MIN_DRAW_PX) return
+      g.moved = true
+      g.geometry = g.reshape(world, e.shiftKey)
+      const now = performance.now()
+      if (now - g.lastSent >= MOVE_SEND_INTERVAL_MS) {
+        g.lastSent = now
+        setGeometry(doc, g.geometry, origin)
       }
       render()
     } else if (g.kind === "marquee") {
@@ -724,6 +892,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     } else if (g.kind === "move") {
       if (g.moved) moveElements(doc, draggedPositions(g), origin)
       else if (g.collapseTo) useBoardUi.getState().select([g.collapseTo])
+    } else if (g.kind === "resize" && g.moved) {
+      setGeometry(doc, g.geometry, origin)
     }
     render()
   }

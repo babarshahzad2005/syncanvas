@@ -9,6 +9,7 @@ import {
   type Point,
   type Size,
 } from "./model"
+import { arrowGeometry } from "./resize"
 
 // ---------- Writing Elements ----------
 //
@@ -135,17 +136,9 @@ export function addArrow(
   arrow: { from: Point; to: Point; color?: PaletteColor },
   origin: unknown,
 ): string {
-  const position = { x: Math.min(arrow.from.x, arrow.to.x), y: Math.min(arrow.from.y, arrow.to.y) }
-  const relative = (p: Point) => ({ x: p.x - position.x, y: p.y - position.y })
   return addElement(
     doc,
-    {
-      type: "arrow",
-      position,
-      size: { w: Math.abs(arrow.to.x - arrow.from.x), h: Math.abs(arrow.to.y - arrow.from.y) },
-      color: arrow.color ?? "ink",
-      ends: { from: relative(arrow.from), to: relative(arrow.to) },
-    },
+    { type: "arrow", ...arrowGeometry(arrow.from, arrow.to), color: arrow.color ?? "ink" },
     origin,
   )
 }

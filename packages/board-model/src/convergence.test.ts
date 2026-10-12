@@ -22,7 +22,9 @@ import {
   PALETTE_COLORS,
   recolorElement,
   STICKY_COLORS,
+  scaledGeometry,
   setFill,
+  setGeometry,
   setTextStyle,
   textOf,
   validateBoardDoc,
@@ -327,6 +329,17 @@ const editCommand = fc.oneof(
     }),
   },
   {
+    // Resizing one Element, or scaling a multi-selection around its corner.
+    weight: 2,
+    arbitrary: fc.record({
+      op: fc.constant("scale" as const),
+      client: editor,
+      picks: fc.array(pick, { minLength: 1, maxLength: 4 }),
+      sx: fc.integer({ min: 25, max: 400 }),
+      sy: fc.integer({ min: 25, max: 400 }),
+    }),
+  },
+  {
     weight: 1,
     arbitrary: fc.record({
       op: fc.constant("multiDelete" as const),
@@ -447,6 +460,32 @@ function runEdit(client: SimClient, c: EditCommand) {
           : [],
       )
       moveElements(doc, moved, LOCAL)
+      break
+    }
+    case "scale": {
+      const chosen = picked(c.picks).filter((e) => e.type !== "connector")
+      if (chosen.length === 0) break
+      let minX = Number.POSITIVE_INFINITY
+      let minY = Number.POSITIVE_INFINITY
+      let maxX = Number.NEGATIVE_INFINITY
+      let maxY = Number.NEGATIVE_INFINITY
+      for (const e of chosen) {
+        if (!("position" in e)) continue
+        minX = Math.min(minX, e.position.x)
+        minY = Math.min(minY, e.position.y)
+        maxX = Math.max(maxX, e.position.x + e.size.w)
+        maxY = Math.max(maxY, e.position.y + e.size.h)
+      }
+      const from = { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+      const to = { ...from, w: (from.w * c.sx) / 100, h: (from.h * c.sy) / 100 }
+      setGeometry(
+        doc,
+        chosen.flatMap((e) => {
+          const g = scaledGeometry(e, from, to, chosen.length === 1)
+          return g ? [[e.id, g] as const] : []
+        }),
+        LOCAL,
+      )
       break
     }
     case "multiDelete":

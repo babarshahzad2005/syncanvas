@@ -1,4 +1,4 @@
-import type { ElementWithId } from "@syncanvas/board-model"
+import type { ElementWithId, Rect } from "@syncanvas/board-model"
 import RBush from "rbush"
 import { elementBox, PEN_WIDTHS } from "./index"
 
@@ -9,7 +9,6 @@ import { elementBox, PEN_WIDTHS } from "./index"
 // Connectors aren't in the tree: their box depends on the Elements they attach to, which can
 // move without the connector changing. There are few of them, so every query returns them all.
 
-export type Rect = { x: number; y: number; w: number; h: number }
 type Entry = { minX: number; minY: number; maxX: number; maxY: number; id: string }
 
 export class ElementIndex {
