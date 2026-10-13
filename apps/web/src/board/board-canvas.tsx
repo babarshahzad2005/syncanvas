@@ -56,6 +56,9 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 
 import { toast } from "sonner"
 import type * as Y from "yjs"
 import { useResolvedTheme } from "@/lib/theme"
+import { CursorLayer } from "@/presence/cursor-layer"
+import { LocalPresence } from "@/presence/local-presence"
+import type { BoardConnection } from "@/sync/board-connection"
 import { groupSelection, reorderSelection, toggleLock, ungroupSelection } from "./actions"
 import {
   copySelection,
@@ -152,12 +155,16 @@ type Props = {
   origin: object
   undoManager: Y.UndoManager
   canEdit: boolean
+  /** The live connection: presence goes out and comes in through it. */
+  connection?: BoardConnection | null
 }
 
 declare global {
   interface Window {
     __SYNCANVAS_TEST__?: boolean
     __syncanvas?: { elements: () => ElementWithId[]; camera: () => Camera }
+    /** Test hook: every other tab's presence state, as this tab sees it. */
+    __syncanvasPresence?: () => Record<string, unknown>[]
   }
 }
 
@@ -252,11 +259,12 @@ function previewOf(
 }
 
 export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
-  { doc, origin, undoManager, canEdit },
+  { doc, origin, undoManager, canEdit, connection = null },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
+  const cursorHost = useRef<HTMLDivElement>(null)
   const theme = useResolvedTheme()
   const tool = useBoardUi((s) => s.tool)
   const editing = useBoardUi((s) => s.editing)
@@ -272,6 +280,10 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     snap: null as Scene["snap"],
     /** Where the pointer is over the canvas (world), for pasting at the cursor. */
     pointer: null as Point | null,
+    /** The same, in screen px: after a pan or zoom it's over a different world point. */
+    screenPointer: null as Point | null,
+    cursors: null as CursorLayer | null,
+    presence: null as LocalPresence | null,
     /** A locked Element under the pointer, showing its lock badge. */
     hoverLocked: null as string | null,
     gesture: null as Gesture | null,
@@ -339,12 +351,19 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         editing: ui.editing?.id ?? null,
       })
       placeEditor()
+      s.cursors?.setCamera(s.camera)
     })
   }, [placeEditor])
 
   const setCamera = (camera: Camera) => {
-    state.current.camera = camera
+    const s = state.current
+    s.camera = camera
     useBoardUi.getState().setZoom(camera.zoom)
+    // The pointer now sits over another part of the Board: others see the cursor move with it.
+    if (s.screenPointer) {
+      s.pointer = screenToWorld(camera, s.screenPointer)
+      s.presence?.cursor(s.pointer)
+    }
     render()
   }
 
@@ -368,6 +387,33 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     render()
     return useBoardUi.subscribe(render)
   })
+
+  // Presence (M2): publish this tab's cursor and away state, and draw everyone else's cursors.
+  useEffect(() => {
+    const host = cursorHost.current
+    if (!connection || !host) return
+    const s = state.current
+    const cursors = new CursorLayer(host)
+    cursors.setCamera(s.camera)
+    s.cursors = cursors
+    const presence = new LocalPresence((fields) => connection.setPresence(fields))
+    presence.start()
+    s.presence = presence
+    const refresh = () => cursors.update(connection.presence)
+    refresh()
+    if (window.__SYNCANVAS_TEST__) {
+      window.__syncanvasPresence = () =>
+        connection.presence.map((t) => ({ ...t.state, user: t.user }))
+    }
+    const unsubscribe = connection.subscribePresence(refresh)
+    return () => {
+      unsubscribe()
+      presence.stop()
+      cursors.dispose()
+      s.cursors = null
+      s.presence = null
+    }
+  }, [connection])
 
   // Keep the spatial index in sync with the document (local and remote changes alike),
   // re-reading only the Elements each change touched.
@@ -1010,6 +1056,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const point = local(e)
     if (s.pointers.has(e.pointerId)) s.pointers.set(e.pointerId, point)
     s.pointer = screenToWorld(s.camera, point)
+    s.screenPointer = point
+    s.presence?.cursor(s.pointer)
     const g = s.gesture
     if (!g) {
       // The connector tool shows where an end would snap.
@@ -1242,6 +1290,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         onPointerCancel={onPointerUp}
         onPointerLeave={() => {
           state.current.pointer = null
+          state.current.screenPointer = null
+          state.current.presence?.cursor(null)
         }}
         onDoubleClick={onDoubleClick}
       />
@@ -1259,6 +1309,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
           undoManager={undoManager}
         />
       )}
+      {/* Remote cursors: above the Board's content, below all chrome (rendered later). */}
+      <div ref={cursorHost} className="pointer-events-none absolute inset-0 overflow-hidden" />
     </>
   )
 })

@@ -223,6 +223,9 @@ importers:
       lucide-react:
         specifier: ^1.55.0
         version: 1.55.0(@types/react@19.3.0)(react@19.3.0)
+      perfect-cursors:
+        specifier: ^1.0.5
+        version: 1.0.5
       react:
         specifier: ^19.3.0
         version: 19.3.0
@@ -1691,6 +1694,9 @@ packages:
   '@tanstack/store@0.11.2':
     resolution: {integrity: sha512-sJ4mjol8uQsHV0gOJzzjwXfh2Fwm+Sz0+8deqiTm4jGbMdjzNSW+xZCFm0kUa870uhd8yi+DpKnZb5Kc4apa0Q==}
 
+  '@tldraw/vec@1.9.2':
+    resolution: {integrity: sha512-k9vH52MRpJHjVcaahWu6VqvhLeE9h1qL5Z2gLobS9zTMpUJ59kBQPNo0VPzPlDYBpXdS4GxuB4jYQMnKvuPAZg==}
+
   '@ts-morph/common@0.27.0':
     resolution: {integrity: sha512-Wf29UqxWDpc+i61k3oIOzcUfQt79PIT9y/MWfAGlrkjg6lBC1hwDECLXPVJAhWjiGbfBCxZd65F/LIZF3+jeJQ==}
 
@@ -2913,6 +2919,9 @@ packages:
 
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
+
+  perfect-cursors@1.0.5:
+    resolution: {integrity: sha512-LgQJj6QtF6VzYODurlhF9Ayt2liiadJZBocK98brcCC6D/dRtZlSU/r0mXWDoCdGPiO24oJB1+PZKz4p9hblWg==}
 
   perfect-freehand@1.2.3:
     resolution: {integrity: sha512-bHZSfqDHGNlPpgH2yxXgPHlQSPpEbo+qg7li0M78J9vNAi2yjwLeA4x79BEQhX44lEWpCLSFCeRZwpw0niiXPA==}
@@ -4539,6 +4548,8 @@ snapshots:
 
   '@tanstack/store@0.11.2': {}
 
+  '@tldraw/vec@1.9.2': {}
+
   '@ts-morph/common@0.27.0':
     dependencies:
       fast-glob: 3.3.3
@@ -5544,6 +5555,10 @@ snapshots:
   path-to-regexp@8.4.2: {}
 
   pathe@2.0.3: {}
+
+  perfect-cursors@1.0.5:
+    dependencies:
+      '@tldraw/vec': 1.9.2
 
   perfect-freehand@1.2.3: {}
 

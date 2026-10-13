@@ -22,6 +22,7 @@
     "cn": "^0.4.0",
     "lib0": "^0.2.119",
     "lucide-react": "^1.55.0",
+    "perfect-cursors": "^1.0.5",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "shadcn": "^4.21.4",

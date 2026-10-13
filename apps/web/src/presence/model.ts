@@ -77,3 +77,27 @@ export function collaborators(tabs: readonly TabPresence[], selfUserId: string):
   }
   return [...byUser.values()]
 }
+
+// ---------- Cursors and away (M2 ticket 03) ----------
+
+/** No pointer or keyboard input for this long marks a tab away. */
+export const IDLE_AWAY_MS = 60_000
+
+/** Where a tab's cursor is, in world units, or null when it isn't over the Board. */
+export function cursorOf(tab: TabPresence): { x: number; y: number } | null {
+  const cursor = tab.state.cursor as { x?: unknown; y?: unknown } | null | undefined
+  if (!cursor || typeof cursor.x !== "number" || typeof cursor.y !== "number") return null
+  if (!Number.isFinite(cursor.x) || !Number.isFinite(cursor.y)) return null
+  if (tab.state.away === true) return null
+  return { x: cursor.x, y: cursor.y }
+}
+
+/** A tab is away when it's hidden, or hasn't had input for IDLE_AWAY_MS. */
+export function tabIsAway(hidden: boolean, lastInputAt: number, now: number): boolean {
+  return hidden || now - lastInputAt >= IDLE_AWAY_MS
+}
+
+/** A person is away only when every tab they have open is. */
+export function isAway(person: Pick<Collaborator, "tabs">): boolean {
+  return person.tabs.length > 0 && person.tabs.every((tab) => tab.state.away === true)
+}

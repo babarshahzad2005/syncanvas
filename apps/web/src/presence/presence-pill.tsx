@@ -11,14 +11,14 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import type { BoardConnection } from "@/sync/board-connection"
-import { type Collaborator, collaborators } from "./model"
+import { type Collaborator, collaborators, isAway } from "./model"
 
 // The presence pill (DESIGN.md → Layout → Board screen, top right): everyone else on the
 // Board, each User once, up to four avatars then "+N". Hidden when you're alone.
 
 const SHOWN = 4
 
-type Person = Pick<Collaborator, "id" | "name" | "guest" | "color">
+type Person = Pick<Collaborator, "id" | "name" | "guest" | "color"> & { away: boolean }
 
 /** The people on the Board but you, re-rendered only when that list itself changes. */
 export function useCollaborators(connection: BoardConnection | null): Person[] {
@@ -29,7 +29,15 @@ export function useCollaborators(connection: BoardConnection | null): Person[] {
   const snapshot = useSyncExternalStore(subscribe, () => {
     if (!connection?.you) return "[]"
     const people = collaborators(connection.presence, connection.you.id)
-    return JSON.stringify(people.map(({ id, name, guest, color }) => ({ id, name, guest, color })))
+    return JSON.stringify(
+      people.map((p) => ({
+        id: p.id,
+        name: p.name,
+        guest: p.guest,
+        color: p.color,
+        away: isAway(p),
+      })),
+    )
   })
   return JSON.parse(snapshot) as Person[]
 }
@@ -39,6 +47,8 @@ function Avatar({ person, className }: { person: Person; className?: string }) {
     <span
       className={cn(
         "type-label flex size-7 items-center justify-center rounded-full text-[11px] text-white ring-2 ring-surface",
+        // Away: every tab of theirs is hidden or idle (DESIGN.md → Away).
+        person.away && "opacity-45",
         className,
       )}
       style={{ background: person.color }}
@@ -66,14 +76,17 @@ export function PresencePill({ connection }: { connection: BoardConnection | nul
               render={
                 <span
                   role="img"
-                  aria-label={person.name}
+                  aria-label={person.away ? `${person.name} (away)` : person.name}
                   className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               }
             >
               <Avatar person={person} />
             </TooltipTrigger>
-            <TooltipContent side="bottom">{person.name}</TooltipContent>
+            <TooltipContent side="bottom">
+              {person.name}
+              {person.away && <span className="text-background/70"> · Away</span>}
+            </TooltipContent>
           </Tooltip>
         ))}
       </div>

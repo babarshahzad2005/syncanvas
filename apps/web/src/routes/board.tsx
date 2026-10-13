@@ -16,7 +16,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
 import { PresencePill } from "@/presence/presence-pill"
-import type { ConnectionStatus } from "@/sync/board-connection"
+import type { BoardConnection, ConnectionStatus } from "@/sync/board-connection"
 import { useBoardConnection } from "@/sync/use-board-connection"
 
 const route = getRouteApi("/authed/b/$boardId")
@@ -32,7 +32,9 @@ export function BoardScreen() {
     <TooltipProvider delay={400}>
       {/* clip, not hidden: a text editor running off-screen must never scroll the Board. */}
       <div className="fixed inset-0 overflow-clip bg-background">
-        {doc && <BoardSurface doc={doc} editable={role ? canEdit(role) : false} />}
+        {doc && (
+          <BoardSurface doc={doc} connection={connection} editable={role ? canEdit(role) : false} />
+        )}
         <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
         <PresencePill connection={connection} />
       </div>
@@ -59,7 +61,15 @@ function FirstNamePrompt() {
   )
 }
 
-function BoardSurface({ doc, editable }: { doc: Y.Doc; editable: boolean }) {
+function BoardSurface({
+  doc,
+  connection,
+  editable,
+}: {
+  doc: Y.Doc
+  connection: BoardConnection | null
+  editable: boolean
+}) {
   // This tab's transaction origin: the UndoManager only tracks (and undoes) these.
   const origin = useMemo(() => ({ tab: "local" }), [])
   // Created inside the effect (not useMemo) so React's development double-mount gets a live
@@ -87,6 +97,7 @@ function BoardSurface({ doc, editable }: { doc: Y.Doc; editable: boolean }) {
         origin={origin}
         undoManager={undoManager}
         canEdit={editable}
+        connection={connection}
       />
       <Dock doc={doc} origin={origin} undoManager={undoManager} canEdit={editable} />
       <UndoZoomPill undoManager={undoManager} canvas={canvas} canEdit={editable} />
