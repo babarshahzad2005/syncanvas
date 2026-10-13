@@ -93,11 +93,11 @@ The **board room** is the source of truth for Board content. **Postgres** is the
 | Limit | Value | Behavior at the limit |
 |---|---|---|
 | Elements per Board | 20,000 | The client blocks new Elements with a clear message, and the board room enforces the same cap |
-| Live connections per Board | 100 | Members are always admitted. Guests, then Embed viewers, get a static image that refreshes every 30 s |
+| Live connections per Board | 100 | Members are always admitted. A turned-away Guest sees a "busy" page that retries every 30 s (decided in M3 planning; a static image of the Board arrives with export in M6). Embed viewers come last |
 | Boards per User (owned) | 50 | Creation is blocked with a message |
 | Image size / storage per User | 5 MB / 50 MB (KV free tier: 1 GB total) | Upload rejected with a message. Allowed types: PNG, JPEG, GIF (first frame), WebP |
 | PNG export | 8,192 px longest side | Scaled down automatically, with a notice |
-| Invitation emails | Rate-limited per User | Sending is blocked with a message |
+| Invitation emails | 20 per User per day, 200 per day in total (Brevo's free 300/day keeps 100 for sign-in links) | Sending is blocked with a message saying when it resets |
 
 ## 7. Key risks
 
@@ -208,7 +208,7 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 - Invitations expire after 30 days. The Owner can resend or cancel any pending Invitation; Editors can cancel their own.
 
 **Share Link**
-- A Board has at most one Share Link, with one Role and an optional expiry. The URL is `/b/{boardId}?s={token}`.
+- A Board has at most one Share Link, with one Role and an optional expiry (never, 1, 7, or 30 days). The URL is `/b/{boardId}?s={token}`.
 - Changing its Role or regenerating it invalidates the old URL.
 - A signed-in User who opens it becomes a lasting Member. Turning the link off doesn't remove Members who already joined through it.
 - Anonymous visitors become Guests with view access only.
@@ -220,7 +220,7 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 
 **Connection cap**
 - 100 live connections per Board.
-- Members are always admitted. Guests are admitted next, then Embed viewers. Anyone not admitted gets a static image that refreshes every 30 s.
+- Members are always admitted. Guests are admitted next, then Embed viewers. A turned-away Guest sees a "busy" page that retries every 30 s; a static image of the Board replaces it in M6.
 
 ### A5. Comments and notifications (P0, email digest P1)
 
