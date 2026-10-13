@@ -101,3 +101,41 @@ export function tabIsAway(hidden: boolean, lastInputAt: number, now: number): bo
 export function isAway(person: Pick<Collaborator, "tabs">): boolean {
   return person.tabs.length > 0 && person.tabs.every((tab) => tab.state.away === true)
 }
+
+// ---------- Selections (M2 ticket 04) ----------
+
+/** Selections up to this many Elements are published as ids; larger ones as their box. */
+export const SELECTION_IDS_MAX = 100
+
+type Box = { x: number; y: number; w: number; h: number }
+export type PublishedSelection = { ids: string[] } | { box: Box } | null
+
+/** What a tab publishes about its selection; `boxOf` measures a large one. */
+export function publishedSelection(
+  ids: readonly string[],
+  boxOf: (ids: readonly string[]) => Box | null,
+): PublishedSelection {
+  if (ids.length === 0) return null
+  if (ids.length <= SELECTION_IDS_MAX) return { ids: [...ids] }
+  const box = boxOf(ids)
+  return box ? { box } : null
+}
+
+const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n)
+
+/** Reads a tab's selection from its (untrusted) presence state. */
+export function selectionOf(tab: TabPresence): { ids?: string[]; box?: Box } | null {
+  const selection = tab.state.selection as { ids?: unknown; box?: unknown } | null | undefined
+  if (!selection || typeof selection !== "object") return null
+  if (Array.isArray(selection.ids)) {
+    const ids = selection.ids
+      .slice(0, SELECTION_IDS_MAX)
+      .filter((id): id is string => typeof id === "string")
+    return ids.length > 0 ? { ids } : null
+  }
+  const box = selection.box as Record<string, unknown> | undefined
+  if (box && finite(box.x) && finite(box.y) && finite(box.w) && finite(box.h)) {
+    return { box: { x: box.x, y: box.y, w: box.w, h: box.h } }
+  }
+  return null
+}

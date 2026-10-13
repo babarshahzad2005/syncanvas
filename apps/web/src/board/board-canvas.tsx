@@ -44,6 +44,7 @@ import {
   hitTest,
   LINE_HEIGHT,
   lockBadgeRect,
+  type RemoteSelection,
   type Scene,
   screenToWorld,
   selectionFrame,
@@ -58,6 +59,7 @@ import type * as Y from "yjs"
 import { useResolvedTheme } from "@/lib/theme"
 import { CursorLayer } from "@/presence/cursor-layer"
 import { LocalPresence } from "@/presence/local-presence"
+import { presenceColor, publishedSelection, selectionOf } from "@/presence/model"
 import type { BoardConnection } from "@/sync/board-connection"
 import { groupSelection, reorderSelection, toggleLock, ungroupSelection } from "./actions"
 import {
@@ -283,6 +285,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     /** The same, in screen px: after a pan or zoom it's over a different world point. */
     screenPointer: null as Point | null,
     cursors: null as CursorLayer | null,
+    /** Others' selections, drawn by the renderer (M2 ticket 04). */
+    remoteSelections: [] as RemoteSelection[],
     presence: null as LocalPresence | null,
     /** A locked Element under the pointer, showing its lock badge. */
     hoverLocked: null as string | null,
@@ -340,6 +344,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         preview: previewOf(g, ui),
         snap: s.snap,
         lockBadge: s.hoverLocked,
+        remoteSelections: s.remoteSelections,
         handles: ![...ui.selection].some((id) => s.index.byId.get(id)?.locked),
         marquee:
           g?.kind === "marquee"
@@ -399,8 +404,32 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const presence = new LocalPresence((fields) => connection.setPresence(fields))
     presence.start()
     s.presence = presence
-    const refresh = () => cursors.update(connection.presence)
+    const refresh = () => {
+      cursors.update(connection.presence)
+      s.remoteSelections = connection.presence.flatMap((tab) => {
+        const selection = selectionOf(tab)
+        if (!selection) return []
+        return [
+          { ...selection, name: tab.user.name, color: presenceColor(tab.user.id, tab.user.guest) },
+        ]
+      })
+      render()
+    }
     refresh()
+    // Publish what this tab has selected (someone typing has their text selected, too).
+    const publishSelection = () => {
+      const ids = [...useBoardUi.getState().selection]
+      connection.setPresence({
+        selection: publishedSelection(ids, (list) => {
+          const elements = list.flatMap((id) => s.index.byId.get(id) ?? [])
+          return boundsOf(elements, s.index.byId)
+        }),
+      })
+    }
+    publishSelection()
+    const unsubscribeSelection = useBoardUi.subscribe((ui, before) => {
+      if (ui.selection !== before.selection) publishSelection()
+    })
     if (window.__SYNCANVAS_TEST__) {
       window.__syncanvasPresence = () =>
         connection.presence.map((t) => ({ ...t.state, user: t.user }))
@@ -408,12 +437,13 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const unsubscribe = connection.subscribePresence(refresh)
     return () => {
       unsubscribe()
+      unsubscribeSelection()
       presence.stop()
       cursors.dispose()
       s.cursors = null
       s.presence = null
     }
-  }, [connection])
+  }, [connection, render])
 
   // Keep the spatial index in sync with the document (local and remote changes alike),
   // re-reading only the Elements each change touched.

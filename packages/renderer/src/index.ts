@@ -23,7 +23,7 @@ import {
   type TextElement,
 } from "@syncanvas/board-model"
 import { getStroke } from "perfect-freehand"
-import { layoutText, TEXT_SIZES, type TextLayout, textFont } from "./text"
+import { layoutText, TEXT_FONT_FAMILY, TEXT_SIZES, type TextLayout, textFont } from "./text"
 
 export * from "./spatial"
 export * from "./text"
@@ -306,6 +306,11 @@ export type Scene = {
   snap?: { points: readonly Point[]; active: Point | null } | null
   /** A locked Element under the pointer: it shows its lock badge. */
   lockBadge?: string | null
+  /**
+   * What other people (and your own other tabs) have selected: outlined in their presence
+   * color with their name. `ids` for a normal selection, `box` (world) for a large one.
+   */
+  remoteSelections?: readonly RemoteSelection[]
   /** False hides the selection's resize handles (a locked selection can't be resized). */
   handles?: boolean
   /** The marquee being dragged, in world coordinates. */
@@ -368,6 +373,9 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
     p: worldToScreen(camera, box.position),
     s: { w: box.size.w * camera.zoom, h: box.size.h * camera.zoom },
   })
+  for (const remote of scene.remoteSelections ?? []) {
+    drawRemoteSelection(ctx, remote, byId, camera)
+  }
   const selected = [...scene.selection].flatMap((id) => {
     const e = byId.get(id)
     return e ? [e] : []
@@ -1044,4 +1052,73 @@ export function drawImage(
     selection: new Set(),
     showGrid: false,
   })
+}
+
+// ---------- Remote selections (DESIGN.md → Canvas → Remote selection) ----------
+
+export type RemoteSelection = {
+  name: string
+  color: string
+  ids?: readonly string[]
+  box?: { x: number; y: number; w: number; h: number }
+}
+
+/**
+ * A Collaborator's selection: a 1.5px outline in their presence color around each selected
+ * Element (or around the box of a large selection), and their name in a small tag above the
+ * top-left corner. Screen space, so it keeps its size at any zoom. Selected Elements that no
+ * longer exist are skipped; when none are left, nothing is drawn.
+ */
+function drawRemoteSelection(
+  ctx: CanvasRenderingContext2D,
+  remote: RemoteSelection,
+  byId: ReadonlyMap<string, ElementWithId>,
+  camera: Camera,
+) {
+  const boxes: { x: number; y: number; w: number; h: number }[] = []
+  ctx.lineWidth = 1.5
+  ctx.strokeStyle = remote.color
+  if (remote.box) {
+    const p = worldToScreen(camera, remote.box)
+    boxes.push({ x: p.x, y: p.y, w: remote.box.w * camera.zoom, h: remote.box.h * camera.zoom })
+  }
+  for (const id of remote.ids ?? []) {
+    const e = byId.get(id)
+    if (!e) continue
+    const path = linePath(e, byId)
+    if (path) {
+      // Lines are outlined along their path, not with a box.
+      ctx.beginPath()
+      for (const [j, point] of path.entries()) {
+        const q = worldToScreen(camera, point)
+        if (j === 0) ctx.moveTo(q.x, q.y)
+        else ctx.lineTo(q.x, q.y)
+      }
+      ctx.stroke()
+    }
+    const { position, size } = elementBox(e, byId)
+    const p = worldToScreen(camera, position)
+    const box = { x: p.x, y: p.y, w: size.w * camera.zoom, h: size.h * camera.zoom }
+    if (!path) ctx.strokeRect(box.x, box.y, box.w, box.h)
+    boxes.push(box)
+  }
+  if (remote.box) {
+    const [b] = boxes
+    if (b) ctx.strokeRect(b.x, b.y, b.w, b.h)
+  }
+  if (boxes.length === 0) return
+
+  // The name tag sits above the selection's top-left corner (DESIGN.md `cursor-label`).
+  const left = Math.min(...boxes.map((b) => b.x))
+  const top = Math.min(...boxes.map((b) => b.y))
+  ctx.font = `500 11px ${TEXT_FONT_FAMILY}`
+  const textWidth = ctx.measureText(remote.name).width
+  const tag = { x: left, y: top - 4 - 18, w: textWidth + 12, h: 18 }
+  ctx.beginPath()
+  ctx.roundRect(tag.x, tag.y, tag.w, tag.h, 9)
+  ctx.fillStyle = remote.color
+  ctx.fill()
+  ctx.fillStyle = "#FFFFFF"
+  ctx.textBaseline = "middle"
+  ctx.fillText(remote.name, tag.x + 6, tag.y + tag.h / 2 + 0.5)
 }

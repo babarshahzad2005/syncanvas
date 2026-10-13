@@ -7,6 +7,9 @@ import {
   isAway,
   PRESENCE_COLORS,
   presenceColor,
+  publishedSelection,
+  SELECTION_IDS_MAX,
+  selectionOf,
   type TabPresence,
   tabIsAway,
   tabPresence,
@@ -91,5 +94,32 @@ describe("cursors and away", () => {
   it("marks a person away only when all their tabs are", () => {
     expect(isAway({ tabs: [tab({ away: true }), tab({ away: false }, 2)] })).toBe(false)
     expect(isAway({ tabs: [tab({ away: true }), tab({ away: true }, 2)] })).toBe(true)
+  })
+})
+
+describe("selections", () => {
+  const tab = (selection: unknown): TabPresence => ({
+    clientId: 1,
+    user: { id: "ada", name: "Ada", guest: false },
+    state: { selection },
+  })
+  const box = { x: 1, y: 2, w: 3, h: 4 }
+
+  it("publishes ids, or the box of a selection too big to list", () => {
+    expect(publishedSelection([], () => box)).toBeNull()
+    expect(publishedSelection(["a", "b"], () => box)).toEqual({ ids: ["a", "b"] })
+    const many = Array.from({ length: SELECTION_IDS_MAX + 1 }, (_, i) => `e${i}`)
+    expect(publishedSelection(many, () => box)).toEqual({ box })
+  })
+
+  it("reads a selection someone published, ignoring anything malformed", () => {
+    expect(selectionOf(tab({ ids: ["a", 7, "b"] }))).toEqual({ ids: ["a", "b"] })
+    expect(selectionOf(tab({ box }))).toEqual({ box })
+    expect(selectionOf(tab({ box: { x: 1, y: "2", w: 3, h: 4 } }))).toBeNull()
+    expect(selectionOf(tab({ ids: [] }))).toBeNull()
+    expect(selectionOf(tab(null))).toBeNull()
+    expect(
+      selectionOf(tab({ ids: Array.from({ length: 500 }, (_, i) => `e${i}`) }))?.ids,
+    ).toHaveLength(SELECTION_IDS_MAX)
   })
 })
