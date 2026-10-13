@@ -21,6 +21,8 @@ import {
 // relays presence (M2): never stored, stamped with each connection's verified identity.
 
 export const MESSAGE_SYNC = 0
+export const HEARTBEAT_PING = "ping"
+export const HEARTBEAT_PONG = "pong"
 
 /** WebSocket close codes the client acts on. */
 export const CLOSE = {
@@ -59,6 +61,9 @@ export class BoardRoom extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
+    // Heartbeat (M2 ticket 06): clients send "ping" every 20 s to notice a dead connection.
+    // Answered by the runtime itself, so it never wakes the room or costs anything.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(HEARTBEAT_PING, HEARTBEAT_PONG))
     ctx.blockConcurrencyWhile(async () => {
       this.ctx.storage.sql.exec(
         "create table if not exists updates (seq integer primary key autoincrement, data blob not null, at integer not null)",
@@ -217,7 +222,8 @@ export class BoardRoom extends DurableObject<Env> {
       try {
         other.send(message)
       } catch {
-        // Closing; its own close handler removes it.
+        // A connection we can't send to is gone: drop its presence now, not at close.
+        this.removePresence(other)
       }
     }
   }

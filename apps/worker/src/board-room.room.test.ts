@@ -6,7 +6,7 @@ import * as encoding from "lib0/encoding"
 import { describe, expect, it } from "vitest"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
-import { CLOSE, MESSAGE_SYNC } from "./board-room"
+import { CLOSE, HEARTBEAT_PING, HEARTBEAT_PONG, MESSAGE_SYNC } from "./board-room"
 import { type BoardTokenKind, signBoardToken } from "./board-token"
 import {
   decodePresence,
@@ -39,6 +39,8 @@ class TestClient {
   /** Presence entries received, in order, and how many presence queries arrived. */
   readonly presence: PresenceEntry[] = []
   queries = 0
+  /** Text frames received (the heartbeat's "pong"). */
+  readonly texts: string[] = []
   readonly ws: WebSocket
   private constructor(ws: WebSocket) {
     this.ws = ws
@@ -58,7 +60,11 @@ class TestClient {
     // workerd delivers binary frames to test-side sockets as Blobs; decode them in arrival order.
     let queue = Promise.resolve()
     ws.addEventListener("message", (e) => {
-      const data = e.data as ArrayBuffer | Blob
+      const data = e.data as ArrayBuffer | Blob | string
+      if (typeof data === "string") {
+        client.texts.push(data)
+        return
+      }
       queue = queue.then(async () =>
         client.onMessage(data instanceof Blob ? await data.arrayBuffer() : data),
       )
@@ -370,6 +376,14 @@ describe("BoardRoom", () => {
     )
     a.close()
     b.close()
+  })
+
+  it("answers the heartbeat ping", async () => {
+    const board = newBoardId()
+    const a = await join(board, "viewer")
+    a.ws.send(HEARTBEAT_PING)
+    await until(() => a.texts.includes(HEARTBEAT_PONG), "a pong")
+    a.close()
   })
 
   describe("presence", () => {

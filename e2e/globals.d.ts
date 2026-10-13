@@ -2,6 +2,8 @@
 declare global {
   interface Window {
     __SYNCANVAS_TEST__?: boolean
+    /** Shorter heartbeat timings for tests (see board-connection.ts). */
+    __SYNCANVAS_HEARTBEAT__?: { pingEvery: number; deadAfter: number }
     __syncanvas?: {
       elements: () => {
         id: string

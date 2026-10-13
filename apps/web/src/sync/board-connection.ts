@@ -20,6 +20,20 @@ export type ConnectionStatus = "connecting" | "online" | "offline" | "revoked"
 const MESSAGE_SYNC = 0
 const MESSAGE_AWARENESS = 1
 const MESSAGE_QUERY_AWARENESS = 3
+
+/**
+ * Heartbeat (M2 ticket 06): a socket can die without the browser noticing (sleep, a flaky
+ * network). Every 20 s the client pings; the board room's runtime answers "pong" without
+ * waking up. Hearing nothing at all for 30 s means the socket is dead: reconnect.
+ */
+export const HEARTBEAT = { pingEvery: 20_000, deadAfter: 30_000 }
+
+declare global {
+  interface Window {
+    /** Test hook: shorter heartbeat timings, read when a connection is created. */
+    __SYNCANVAS_HEARTBEAT__?: { pingEvery: number; deadAfter: number }
+  }
+}
 /** Must match CLOSE in the Worker's board-room.ts. */
 const CLOSE_INVALID_TOKEN = 4401
 const CLOSE_FORBIDDEN = 4403
@@ -44,6 +58,11 @@ export class BoardConnection {
   private stopped = false
   private listeners = new Set<() => void>()
   private presenceListeners = new Set<() => void>()
+  private heartbeat: ReturnType<typeof setInterval> | null = null
+  private lastHeard = 0
+  private lastPing = 0
+  private readonly timing =
+    (typeof window !== "undefined" && window.__SYNCANVAS_HEARTBEAT__) || HEARTBEAT
   private awareness: awarenessProtocol.Awareness | null = null
   /** What this tab publishes; kept across reconnects. */
   private localPresence: Record<string, unknown> = {}
@@ -89,6 +108,7 @@ export class BoardConnection {
     if (this.retryTimer) clearTimeout(this.retryTimer)
     this.ws?.close(1000, "left the board")
     this.ws = null
+    this.stopHeartbeat()
     this.endPresence()
     this.doc.off("update", this.onLocalUpdate)
   }
@@ -127,14 +147,20 @@ export class BoardConnection {
     this.ws = ws
 
     ws.addEventListener("open", () => {
+      this.startHeartbeat(ws)
       this.send((e) => syncProtocol.writeSyncStep1(e, this.doc))
       // Before sync finishes: the board room sends who's here right away.
       this.startPresence()
     })
-    ws.addEventListener("message", (event) => this.onMessage(event.data as ArrayBuffer))
+    ws.addEventListener("message", (event) => {
+      this.lastHeard = performance.now()
+      if (typeof event.data === "string") return // the heartbeat's "pong"
+      this.onMessage(event.data as ArrayBuffer)
+    })
     ws.addEventListener("close", (event) => {
       if (this.ws !== ws) return
       this.ws = null
+      this.stopHeartbeat()
       this.endPresence()
       if (this.stopped) return
       if (event.code === CLOSE_FORBIDDEN) return this.setStatus("revoked")
@@ -151,6 +177,7 @@ export class BoardConnection {
   private onBrowserOffline = () => {
     const ws = this.ws
     this.ws = null
+    this.stopHeartbeat()
     this.endPresence()
     ws?.close(1000, "browser offline")
     this.scheduleRetry()
@@ -162,6 +189,39 @@ export class BoardConnection {
     if (this.retryTimer) clearTimeout(this.retryTimer)
     this.attempt = 0
     void this.connect()
+  }
+
+  private startHeartbeat(ws: WebSocket) {
+    this.stopHeartbeat()
+    this.lastHeard = this.lastPing = performance.now()
+    const check = Math.min(this.timing.pingEvery, 5_000)
+    this.heartbeat = setInterval(() => {
+      if (this.ws !== ws) return this.stopHeartbeat()
+      const now = performance.now()
+      if (now - this.lastHeard > this.timing.deadAfter) return this.onDeadSocket(ws)
+      if (now - this.lastPing >= this.timing.pingEvery) {
+        this.lastPing = now
+        if (ws.readyState === WebSocket.OPEN) ws.send("ping")
+      }
+    }, check)
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeat) clearInterval(this.heartbeat)
+    this.heartbeat = null
+  }
+
+  /** Nothing heard for too long: the socket is dead even if the browser hasn't noticed. */
+  private onDeadSocket(ws: WebSocket) {
+    this.ws = null
+    this.stopHeartbeat()
+    this.endPresence()
+    try {
+      ws.close(4000, "heartbeat lost")
+    } catch {
+      // Already closing.
+    }
+    this.scheduleRetry()
   }
 
   private scheduleRetry() {
