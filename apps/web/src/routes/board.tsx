@@ -15,6 +15,7 @@ import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
+import { PresencePill } from "@/presence/presence-pill"
 import type { ConnectionStatus } from "@/sync/board-connection"
 import { useBoardConnection } from "@/sync/use-board-connection"
 
@@ -23,7 +24,7 @@ const route = getRouteApi("/authed/b/$boardId")
 /** Board screen (DESIGN.md → Layout → Board screen, "Dock tray"). */
 export function BoardScreen() {
   const { boardId } = route.useParams()
-  const { status, board, role, doc } = useBoardConnection(boardId)
+  const { connection, status, board, role, doc } = useBoardConnection(boardId)
 
   if (status === "revoked") return <NoAccess />
 
@@ -33,6 +34,7 @@ export function BoardScreen() {
       <div className="fixed inset-0 overflow-clip bg-background">
         {doc && <BoardSurface doc={doc} editable={role ? canEdit(role) : false} />}
         <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
+        <PresencePill connection={connection} />
       </div>
       <Toaster placement="board" />
       <ShortcutSheet />

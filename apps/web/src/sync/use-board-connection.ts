@@ -40,6 +40,7 @@ export function useBoardConnection(boardId: string) {
     () => connection?.status ?? "connecting",
   )
   return {
+    connection,
     doc: connection?.doc ?? null,
     status,
     board: connection?.board ?? null,

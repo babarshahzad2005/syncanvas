@@ -96,3 +96,19 @@ export async function drag(
   await page.mouse.move(box.x + to.x, box.y + to.y, { steps: 8 })
   await page.mouse.up()
 }
+
+/**
+ * Gives another signed-up User a Role on a Board, straight in the dev database: sharing
+ * arrives in M3, and presence needs a second person before then.
+ */
+export async function shareBoard(boardUrl: string, email: string, role = "editor") {
+  const { connectDb } = await import("./db")
+  const sql = connectDb()
+  if (!sql) throw new Error("no dev database configured")
+  const boardId = new URL(boardUrl).pathname.split("/").at(-1)
+  await sql`
+    insert into memberships (board_id, user_id, role, via)
+    select ${boardId}, id, ${role}, 'invitation' from "user" where email = ${email}
+  `
+  await sql.end()
+}

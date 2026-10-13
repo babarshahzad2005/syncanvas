@@ -1,17 +1,25 @@
 import { type BoardTokenResponse, canEdit } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
+import * as awarenessProtocol from "y-protocols/awareness"
 import * as syncProtocol from "y-protocols/sync"
-import type * as Y from "yjs"
+import * as Y from "yjs"
 import { ApiError, api } from "@/lib/api"
+import { type TabPresence, tabPresence } from "@/presence/model"
 
 // Keeps one Board's Y.Doc in sync with its board room (FLOWS §2 "Open a Board"):
 // fetch a short-lived board token, open /ws/{boardId}, run Yjs sync steps 1 and 2 both ways,
 // then stream updates. Reconnects with exponential backoff and full jitter.
+//
+// Presence (M2) rides the same socket as y-protocols awareness. Every connection gets a fresh
+// awareness (a new id), so when the board room announces someone left, nothing they publish
+// after reconnecting can be mistaken for the old, removed state.
 
 export type ConnectionStatus = "connecting" | "online" | "offline" | "revoked"
 
 const MESSAGE_SYNC = 0
+const MESSAGE_AWARENESS = 1
+const MESSAGE_QUERY_AWARENESS = 3
 /** Must match CLOSE in the Worker's board-room.ts. */
 const CLOSE_INVALID_TOKEN = 4401
 const CLOSE_FORBIDDEN = 4403
@@ -25,12 +33,20 @@ export class BoardConnection {
   status: ConnectionStatus = "connecting"
   board: BoardTokenResponse["board"] | null = null
   role: BoardTokenResponse["role"] | null = null
+  /** Who this connection is, as the board room vouches for it. */
+  you: BoardTokenResponse["you"] | null = null
+  /** Every other open tab on the Board (including your own other tabs), live. */
+  presence: TabPresence[] = []
 
   private ws: WebSocket | null = null
   private attempt = 0
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
   private listeners = new Set<() => void>()
+  private presenceListeners = new Set<() => void>()
+  private awareness: awarenessProtocol.Awareness | null = null
+  /** What this tab publishes; kept across reconnects. */
+  private localPresence: Record<string, unknown> = {}
 
   readonly boardId: string
   readonly doc: Y.Doc
@@ -47,6 +63,18 @@ export class BoardConnection {
     return () => this.listeners.delete(listener)
   }
 
+  /** Subscribe to presence changes (others joining, leaving, or updating). */
+  subscribePresence = (listener: () => void) => {
+    this.presenceListeners.add(listener)
+    return () => this.presenceListeners.delete(listener)
+  }
+
+  /** Merges fields into what this tab publishes (sent at once if connected). */
+  setPresence(fields: Record<string, unknown>) {
+    this.localPresence = { ...this.localPresence, ...fields }
+    this.awareness?.setLocalState(this.localPresence)
+  }
+
   start() {
     this.stopped = false
     window.addEventListener("offline", this.onBrowserOffline)
@@ -61,6 +89,7 @@ export class BoardConnection {
     if (this.retryTimer) clearTimeout(this.retryTimer)
     this.ws?.close(1000, "left the board")
     this.ws = null
+    this.endPresence()
     this.doc.off("update", this.onLocalUpdate)
   }
 
@@ -88,6 +117,7 @@ export class BoardConnection {
     if (this.stopped) return
     this.board = pass.board
     this.role = pass.role
+    this.you = pass.you
 
     const scheme = location.protocol === "https:" ? "wss:" : "ws:"
     const ws = new WebSocket(
@@ -98,11 +128,14 @@ export class BoardConnection {
 
     ws.addEventListener("open", () => {
       this.send((e) => syncProtocol.writeSyncStep1(e, this.doc))
+      // Before sync finishes: the board room sends who's here right away.
+      this.startPresence()
     })
     ws.addEventListener("message", (event) => this.onMessage(event.data as ArrayBuffer))
     ws.addEventListener("close", (event) => {
       if (this.ws !== ws) return
       this.ws = null
+      this.endPresence()
       if (this.stopped) return
       if (event.code === CLOSE_FORBIDDEN) return this.setStatus("revoked")
       if (event.code === CLOSE_INVALID_TOKEN) {
@@ -118,6 +151,7 @@ export class BoardConnection {
   private onBrowserOffline = () => {
     const ws = this.ws
     this.ws = null
+    this.endPresence()
     ws?.close(1000, "browser offline")
     this.scheduleRetry()
   }
@@ -148,15 +182,75 @@ export class BoardConnection {
 
   private onMessage(data: ArrayBuffer) {
     const decoder = decoding.createDecoder(new Uint8Array(data))
-    if (decoding.readVarUint(decoder) !== MESSAGE_SYNC) return
+    const type = decoding.readVarUint(decoder)
+    if (type === MESSAGE_AWARENESS) {
+      if (this.awareness) {
+        const update = decoding.readVarUint8Array(decoder)
+        awarenessProtocol.applyAwarenessUpdate(this.awareness, update, this)
+      }
+      return
+    }
+    if (type === MESSAGE_QUERY_AWARENESS) {
+      this.sendPresence() // the board room lost track (hibernation): say who we are again
+      return
+    }
+    if (type !== MESSAGE_SYNC) return
     const reply = encoding.createEncoder()
     encoding.writeVarUint(reply, MESSAGE_SYNC)
-    const type = syncProtocol.readSyncMessage(decoder, reply, this.doc, this)
+    const syncType = syncProtocol.readSyncMessage(decoder, reply, this.doc, this)
     if (encoding.length(reply) > 1) this.ws?.send(encoding.toUint8Array(reply))
-    if (type === syncProtocol.messageYjsSyncStep2) {
+    if (syncType === syncProtocol.messageYjsSyncStep2) {
       this.attempt = 0
       this.setStatus("online")
     }
+  }
+
+  // ---------- Presence ----------
+
+  /** Live: publish this tab under a fresh awareness id and start hearing everyone else. */
+  private startPresence() {
+    if (this.awareness) return
+    const awareness = new awarenessProtocol.Awareness(new Y.Doc())
+    this.awareness = awareness
+    awareness.on("update", ({ added, updated, removed }: AwarenessChanges, origin: unknown) => {
+      // Our own changes (and the periodic renewal that keeps us from timing out) go out.
+      if (origin === "local") this.sendPresence([...added, ...updated, ...removed])
+    })
+    awareness.on("change", this.refreshPresence)
+    awareness.setLocalState(this.localPresence)
+  }
+
+  /** Offline or gone: everyone else disappears from this screen until we're back. */
+  private endPresence() {
+    this.awareness?.destroy()
+    this.awareness = null
+    this.refreshPresence()
+  }
+
+  private sendPresence(clients?: number[]) {
+    const awareness = this.awareness
+    if (!awareness || this.ws?.readyState !== WebSocket.OPEN) return
+    const e = encoding.createEncoder()
+    encoding.writeVarUint(e, MESSAGE_AWARENESS)
+    encoding.writeVarUint8Array(
+      e,
+      awarenessProtocol.encodeAwarenessUpdate(awareness, clients ?? [awareness.clientID]),
+    )
+    this.ws.send(encoding.toUint8Array(e))
+  }
+
+  private refreshPresence = () => {
+    const awareness = this.awareness
+    const tabs: TabPresence[] = []
+    if (awareness) {
+      for (const [clientId, state] of awareness.getStates()) {
+        if (clientId === awareness.clientID) continue
+        const tab = tabPresence(clientId, state)
+        if (tab) tabs.push(tab)
+      }
+    }
+    this.presence = tabs
+    for (const l of this.presenceListeners) l()
   }
 
   private onLocalUpdate = (update: Uint8Array, origin: unknown) => {
@@ -165,3 +259,5 @@ export class BoardConnection {
     this.send((e) => syncProtocol.writeUpdate(e, update))
   }
 }
+
+type AwarenessChanges = { added: number[]; updated: number[]; removed: number[] }

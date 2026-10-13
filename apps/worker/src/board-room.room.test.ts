@@ -8,6 +8,14 @@ import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 import { CLOSE, MESSAGE_SYNC } from "./board-room"
 import { type BoardTokenKind, signBoardToken } from "./board-token"
+import {
+  decodePresence,
+  MESSAGE_AWARENESS,
+  MESSAGE_QUERY_AWARENESS,
+  type PresenceEntry,
+  presenceMessage,
+  REMOVED_CLOCK,
+} from "./presence"
 
 // Board room socket seam: headless Yjs clients speaking the real protocol to the real
 // BoardRoom Durable Object in workerd.
@@ -28,6 +36,9 @@ class TestClient {
   readonly doc = new Y.Doc()
   closed: { code: number; reason: string } | null = null
   synced = false
+  /** Presence entries received, in order, and how many presence queries arrived. */
+  readonly presence: PresenceEntry[] = []
+  queries = 0
   readonly ws: WebSocket
   private constructor(ws: WebSocket) {
     this.ws = ws
@@ -72,12 +83,32 @@ class TestClient {
 
   private onMessage(data: ArrayBuffer) {
     const decoder = decoding.createDecoder(new Uint8Array(data))
-    if (decoding.readVarUint(decoder) !== MESSAGE_SYNC) return
+    const type = decoding.readVarUint(decoder)
+    if (type === MESSAGE_AWARENESS) {
+      this.presence.push(...decodePresence(decoding.readVarUint8Array(decoder)))
+      return
+    }
+    if (type === MESSAGE_QUERY_AWARENESS) {
+      this.queries++
+      return
+    }
+    if (type !== MESSAGE_SYNC) return
     const reply = encoding.createEncoder()
     encoding.writeVarUint(reply, MESSAGE_SYNC)
-    const type = syncProtocol.readSyncMessage(decoder, reply, this.doc, this)
+    const syncType = syncProtocol.readSyncMessage(decoder, reply, this.doc, this)
     if (encoding.length(reply) > 1) this.ws.send(encoding.toUint8Array(reply))
-    if (type === syncProtocol.messageYjsSyncStep2) this.synced = true
+    if (syncType === syncProtocol.messageYjsSyncStep2) this.synced = true
+  }
+
+  /** Publishes a presence state (JSON) under an awareness id, as a y-protocols client would. */
+  sendPresence(clientId: number, state: unknown, clock = 1) {
+    this.ws.send(presenceMessage([{ clientId, clock, state: JSON.stringify(state) }]))
+  }
+
+  /** The latest presence received for an awareness id, parsed (null once removed). */
+  presenceOf(clientId: number): Record<string, unknown> | null | undefined {
+    const entry = this.presence.filter((e) => e.clientId === clientId).at(-1)
+    return entry ? JSON.parse(entry.state) : undefined
   }
 
   /** Sends a raw update as if this client had produced it. */
@@ -339,5 +370,112 @@ describe("BoardRoom", () => {
     )
     a.close()
     b.close()
+  })
+
+  describe("presence", () => {
+    it("relays presence to everyone, with the identity from the token", async () => {
+      const board = newBoardId()
+      const editor = await join(board, "editor")
+      const viewer = await join(board, "viewer")
+
+      // A client can't pick its own name or id: the room stamps the token's.
+      editor.sendPresence(111, {
+        cursor: { x: 1, y: 2 },
+        user: { id: "someone-else", name: "Mallory" },
+      })
+      await until(() => viewer.presenceOf(111) !== undefined, "the viewer to see the editor")
+      expect(viewer.presenceOf(111)).toEqual({
+        cursor: { x: 1, y: 2 },
+        user: { id: "user-editor", name: "User editor", guest: false },
+      })
+
+      // Every Role publishes presence, Viewers included.
+      viewer.sendPresence(222, { cursor: null })
+      await until(() => editor.presenceOf(222) !== undefined, "the editor to see the viewer")
+      expect(editor.presenceOf(222)).toMatchObject({ user: { id: "user-viewer" } })
+      editor.close()
+      viewer.close()
+    })
+
+    it("shows a joiner everyone already there, at once", async () => {
+      const board = newBoardId()
+      const a = await join(board, "editor")
+      a.sendPresence(111, { here: true })
+      const witness = await join(board, "owner")
+      await until(() => witness.presenceOf(111) !== undefined, "the witness to see A")
+
+      const late = await join(board, "viewer")
+      await until(() => late.presenceOf(111) !== undefined, "the joiner to see A")
+      expect(late.presenceOf(111)).toMatchObject({ here: true, user: { id: "user-editor" } })
+      a.close()
+      witness.close()
+      late.close()
+    })
+
+    it("tells everyone when someone leaves", async () => {
+      const board = newBoardId()
+      const a = await join(board, "editor")
+      const b = await join(board, "owner")
+      a.sendPresence(111, { here: true })
+      await until(() => b.presenceOf(111) !== undefined, "B to see A")
+
+      a.close()
+      await until(() => b.presenceOf(111) === null, "B to see A leave")
+      expect(b.presence.at(-1)).toMatchObject({ clientId: 111, clock: REMOVED_CLOCK })
+      b.close()
+    })
+
+    it("gives each connection one awareness id that nobody else can use", async () => {
+      const board = newBoardId()
+      const a = await join(board, "editor")
+      const b = await join(board, "editor")
+      const watcher = await join(board, "viewer")
+      a.sendPresence(111, { from: "a" })
+      await until(() => watcher.presenceOf(111) !== undefined, "the watcher to see A")
+
+      // B can neither overwrite nor remove A's presence, nor publish under a second id.
+      b.sendPresence(111, { from: "b" }, 5)
+      b.sendPresence(111, null, 6)
+      b.sendPresence(333, { from: "b" })
+      b.sendPresence(444, { from: "b again" })
+      await until(() => watcher.presenceOf(333) !== undefined, "the watcher to see B")
+      await new Promise((r) => setTimeout(r, 100))
+      expect(watcher.presenceOf(111)).toMatchObject({ from: "a" })
+      expect(watcher.presenceOf(444)).toBeUndefined()
+      a.close()
+      b.close()
+      watcher.close()
+    })
+
+    it("asks everyone to re-send after a hibernation wiped its memory", async () => {
+      const board = newBoardId()
+      const a = await join(board, "editor")
+      a.sendPresence(111, { here: true })
+      const witness = await join(board, "owner")
+      await until(() => witness.presenceOf(111) !== undefined, "the witness to see A")
+
+      await evictDurableObject(env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(board)))
+      const late = await join(board, "viewer")
+      await until(() => a.queries > 0, "A to be asked for its presence")
+      // A answers the way y-protocols does: its state again, with a newer clock.
+      a.sendPresence(111, { here: true }, 2)
+      await until(() => late.presenceOf(111) !== undefined, "the joiner to see A")
+      a.close()
+      witness.close()
+      late.close()
+    })
+
+    it("ignores presence that isn't a JSON object or is too big", async () => {
+      const board = newBoardId()
+      const a = await join(board, "editor")
+      const b = await join(board, "owner")
+      a.sendPresence(111, "just a string")
+      a.sendPresence(111, { big: "x".repeat(10_000) }, 2)
+      a.sendPresence(111, { ok: true }, 3)
+      await until(() => b.presenceOf(111) !== undefined, "B to see A's valid presence")
+      expect(b.presence.filter((e) => e.clientId === 111)).toHaveLength(1)
+      a.close()
+      b.close()
+    })
   })
 })

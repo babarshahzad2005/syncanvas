@@ -6,9 +6,19 @@ import * as encoding from "lib0/encoding"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 import { type BoardTokenKind, verifyBoardToken } from "./board-token"
+import {
+  decodePresence,
+  MESSAGE_AWARENESS,
+  type PresenceEntry,
+  presenceMessage,
+  queryPresenceMessage,
+  REMOVED_CLOCK,
+  stampPresence,
+} from "./presence"
 
 // One BoardRoom per Board (ADR 0006): holds the live Yjs doc, checks the Role on every incoming
-// update, persists accepted updates to its own SQLite storage, then broadcasts them.
+// update, persists accepted updates to its own SQLite storage, then broadcasts them. It also
+// relays presence (M2): never stored, stamped with each connection's verified identity.
 
 export const MESSAGE_SYNC = 0
 
@@ -22,7 +32,14 @@ export const CLOSE = {
   invalidUpdate: 4400,
 } as const
 
-type SocketInfo = { userId: string; role: Role; kind: BoardTokenKind }
+type SocketInfo = {
+  userId: string
+  name: string
+  role: Role
+  kind: BoardTokenKind
+  /** The one awareness id this connection publishes under, once it has sent presence. */
+  presenceId?: number
+}
 
 function syncMessage(write: (encoder: encoding.Encoder) => void) {
   const encoder = encoding.createEncoder()
@@ -33,6 +50,12 @@ function syncMessage(write: (encoder: encoding.Encoder) => void) {
 
 export class BoardRoom extends DurableObject<Env> {
   private doc = new Y.Doc()
+  /**
+   * Latest presence per awareness id, stamped, for sending to people who join. Memory only:
+   * after a hibernation it starts empty, and the next joiner triggers a query instead.
+   */
+  private presence = new Map<number, PresenceEntry>()
+  private presenceWarm = false
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -73,18 +96,23 @@ export class BoardRoom extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server)
     server.serializeAttachment({
       userId: claims.userId,
+      name: claims.name,
       role: claims.role,
       kind: claims.kind,
     } satisfies SocketInfo)
     // Sync step 1: tell the client what we have, so it sends what we're missing.
     server.send(syncMessage((e) => syncProtocol.writeSyncStep1(e, this.doc)))
+    this.greetWithPresence(server)
     return new Response(null, { status: 101, webSocket: client })
   }
 
   async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
     if (typeof message === "string") return
     const decoder = decoding.createDecoder(new Uint8Array(message))
-    if (decoding.readVarUint(decoder) !== MESSAGE_SYNC) return // awareness arrives in M2
+    const type = decoding.readVarUint(decoder)
+    if (type === MESSAGE_AWARENESS)
+      return this.receivePresence(ws, decoding.readVarUint8Array(decoder))
+    if (type !== MESSAGE_SYNC) return
 
     switch (decoding.readVarUint(decoder)) {
       case syncProtocol.messageYjsSyncStep1: {
@@ -123,7 +151,92 @@ export class BoardRoom extends DurableObject<Env> {
     }
   }
 
+  // ---------- Presence ----------
+
+  /** A new connection sees everyone already here at once (PRD: within 2 s). */
+  private greetWithPresence(ws: WebSocket) {
+    const info = ws.deserializeAttachment() as SocketInfo
+    if (info.kind === "embed") return // Embed viewers see no presence
+    const others = this.ctx.getWebSockets().filter((other) => other !== ws)
+    if (!this.presenceWarm && others.length > 0) {
+      // Memory was wiped (hibernation): ask everyone to re-send; replies reach the joiner too.
+      const query = queryPresenceMessage()
+      for (const other of others) other.send(query)
+    } else {
+      const live = new Set(
+        others.map((other) => (other.deserializeAttachment() as SocketInfo).presenceId),
+      )
+      const entries = [...this.presence.values()].filter((entry) => live.has(entry.clientId))
+      if (entries.length > 0) ws.send(presenceMessage(entries))
+    }
+    this.presenceWarm = true
+  }
+
+  private receivePresence(ws: WebSocket, update: Uint8Array) {
+    const info = ws.deserializeAttachment() as SocketInfo
+    if (info.kind === "embed") return // Embed viewers don't publish presence
+    let entries: PresenceEntry[]
+    try {
+      entries = decodePresence(update)
+    } catch {
+      return
+    }
+    const accepted: PresenceEntry[] = []
+    for (const entry of entries) {
+      // Each connection gets exactly one awareness id: the first it uses that nobody else has.
+      if (info.presenceId === undefined) {
+        if (this.ownerOf(entry.clientId)) continue
+        info.presenceId = entry.clientId
+        ws.serializeAttachment(info)
+      }
+      if (entry.clientId !== info.presenceId) continue
+      const state = stampPresence(entry.state, {
+        id: info.userId,
+        name: info.name,
+        guest: info.kind === "guest",
+      })
+      if (state === null) continue
+      const stamped = { clientId: entry.clientId, clock: entry.clock, state }
+      if (state === "null") this.presence.delete(entry.clientId)
+      else this.presence.set(entry.clientId, stamped)
+      accepted.push(stamped)
+    }
+    if (accepted.length > 0) this.broadcastPresence(presenceMessage(accepted), ws)
+  }
+
+  private ownerOf(clientId: number): WebSocket | undefined {
+    return this.ctx
+      .getWebSockets()
+      .find((ws) => (ws.deserializeAttachment() as SocketInfo).presenceId === clientId)
+  }
+
+  private broadcastPresence(message: Uint8Array, from: WebSocket) {
+    for (const other of this.ctx.getWebSockets()) {
+      if (other === from) continue
+      if ((other.deserializeAttachment() as SocketInfo).kind === "embed") continue
+      try {
+        other.send(message)
+      } catch {
+        // Closing; its own close handler removes it.
+      }
+    }
+  }
+
+  /** Someone left: tell everyone else to drop their presence now. */
+  private removePresence(ws: WebSocket) {
+    const info = ws.deserializeAttachment() as SocketInfo | null
+    const clientId = info?.presenceId
+    if (clientId === undefined) return
+    this.presence.delete(clientId)
+    this.broadcastPresence(presenceMessage([{ clientId, clock: REMOVED_CLOCK, state: "null" }]), ws)
+  }
+
+  async webSocketError(ws: WebSocket) {
+    this.removePresence(ws)
+  }
+
   async webSocketClose(ws: WebSocket, code: number, reason: string) {
+    this.removePresence(ws)
     // Finish the closing handshake. 1005/1006 mean "no code" / "dropped" and can't be sent back.
     const sendable = code >= 1000 && code < 5000 && code !== 1005 && code !== 1006 && code !== 1015
     try {
