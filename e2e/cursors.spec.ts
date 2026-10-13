@@ -67,10 +67,10 @@ test("cursors move live with names, and hide when someone is away", async ({ bro
   // Ada switches tabs: her cursor hides and her avatar shows her away. Back, she's back.
   await setHidden(ada, true)
   await expect(grace.locator('[data-cursor="Ada Lovelace"]')).toBeHidden()
-  await expect(grace.getByRole("img", { name: "Ada Lovelace (away)" })).toBeVisible()
+  await expect(grace.getByRole("button", { name: "Ada Lovelace (away)" })).toBeVisible()
   await setHidden(ada, false)
   await ada.mouse.move(to.x, to.y, { steps: 3 })
-  await expect(grace.getByRole("img", { name: "Ada Lovelace", exact: true })).toBeVisible()
+  await expect(grace.getByRole("button", { name: "Ada Lovelace", exact: true })).toBeVisible()
   await expect(grace.locator('[data-cursor="Ada Lovelace"]')).toBeVisible()
 
   // Ada sees her own other tab's cursor, but never the one under her own pointer.

@@ -26,6 +26,9 @@ type BoardUi = {
   /** Style of the next connector: the style last picked in the tray (elbow at first). */
   connectorStyle: ConnectorStyle
   setConnectorStyle: (style: ConnectorStyle) => void
+  /** The User being followed (their view drives this tab's camera), or null. */
+  following: string | null
+  setFollowing: (userId: string | null) => void
   /** The "?" shortcut sheet: closed, or open from the keyboard (no animation) or a menu. */
   shortcutsOpen: false | "keyboard" | "pointer"
   setShortcutsOpen: (open: false | "keyboard" | "pointer") => void
@@ -47,6 +50,8 @@ export const useBoardUi = create<BoardUi>((set) => ({
   setStickyColor: (stickyColor) => set({ stickyColor }),
   connectorStyle: "elbow",
   setConnectorStyle: (connectorStyle) => set({ connectorStyle }),
+  following: null,
+  setFollowing: (following) => set({ following }),
   shortcutsOpen: false,
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   editing: null,

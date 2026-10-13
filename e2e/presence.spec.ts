@@ -29,17 +29,17 @@ test("two people see each other in the presence pill", async ({ browser }) => {
   // Grace opens it: each sees the other, by name.
   await grace.goto(ada.url())
   await waitUntilOnline(grace)
-  await expect(pill(ada).getByRole("img", { name: "Grace Hopper" })).toBeVisible()
-  await expect(pill(grace).getByRole("img", { name: "Ada Lovelace" })).toBeVisible()
+  await expect(pill(ada).getByRole("button", { name: "Grace Hopper" })).toBeVisible()
+  await expect(pill(grace).getByRole("button", { name: "Ada Lovelace" })).toBeVisible()
   await expect(pill(ada)).toContainText("GH")
 
   // A second tab of Ada's doesn't make her two people, and isn't "someone else" for her.
   const adaAgain = await contextA.newPage()
   await adaAgain.goto(ada.url())
   await waitUntilOnline(adaAgain)
-  await expect(pill(grace).getByRole("img")).toHaveCount(1)
-  await expect(pill(adaAgain).getByRole("img", { name: "Grace Hopper" })).toBeVisible()
-  await expect(pill(adaAgain).getByRole("img")).toHaveCount(1)
+  await expect(pill(grace).getByRole("button")).toHaveCount(1)
+  await expect(pill(adaAgain).getByRole("button", { name: "Grace Hopper" })).toBeVisible()
+  await expect(pill(adaAgain).getByRole("button")).toHaveCount(1)
 
   // Grace leaves: she's gone from Ada's pill within 2 s, and the pill hides.
   await contextG.close()

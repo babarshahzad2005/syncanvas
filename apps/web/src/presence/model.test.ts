@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest"
 import {
   collaborators,
   cursorOf,
+  fitView,
   GUEST_COLOR,
   IDLE_AWAY_MS,
   isAway,
+  leaderTab,
   PRESENCE_COLORS,
   presenceColor,
   publishedSelection,
@@ -13,6 +15,7 @@ import {
   type TabPresence,
   tabIsAway,
   tabPresence,
+  viewOf,
 } from "./model"
 
 describe("presenceColor", () => {
@@ -121,5 +124,58 @@ describe("selections", () => {
     expect(
       selectionOf(tab({ ids: Array.from({ length: 500 }, (_, i) => `e${i}`) }))?.ids,
     ).toHaveLength(SELECTION_IDS_MAX)
+  })
+})
+
+describe("follow mode", () => {
+  const limits = { min: 0.1, max: 8 }
+  const tab = (clientId: number, view: unknown): TabPresence => ({
+    clientId,
+    user: { id: "ada", name: "Ada", guest: false },
+    state: { view },
+  })
+
+  it("shows the leader's view at the same zoom on a screen the same size", () => {
+    expect(fitView({ x: -640, y: -400, w: 1280, h: 800 }, { w: 1280, h: 800 }, limits)).toEqual({
+      zoom: 1,
+      x: 640,
+      y: 400,
+    })
+  })
+
+  it("zooms out on a smaller screen so all of the leader's view fits, centered", () => {
+    const camera = fitView({ x: 0, y: 0, w: 1000, h: 500 }, { w: 500, h: 500 }, limits)
+    expect(camera.zoom).toBe(0.5)
+    // The view's center (500, 250) lands on the screen's center (250, 250).
+    expect(500 * camera.zoom + camera.x).toBe(250)
+    expect(250 * camera.zoom + camera.y).toBe(250)
+  })
+
+  it("stays within the zoom limits", () => {
+    expect(fitView({ x: 0, y: 0, w: 10, h: 10 }, { w: 1000, h: 1000 }, limits).zoom).toBe(8)
+  })
+
+  it("follows the leader's most recently active tab that shares its view", () => {
+    const tabs = [
+      tab(1, { x: 0, y: 0, w: 10, h: 10 }),
+      tab(2, { x: 5, y: 5, w: 10, h: 10 }),
+      tab(3, null),
+    ]
+    expect(
+      leaderTab(
+        tabs,
+        new Map([
+          [1, 100],
+          [2, 200],
+          [3, 300],
+        ]),
+      )?.clientId,
+    ).toBe(2)
+    expect(leaderTab([tab(3, null)], new Map())).toBeNull()
+  })
+
+  it("ignores views that aren't a real area", () => {
+    expect(viewOf(tab(1, { x: 0, y: 0, w: 0, h: 10 }))).toBeNull()
+    expect(viewOf(tab(1, { x: "0", y: 0, w: 1, h: 1 }))).toBeNull()
   })
 })

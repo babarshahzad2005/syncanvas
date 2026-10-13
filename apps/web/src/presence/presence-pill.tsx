@@ -1,4 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react"
+import { useBoardUi } from "@/board/store"
 import { initials } from "@/components/account-menu"
 import {
   DropdownMenu,
@@ -58,8 +59,16 @@ function Avatar({ person, className }: { person: Person; className?: string }) {
   )
 }
 
+/** Follow someone, or stop when they're already followed. Guests can't be followed (PRD A3). */
+function toggleFollow(person: Person) {
+  if (person.guest) return
+  const { following, setFollowing } = useBoardUi.getState()
+  setFollowing(following === person.id ? null : person.id)
+}
+
 export function PresencePill({ connection }: { connection: BoardConnection | null }) {
   const people = useCollaborators(connection)
+  const following = useBoardUi((s) => s.following)
   if (people.length === 0) return null
   const shown = people.slice(0, SHOWN)
   const more = people.length - shown.length
@@ -74,18 +83,29 @@ export function PresencePill({ connection }: { connection: BoardConnection | nul
           <Tooltip key={person.id}>
             <TooltipTrigger
               render={
-                <span
-                  role="img"
+                <button
+                  type="button"
                   aria-label={person.away ? `${person.name} (away)` : person.name}
-                  className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-pressed={following === person.id}
+                  aria-disabled={person.guest || undefined}
+                  onClick={() => toggleFollow(person)}
+                  className="rounded-full outline-none transition-transform duration-(--duration-press) ease-out focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.95]"
                 />
               }
             >
-              <Avatar person={person} />
+              <Avatar person={person} className={cn(following === person.id && "ring-primary")} />
             </TooltipTrigger>
             <TooltipContent side="bottom">
               {person.name}
               {person.away && <span className="text-background/70"> · Away</span>}
+              <span className="text-background/70">
+                {" · "}
+                {person.guest
+                  ? "Guests can't be followed"
+                  : following === person.id
+                    ? "Click to stop following"
+                    : "Click to follow"}
+              </span>
             </TooltipContent>
           </Tooltip>
         ))}
@@ -108,7 +128,11 @@ export function PresencePill({ connection }: { connection: BoardConnection | nul
               <DropdownMenuLabel>On this board</DropdownMenuLabel>
             </DropdownMenuGroup>
             {people.map((person) => (
-              <DropdownMenuItem key={person.id}>
+              <DropdownMenuItem
+                key={person.id}
+                disabled={person.guest}
+                onClick={() => toggleFollow(person)}
+              >
                 <Avatar person={person} className="size-5 text-[9px] ring-0" />
                 <span className="truncate">{person.name}</span>
               </DropdownMenuItem>

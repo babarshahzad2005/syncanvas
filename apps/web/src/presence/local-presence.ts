@@ -15,6 +15,10 @@ export class LocalPresence {
   private flushTimer: ReturnType<typeof setTimeout> | null = null
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   private lastInputAt = Date.now()
+  private viewKey = ""
+  private viewTimer: ReturnType<typeof setTimeout> | null = null
+  private pendingView: { x: number; y: number; w: number; h: number } | null = null
+  private lastViewSent = 0
   private away = false
   private readonly publish: (fields: Record<string, unknown>) => void
 
@@ -37,6 +41,35 @@ export class LocalPresence {
     window.removeEventListener("wheel", this.activity)
     if (this.flushTimer) clearTimeout(this.flushTimer)
     if (this.idleTimer) clearTimeout(this.idleTimer)
+    if (this.viewTimer) clearTimeout(this.viewTimer)
+  }
+
+  /**
+   * The part of the Board this tab shows (world units), for anyone following it. Sent at most
+   * about 30 times a second, and only when it changes.
+   */
+  view(rect: { x: number; y: number; w: number; h: number }) {
+    const rounded = {
+      x: Math.round(rect.x * 100) / 100,
+      y: Math.round(rect.y * 100) / 100,
+      w: Math.round(rect.w * 100) / 100,
+      h: Math.round(rect.h * 100) / 100,
+    }
+    const key = JSON.stringify(rounded)
+    if (key === this.viewKey) return
+    this.viewKey = key
+    this.pendingView = rounded
+    const wait = this.lastViewSent + CURSOR_INTERVAL_MS - performance.now()
+    if (wait <= 0) this.flushView()
+    else this.viewTimer ??= setTimeout(this.flushView, wait)
+  }
+
+  private flushView = () => {
+    this.viewTimer = null
+    if (!this.pendingView) return
+    this.lastViewSent = performance.now()
+    this.publish({ view: this.pendingView })
+    this.pendingView = null
   }
 
   /** The pointer moved over the Board (world units), or left it (null). */

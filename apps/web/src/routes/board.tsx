@@ -15,6 +15,7 @@ import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
+import { FollowFrame } from "@/presence/follow-frame"
 import { PresencePill } from "@/presence/presence-pill"
 import type { BoardConnection, ConnectionStatus } from "@/sync/board-connection"
 import { useBoardConnection } from "@/sync/use-board-connection"
@@ -37,6 +38,7 @@ export function BoardScreen() {
         )}
         <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
         <PresencePill connection={connection} />
+        <FollowFrame connection={connection} />
       </div>
       <Toaster placement="board" />
       <ShortcutSheet />
@@ -84,7 +86,7 @@ function BoardSurface({
   // Opening a Board starts with the select tool and nothing selected.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset whenever the doc changes
   useEffect(() => {
-    useBoardUi.setState({ tool: "select", selection: new Set() })
+    useBoardUi.setState({ tool: "select", selection: new Set(), following: null })
   }, [doc])
 
   const canvas = useRef<CanvasHandle>(null)

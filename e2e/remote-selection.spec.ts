@@ -31,7 +31,7 @@ function distance(a: string, b: string) {
 /** A person's presence color, read from their avatar in the pill. */
 async function colorOf(page: Page, name: string) {
   const rgb = await page
-    .getByRole("img", { name })
+    .getByRole("button", { name })
     .locator("span")
     .evaluate((el) => getComputedStyle(el).backgroundColor)
   const [r, g, b] = rgb.match(/\d+/g)?.map(Number) ?? []

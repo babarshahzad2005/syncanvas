@@ -44,6 +44,8 @@ import {
   hitTest,
   LINE_HEIGHT,
   lockBadgeRect,
+  MAX_ZOOM,
+  MIN_ZOOM,
   type RemoteSelection,
   type Scene,
   screenToWorld,
@@ -59,7 +61,14 @@ import type * as Y from "yjs"
 import { useResolvedTheme } from "@/lib/theme"
 import { CursorLayer } from "@/presence/cursor-layer"
 import { LocalPresence } from "@/presence/local-presence"
-import { presenceColor, publishedSelection, selectionOf } from "@/presence/model"
+import {
+  fitView,
+  leaderTab,
+  presenceColor,
+  publishedSelection,
+  selectionOf,
+  viewOf,
+} from "@/presence/model"
 import type { BoardConnection } from "@/sync/board-connection"
 import { groupSelection, reorderSelection, toggleLock, ungroupSelection } from "./actions"
 import {
@@ -357,20 +366,39 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       })
       placeEditor()
       s.cursors?.setCamera(s.camera)
+      // What this tab shows, for anyone following it (M2 ticket 05).
+      if (s.size.w > 0 && s.size.h > 0) {
+        s.presence?.view({
+          x: topLeft.x,
+          y: topLeft.y,
+          w: s.size.w / s.camera.zoom,
+          h: s.size.h / s.camera.zoom,
+        })
+      }
     })
   }, [placeEditor])
 
+  /** A camera change you made yourself (pan, zoom, fit): it ends follow mode. */
   const setCamera = (camera: Camera) => {
-    const s = state.current
-    s.camera = camera
-    useBoardUi.getState().setZoom(camera.zoom)
-    // The pointer now sits over another part of the Board: others see the cursor move with it.
-    if (s.screenPointer) {
-      s.pointer = screenToWorld(camera, s.screenPointer)
-      s.presence?.cursor(s.pointer)
-    }
-    render()
+    if (useBoardUi.getState().following) useBoardUi.getState().setFollowing(null)
+    moveCamera(camera)
   }
+
+  /** Moves the camera, from your own input or from the person you follow. */
+  const moveCamera = useCallback(
+    (camera: Camera) => {
+      const s = state.current
+      s.camera = camera
+      useBoardUi.getState().setZoom(camera.zoom)
+      // The pointer now sits over another part of the Board: others see the cursor move with it.
+      if (s.screenPointer) {
+        s.pointer = screenToWorld(camera, s.screenPointer)
+        s.presence?.cursor(s.pointer)
+      }
+      render()
+    },
+    [render],
+  )
 
   useImperativeHandle(ref, () => ({
     zoomBy: (factor) => {
@@ -404,7 +432,31 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     const presence = new LocalPresence((fields) => connection.setPresence(fields))
     presence.start()
     s.presence = presence
+    // When each tab's presence last changed, as seen here: following picks the active one.
+    const lastState = new Map<number, string>()
+    const activeAt = new Map<number, number>()
+    const follow = () => {
+      const following = useBoardUi.getState().following
+      if (!following) return
+      const tabs = connection.presence.filter((tab) => tab.user.id === following)
+      if (tabs.length === 0 || tabs[0]?.user.guest) {
+        useBoardUi.getState().setFollowing(null) // they left (or can't be followed)
+        return
+      }
+      const leader = leaderTab(tabs, activeAt)
+      const view = leader && viewOf(leader)
+      if (view && s.size.w > 0) {
+        moveCamera({ ...fitView(view, s.size, { min: MIN_ZOOM, max: MAX_ZOOM }) })
+      }
+    }
     const refresh = () => {
+      const now = performance.now()
+      for (const tab of connection.presence) {
+        const key = JSON.stringify(tab.state)
+        if (lastState.get(tab.clientId) !== key) activeAt.set(tab.clientId, now)
+        lastState.set(tab.clientId, key)
+      }
+      follow()
       cursors.update(connection.presence)
       s.remoteSelections = connection.presence.flatMap((tab) => {
         const selection = selectionOf(tab)
@@ -429,6 +481,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     publishSelection()
     const unsubscribeSelection = useBoardUi.subscribe((ui, before) => {
       if (ui.selection !== before.selection) publishSelection()
+      if (ui.following !== before.following) follow() // jump to them at once
     })
     if (window.__SYNCANVAS_TEST__) {
       window.__syncanvasPresence = () =>
@@ -443,7 +496,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       s.cursors = null
       s.presence = null
     }
-  }, [connection, render])
+  }, [connection, render, moveCamera])
 
   // Keep the spatial index in sync with the document (local and remote changes alike),
   // re-reading only the Elements each change touched.
@@ -676,6 +729,10 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
           if (canEdit) ui().setTool("sticky")
           return
         case "escape":
+          if (ui().following) {
+            ui().setFollowing(null)
+            return
+          }
           state.current.gesture = null
           ui().select([])
           render()

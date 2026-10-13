@@ -139,3 +139,47 @@ export function selectionOf(tab: TabPresence): { ids?: string[]; box?: Box } | n
   }
   return null
 }
+
+// ---------- Follow mode (M2 ticket 05) ----------
+
+/** The visible part of the Board a tab publishes, in world units. */
+export function viewOf(tab: TabPresence): Box | null {
+  const view = tab.state.view as Record<string, unknown> | null | undefined
+  if (!view || !finite(view.x) || !finite(view.y) || !finite(view.w) || !finite(view.h)) return null
+  if (view.w <= 0 || view.h <= 0) return null
+  return { x: view.x, y: view.y, w: view.w, h: view.h }
+}
+
+/**
+ * A camera that shows all of a leader's view on the follower's screen: centered, at the
+ * largest zoom where it fits (so a smaller screen zooms out), within the zoom limits.
+ */
+export function fitView(
+  view: Box,
+  screen: { w: number; h: number },
+  limits: { min: number; max: number },
+): { x: number; y: number; zoom: number } {
+  const fit = Math.min(screen.w / view.w, screen.h / view.h)
+  const zoom = Math.min(limits.max, Math.max(limits.min, fit))
+  return {
+    zoom,
+    x: screen.w / 2 - (view.x + view.w / 2) * zoom,
+    y: screen.h / 2 - (view.y + view.h / 2) * zoom,
+  }
+}
+
+/**
+ * The tab to follow among a person's tabs: the most recently active one that publishes a
+ * view. `activeAt` holds when each tab's presence last changed, as seen here.
+ */
+export function leaderTab(
+  tabs: readonly TabPresence[],
+  activeAt: ReadonlyMap<number, number>,
+): TabPresence | null {
+  let best: TabPresence | null = null
+  for (const tab of tabs) {
+    if (!viewOf(tab)) continue
+    if (!best || (activeAt.get(tab.clientId) ?? 0) > (activeAt.get(best.clientId) ?? 0)) best = tab
+  }
+  return best
+}
