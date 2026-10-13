@@ -90,6 +90,37 @@ describe("Boards", () => {
     expect(lifetime).toBeLessThanOrEqual(5 * 60_000)
   })
 
+  it("puts the display name in the token: the prefill until the User picks one", async () => {
+    const grace = await t.signIn("grace.hopper@example.com")
+    const board = (await create(t, grace)).board
+    const token = async () => {
+      const res = await t.request(`/api/boards/${board?.id}/token`, {
+        method: "POST",
+        cookie: grace,
+      })
+      const body = (await res.json()) as BoardTokenResponse
+      return { body, claims: await verifyBoardToken(body.token, env.BOARD_TOKEN_PUBLIC_KEY) }
+    }
+    const before = await token()
+    expect(before.claims?.name).toBe("Grace Hopper")
+    expect(before.body.you.name).toBe("Grace Hopper")
+
+    const rename = (name: unknown) =>
+      t.request("/api/auth/update-user", {
+        method: "POST",
+        cookie: grace,
+        body: JSON.stringify({ name }),
+        headers: { "content-type": "application/json" },
+      })
+    expect((await rename("  Amazing   Grace ")).status).toBe(200)
+    expect((await token()).claims?.name).toBe("Amazing Grace")
+
+    // Empty or over-long names are refused, and the saved name stays.
+    expect((await rename("   ")).status).toBe(400)
+    expect((await rename("x".repeat(51))).status).toBe(400)
+    expect((await token()).claims?.name).toBe("Amazing Grace")
+  })
+
   it("refuses a board token to non-Members and for unknown Boards alike", async () => {
     const ada = await t.signIn("ada@example.com")
     const grace = await t.signIn("grace@example.com")

@@ -114,7 +114,7 @@ async function token(
   extra: { kind?: BoardTokenKind; now?: number } = {},
 ) {
   const signed = await signBoardToken(
-    { userId: `user-${role}`, boardId, role, kind: extra.kind ?? "member" },
+    { userId: `user-${role}`, name: `User ${role}`, boardId, role, kind: extra.kind ?? "member" },
     env.BOARD_TOKEN_PRIVATE_KEY,
     extra.now,
   )

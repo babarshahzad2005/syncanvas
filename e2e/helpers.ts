@@ -7,8 +7,16 @@ export async function enableTestHooks(page: Page) {
   })
 }
 
-/** Signs in through the real UI, reading the magic link from the dev-only inbox. */
-export async function signIn(page: Page, email: string) {
+/**
+ * Signs in through the real UI, reading the magic link from the dev-only inbox. The new User
+ * gets a display name right away (pass `name: null` to keep them nameless), so the first-time
+ * name dialog doesn't stand in the way of tests about something else.
+ */
+export async function signIn(
+  page: Page,
+  email: string,
+  { name = "E2E Tester" } = {} as { name?: string | null },
+) {
   await page.goto("/sign-in")
   await page.getByLabel("Email").fill(email)
   await page.getByRole("button", { name: "Continue with email" }).click()
@@ -23,6 +31,13 @@ export async function signIn(page: Page, email: string) {
     .not.toBe("")
   await page.goto(link)
   await page.waitForURL("/")
+  if (name !== null) {
+    const res = await page.request.post("/api/auth/update-user", {
+      data: { name },
+      headers: { origin: new URL(page.url()).origin }, // Better Auth checks the origin
+    })
+    expect(res.ok()).toBe(true)
+  }
 }
 
 export type Shape = {

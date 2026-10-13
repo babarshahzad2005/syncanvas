@@ -271,7 +271,7 @@ shadcn/ui on **Base UI** with the **nova** style and Lucide icons. Only the comp
 - **Tool buttons:** 32px squares (44px on touch), ghost when idle. The compact dock is part of the Dock tray layout. The active tool gets a `primary-subtle` fill with a `primary` icon. Tooltips show the name plus the shortcut in a `kbd`.
 - **Inputs:** 36px, 8px radius, hairline border, 2px focus ring with a 2px offset.
 - **Menus and popovers:** popover elevation and 12px radius. Items are 32px tall with 6px radius, and the highlight uses `accent`.
-- **Display name:** the first time a User without a name opens a Board, a dialog asks "What should others see?" with one input prefilled from their email (`ada.lovelace@…` → "Ada Lovelace"), and Save / "Skip for now" (skipping keeps the prefill). The account menu's "Display name…" reopens it. Names are 1–50 characters.
+- **Display name:** the first time a User without a name opens a Board, a dialog asks "What should others see?" with one input prefilled from their email (`ada.lovelace@…` → "Ada Lovelace"), and Save / "Skip for now" (skipping keeps the prefill). The account menu's "Display name…" reopens it (as "Display name", with Cancel instead of Skip). Dismissing the first-time dialog (Escape, a click outside) counts as skipping. Names are 1–50 characters. The account menu's header shows the name above the email, and the account avatar's initials come from the name.
 - **Toasts:** bottom-center above the dock on the Board (120px up, clear of the style tray), bottom-right on the dashboard. Errors say what happened and what to do next. Built on `sonner` (`components/ui/toaster.tsx`): `popover` background, `border` hairline, `shadow-popover`, `2xl` corners, `body-strong` title and `caption` description.
 
 ### Canvas

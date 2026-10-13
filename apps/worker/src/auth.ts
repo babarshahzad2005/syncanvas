@@ -1,5 +1,7 @@
+import { DISPLAY_NAME_MAX, normalizeDisplayName } from "@syncanvas/shared"
 import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
+import { APIError } from "better-auth/api"
 import { magicLink } from "better-auth/plugins"
 import * as schema from "./db/schema"
 
@@ -43,6 +45,28 @@ export function createAuth(options: {
     baseURL: options.baseURL,
     basePath: "/api/auth",
     trustedOrigins: [options.baseURL],
+    databaseHooks: {
+      user: {
+        update: {
+          // Display names (M2 ticket 01) are set through Better Auth's update-user route:
+          // trimmed, 1–50 characters. Photos aren't a feature yet, so `image` can't be set.
+          before: async (user, context) => {
+            const data: Record<string, unknown> = { ...user }
+            if (context?.path === "/update-user") delete data.image
+            if ("name" in data) {
+              const name = normalizeDisplayName(data.name)
+              if (name === null) {
+                throw new APIError("BAD_REQUEST", {
+                  message: `Names are 1–${DISPLAY_NAME_MAX} characters.`,
+                })
+              }
+              data.name = name
+            }
+            return { data }
+          },
+        },
+      },
+    },
     plugins: [
       magicLink({
         expiresIn: options.magicLinkExpiresIn ?? 60 * 10,

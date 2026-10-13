@@ -3,6 +3,7 @@ import {
   type BoardTokenResponse,
   type CreateBoardResponse,
   type DashboardResponse,
+  displayNameOf,
 } from "@syncanvas/shared"
 import { Hono } from "hono"
 import { createMiddleware } from "hono/factory"
@@ -97,7 +98,13 @@ export function createApp(services: ServicesFactory = productionServices) {
     // Same answer for "no such Board" and "not a Member", so Board ids can't be probed.
     if (!membership) return c.json({ error: "You don't have access to this board." }, 403)
     const { token, expiresAt } = await signBoardToken(
-      { userId: c.var.user.id, boardId, role: membership.role, kind: "member" },
+      {
+        userId: c.var.user.id,
+        name: displayNameOf(c.var.user),
+        boardId,
+        role: membership.role,
+        kind: "member",
+      },
       c.env.BOARD_TOKEN_PRIVATE_KEY,
     )
     const body: BoardTokenResponse = {
@@ -105,6 +112,7 @@ export function createApp(services: ServicesFactory = productionServices) {
       expiresAt,
       role: membership.role,
       board: { id: boardId, title: membership.title },
+      you: { id: c.var.user.id, name: displayNameOf(c.var.user) },
     }
     return c.json(body)
   })

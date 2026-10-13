@@ -9,7 +9,14 @@ const ISSUER = "syncanvas-api"
 const AUDIENCE = "syncanvas-board-room"
 
 export type BoardTokenKind = "member" | "guest" | "embed"
-export type BoardTokenClaims = { userId: string; boardId: string; role: Role; kind: BoardTokenKind }
+export type BoardTokenClaims = {
+  userId: string
+  /** The display name others see (M2): the board room vouches for it in presence. */
+  name: string
+  boardId: string
+  role: Role
+  kind: BoardTokenKind
+}
 
 /** Keys are stored as base64url-encoded JWK JSON (see scripts/gen-keys.mjs). */
 async function importKey(encoded: string): Promise<CryptoKey> {
@@ -35,7 +42,12 @@ export async function signBoardToken(
 ) {
   const iat = Math.floor(now / 1000)
   const exp = iat + BOARD_TOKEN_TTL_SECONDS
-  const token = await new SignJWT({ board: claims.boardId, role: claims.role, kind: claims.kind })
+  const token = await new SignJWT({
+    board: claims.boardId,
+    role: claims.role,
+    kind: claims.kind,
+    name: claims.name,
+  })
     .setProtectedHeader({ alg: "EdDSA" })
     .setSubject(claims.userId)
     .setIssuer(ISSUER)
@@ -57,12 +69,13 @@ export async function verifyBoardToken(
       audience: AUDIENCE,
       algorithms: ["EdDSA"],
     })
-    const { sub, board, role, kind } = payload as Record<string, unknown>
+    const { sub, board, role, kind, name } = payload as Record<string, unknown>
     if (typeof sub !== "string" || typeof board !== "string") return null
+    if (typeof name !== "string") return null
     if (role !== "owner" && role !== "editor" && role !== "commenter" && role !== "viewer")
       return null
     if (kind !== "member" && kind !== "guest" && kind !== "embed") return null
-    return { userId: sub, boardId: board, role, kind }
+    return { userId: sub, name, boardId: board, role, kind }
   } catch {
     return null
   }

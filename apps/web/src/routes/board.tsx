@@ -1,5 +1,5 @@
 import { createUndoManager } from "@syncanvas/board-model"
-import { canEdit } from "@syncanvas/shared"
+import { canEdit, normalizeDisplayName } from "@syncanvas/shared"
 import { getRouteApi, Link } from "@tanstack/react-router"
 import { ChevronDown, CloudOff, Eye, Loader2, Lock } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -9,9 +9,11 @@ import { Dock, UndoZoomPill } from "@/board/chrome"
 import { ShortcutSheet } from "@/board/shortcut-sheet"
 import { useBoardUi } from "@/board/store"
 import { BrandMark } from "@/components/brand"
+import { NameDialog } from "@/components/name-dialog"
 import { Button } from "@/components/ui/button"
 import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
 import type { ConnectionStatus } from "@/sync/board-connection"
 import { useBoardConnection } from "@/sync/use-board-connection"
@@ -34,7 +36,24 @@ export function BoardScreen() {
       </div>
       <Toaster placement="board" />
       <ShortcutSheet />
+      <FirstNamePrompt />
     </TooltipProvider>
+  )
+}
+
+/** Asks a User without a display name for one, once (DESIGN.md → Display name). */
+function FirstNamePrompt() {
+  const { data: session } = authClient.useSession()
+  const [answered, setAnswered] = useState(false)
+  const user = session?.user
+  if (!user) return null
+  return (
+    <NameDialog
+      user={user}
+      mode="first"
+      open={!answered && normalizeDisplayName(user.name) === null}
+      onOpenChange={(open) => setAnswered(!open)}
+    />
   )
 }
 
