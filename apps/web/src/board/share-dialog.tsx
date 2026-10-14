@@ -1,22 +1,26 @@
-import type {
-  InviteRole,
-  PendingInvitation,
-  Role,
-  SharingMember,
-  SharingResponse,
+import {
+  INVITE_ROLES,
+  type InviteRole,
+  type PendingInvitation,
+  type Role,
+  type SharingMember,
+  type SharingResponse,
 } from "@syncanvas/shared"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ChevronDown, Loader2, Mail } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { initials } from "@/components/account-menu"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
@@ -24,8 +28,8 @@ import { ApiError, api, queryKeys } from "@/lib/api"
 import { resetTime } from "@/lib/time"
 import { presenceColor } from "@/presence/model"
 
-// The Share button and dialog (DESIGN.md → Share dialog; M3 ticket 01): invite by email, and
-// everyone with access plus pending Invitations. The server decides what the caller may do
+// The Share button and dialog (DESIGN.md → Share dialog; M3 tickets 01–02): invite by email,
+// everyone with access plus pending Invitations, the Owner's Role menu and Remove, and Leave. The server decides what the caller may do
 // (`canInvite`, `canResend`, `canCancel`); the dialog only shows those controls.
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -43,7 +47,14 @@ const ROLE_HINT: Record<InviteRole, string> = {
 
 const VERB: Record<InviteRole, string> = { editor: "edit", commenter: "comment", viewer: "view" }
 
-export function ShareButton({ boardId, title }: { boardId: string; title?: string }) {
+type ShareProps = {
+  boardId: string
+  title?: string
+  /** Leaves the Board (non-Owners); resolves once you no longer have access. */
+  onLeave: () => Promise<void>
+}
+
+export function ShareButton({ boardId, title, onLeave }: ShareProps) {
   const [open, setOpen] = useState(false)
   return (
     <>
@@ -52,14 +63,14 @@ export function ShareButton({ boardId, title }: { boardId: string; title?: strin
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="grid-cols-[minmax(0,1fr)] gap-5 sm:max-w-lg">
-          {open && <ShareDialogBody boardId={boardId} title={title} />}
+          {open && <ShareDialogBody boardId={boardId} title={title} onLeave={onLeave} />}
         </DialogContent>
       </Dialog>
     </>
   )
 }
 
-function ShareDialogBody({ boardId, title }: { boardId: string; title?: string }) {
+function ShareDialogBody({ boardId, title, onLeave }: ShareProps) {
   const sharing = useQuery({
     queryKey: queryKeys.sharing(boardId),
     queryFn: () => api.sharing(boardId),
@@ -72,9 +83,11 @@ function ShareDialogBody({ boardId, title }: { boardId: string; title?: string }
           Share “{state?.board.title ?? title ?? "Board"}”
         </DialogTitle>
         <DialogDescription>
-          {state && state.canInvite.length === 0
-            ? "Only the owner and editors can invite people."
-            : "Invite people by email. Anyone with an account gets access right away."}
+          {!state
+            ? "Who has access to this board."
+            : state.canInvite.length === 0
+              ? "Only the owner and editors can invite people."
+              : "Invite people by email. Anyone with an account gets access right away."}
         </DialogDescription>
       </div>
       {state && state.canInvite.length > 0 && (
@@ -96,6 +109,9 @@ function ShareDialogBody({ boardId, title }: { boardId: string; title?: string }
           <People boardId={boardId} state={sharing.data} />
         )}
       </section>
+      {state && state.you.role !== "owner" && (
+        <LeaveBoard title={state.board.title} onLeave={onLeave} />
+      )}
     </>
   )
 }
@@ -159,8 +175,8 @@ function InviteForm({ boardId, roles }: { boardId: string; roles: InviteRole[] }
   )
 }
 
-function errorMessage(e: unknown) {
-  if (!(e instanceof ApiError)) return "Couldn't send the invitation. Check your connection."
+export function errorMessage(e: unknown) {
+  if (!(e instanceof ApiError)) return "Couldn't reach Syncanvas. Check your connection."
   const resetsAt = e.details.resetsAt
   return typeof resetsAt === "string"
     ? `${e.message} You can send more ${resetTime(resetsAt)}.`
@@ -187,7 +203,12 @@ function RoleMenu({
       <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuRadioGroup value={value} onValueChange={(v) => onChange(v as InviteRole)}>
           {roles.map((r) => (
-            <DropdownMenuRadioItem key={r} value={r} className="flex-col items-start gap-0">
+            <DropdownMenuRadioItem
+              key={r}
+              value={r}
+              closeOnClick
+              className="flex-col items-start gap-0"
+            >
               <span>{ROLE_LABEL[r]}</span>
               <span className="type-caption text-muted-foreground">{ROLE_HINT[r]}</span>
             </DropdownMenuRadioItem>
@@ -202,7 +223,13 @@ function People({ boardId, state }: { boardId: string; state: SharingResponse })
   return (
     <ul className="-mx-2 flex max-h-72 flex-col overflow-y-auto">
       {state.members.map((m) => (
-        <MemberRow key={m.id} member={m} you={m.id === state.you.id} />
+        <MemberRow
+          key={m.id}
+          boardId={boardId}
+          member={m}
+          you={m.id === state.you.id}
+          canManage={state.canManage && m.role !== "owner"}
+        />
       ))}
       {state.invitations.map((i) => (
         <InvitationRow key={i.id} boardId={boardId} invitation={i} />
@@ -213,7 +240,17 @@ function People({ boardId, state }: { boardId: string; state: SharingResponse })
 
 const ROW = "flex min-h-12 items-center gap-3 rounded-lg px-2 py-1.5"
 
-function MemberRow({ member, you }: { member: SharingMember; you: boolean }) {
+function MemberRow({
+  boardId,
+  member,
+  you,
+  canManage,
+}: {
+  boardId: string
+  member: SharingMember
+  you: boolean
+  canManage: boolean
+}) {
   return (
     <li className={ROW}>
       <span
@@ -230,8 +267,110 @@ function MemberRow({ member, you }: { member: SharingMember; you: boolean }) {
         </span>
         <span className="type-caption truncate text-muted-foreground">{member.email}</span>
       </span>
-      <span className="type-label text-muted-foreground">{ROLE_LABEL[member.role]}</span>
+      {canManage && member.role !== "owner" ? (
+        <MemberMenu boardId={boardId} member={member} role={member.role} />
+      ) : (
+        <span className="type-label text-muted-foreground">{ROLE_LABEL[member.role]}</span>
+      )}
     </li>
+  )
+}
+
+/** The Owner's menu on a Member's row: change their Role, or remove them. */
+function MemberMenu({
+  boardId,
+  member,
+  role,
+}: {
+  boardId: string
+  member: SharingMember
+  role: InviteRole
+}) {
+  const queryClient = useQueryClient()
+  const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.sharing(boardId) })
+  const change = useMutation({
+    mutationFn: (next: InviteRole) => api.changeRole(boardId, member.id, { role: next }),
+    onSuccess: refresh,
+    onError: (e) => toast(errorMessage(e)),
+  })
+  const remove = useMutation({
+    mutationFn: () => api.removeMember(boardId, member.id),
+    onSuccess: async () => {
+      toast(`${member.name} no longer has access`)
+      await refresh()
+    },
+    onError: (e) => toast(errorMessage(e)),
+  })
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        disabled={change.isPending || remove.isPending}
+        render={
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`${member.name}'s role: ${ROLE_LABEL[role]}`}
+            className="text-muted-foreground"
+          />
+        }
+      >
+        {ROLE_LABEL[role]}
+        <ChevronDown />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuRadioGroup
+          value={role}
+          onValueChange={(v) => {
+            if (v !== role) change.mutate(v as InviteRole)
+          }}
+        >
+          {INVITE_ROLES.map((r) => (
+            <DropdownMenuRadioItem
+              key={r}
+              value={r}
+              closeOnClick
+              className="flex-col items-start gap-0"
+            >
+              <span>{ROLE_LABEL[r]}</span>
+              <span className="type-caption text-muted-foreground">{ROLE_HINT[r]}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onClick={() => remove.mutate()}>
+          Remove
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** "Leave board" for everyone but the Owner, after a confirmation. */
+function LeaveBoard({ title, onLeave }: { title: string; onLeave: () => Promise<void> }) {
+  const [confirming, setConfirming] = useState(false)
+  const [leaving, setLeaving] = useState(false)
+  return (
+    <div className="-mt-1 flex justify-start border-t pt-4">
+      <Button
+        variant="ghost"
+        className="-ml-3 text-destructive hover:text-destructive"
+        onClick={() => setConfirming(true)}
+      >
+        Leave board
+      </Button>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`Leave “${title}”?`}
+        description="It leaves your dashboard, and you'll need a new invitation to get back in."
+        confirmLabel="Leave board"
+        pending={leaving}
+        onConfirm={() => {
+          setLeaving(true)
+          void onLeave().finally(() => setLeaving(false))
+        }}
+      />
+    </div>
   )
 }
 

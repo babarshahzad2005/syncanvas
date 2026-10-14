@@ -219,6 +219,7 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 - Any Member except the Owner can leave a Board.
 - When a Role changes or a Member is removed, the change is written to Postgres, then pushed to the board room. Within 1 s the affected client switches to read-only or returns to the dashboard.
 - The board room checks the Role on **every** incoming update. Hiding controls in the UI is never enough on its own.
+- The board room remembers each access change, so a board token issued before it (they live 5 minutes) can't undo it: it gets the new Role, or is refused after a removal.
 
 **Connection cap**
 - 100 live connections per Board.

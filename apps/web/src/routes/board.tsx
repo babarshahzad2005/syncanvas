@@ -1,12 +1,13 @@
 import { createUndoManager } from "@syncanvas/board-model"
 import { canEdit, normalizeDisplayName } from "@syncanvas/shared"
-import { getRouteApi, Link } from "@tanstack/react-router"
+import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { ChevronDown, CloudOff, Eye, Loader2, Lock } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
+import { toast } from "sonner"
 import type * as Y from "yjs"
 import { BoardCanvas, type CanvasHandle } from "@/board/board-canvas"
 import { Dock, UndoZoomPill } from "@/board/chrome"
-import { ShareButton } from "@/board/share-dialog"
+import { errorMessage, ROLE_LABEL, ShareButton } from "@/board/share-dialog"
 import { ShortcutSheet } from "@/board/shortcut-sheet"
 import { useBoardUi } from "@/board/store"
 import { BrandMark } from "@/components/brand"
@@ -14,7 +15,9 @@ import { NameDialog } from "@/components/name-dialog"
 import { Button } from "@/components/ui/button"
 import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { api } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
+import { toastOnNextPage } from "@/lib/next-page-toast"
 import { cn } from "@/lib/utils"
 import { FollowFrame } from "@/presence/follow-frame"
 import { PresencePill } from "@/presence/presence-pill"
@@ -27,7 +30,42 @@ const route = getRouteApi("/authed/b/$boardId")
 export function BoardScreen() {
   const { boardId } = route.useParams()
   const { connection, status, board, role, doc } = useBoardConnection(boardId)
+  const navigate = useNavigate()
+  const leaving = useRef(false)
 
+  // The Owner changed your Role: the Board has already switched; say who did it.
+  useEffect(
+    () =>
+      connection?.subscribeAccess((notice) => {
+        if (notice.role) toast(`${notice.by} changed your role to ${ROLE_LABEL[notice.role]}`)
+      }),
+    [connection],
+  )
+
+  // Removed while here (not left yourself): back to the dashboard, which says why.
+  const removedLive = status === "revoked" && connection?.notice?.role === null
+  useEffect(() => {
+    if (!removedLive || leaving.current) return
+    toastOnNextPage(`You no longer have access to “${board?.title ?? "this board"}”`)
+    void navigate({ to: "/" })
+  }, [removedLive, board?.title, navigate])
+
+  async function leave() {
+    const you = connection?.you
+    if (!you) return
+    leaving.current = true
+    try {
+      await api.removeMember(boardId, you.id)
+    } catch (error) {
+      leaving.current = false
+      toast(errorMessage(error))
+      return
+    }
+    toastOnNextPage(`You left “${board?.title ?? "the board"}”`)
+    await navigate({ to: "/" })
+  }
+
+  if (removedLive || leaving.current) return null
   if (status === "revoked") return <NoAccess />
 
   return (
@@ -41,7 +79,7 @@ export function BoardScreen() {
         {/* Top right: the presence pill, then Share (DESIGN.md → Board screen). */}
         <div className="fixed top-3 right-3 flex items-center gap-2">
           <PresencePill connection={connection} />
-          {role && <ShareButton boardId={boardId} title={board?.title} />}
+          {role && <ShareButton boardId={boardId} title={board?.title} onLeave={leave} />}
         </div>
         <FollowFrame connection={connection} />
       </div>
@@ -93,6 +131,10 @@ function BoardSurface({
   useEffect(() => {
     useBoardUi.setState({ tool: "select", selection: new Set(), following: null })
   }, [doc])
+  // Downgraded to read-only (M3 ticket 02): put the tools away.
+  useEffect(() => {
+    if (!editable) useBoardUi.setState({ tool: "select" })
+  }, [editable])
 
   const canvas = useRef<CanvasHandle>(null)
   if (!undoManager) return null

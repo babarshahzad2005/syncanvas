@@ -1,4 +1,4 @@
-import { type BoardTokenResponse, canEdit } from "@syncanvas/shared"
+import { type AccessNotice, type BoardTokenResponse, canEdit } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
 import * as awarenessProtocol from "y-protocols/awareness"
@@ -15,11 +15,17 @@ import { type TabPresence, tabPresence } from "@/presence/model"
 // awareness (a new id), so when the board room announces someone left, nothing they publish
 // after reconnecting can be mistaken for the old, removed state.
 
-export type ConnectionStatus = "connecting" | "online" | "offline" | "revoked"
+/**
+ * "revoked": no access (anymore). "resync": the board room refused an edit this copy made
+ * after a downgrade, so the local copy has to be thrown away and loaded fresh.
+ */
+export type ConnectionStatus = "connecting" | "online" | "offline" | "revoked" | "resync"
 
 const MESSAGE_SYNC = 0
 const MESSAGE_AWARENESS = 1
 const MESSAGE_QUERY_AWARENESS = 3
+/** Must match MESSAGE_ACCESS in the Worker's board-room.ts. */
+const MESSAGE_ACCESS = 4
 
 /**
  * Heartbeat (M2 ticket 06): a socket can die without the browser noticing (sleep, a flaky
@@ -51,6 +57,8 @@ export class BoardConnection {
   you: BoardTokenResponse["you"] | null = null
   /** Every other open tab on the Board (including your own other tabs), live. */
   presence: TabPresence[] = []
+  /** The last access change the board room announced for you (M3 ticket 02). */
+  notice: AccessNotice | null = null
 
   private ws: WebSocket | null = null
   private attempt = 0
@@ -58,6 +66,7 @@ export class BoardConnection {
   private stopped = false
   private listeners = new Set<() => void>()
   private presenceListeners = new Set<() => void>()
+  private accessListeners = new Set<(notice: AccessNotice) => void>()
   private heartbeat: ReturnType<typeof setInterval> | null = null
   private lastHeard = 0
   private lastPing = 0
@@ -86,6 +95,14 @@ export class BoardConnection {
   subscribePresence = (listener: () => void) => {
     this.presenceListeners.add(listener)
     return () => this.presenceListeners.delete(listener)
+  }
+
+  /** Called with each access change the board room announces for you. */
+  subscribeAccess = (listener: (notice: AccessNotice) => void) => {
+    this.accessListeners.add(listener)
+    return () => {
+      this.accessListeners.delete(listener)
+    }
   }
 
   /** Merges fields into what this tab publishes (sent at once if connected). */
@@ -163,7 +180,9 @@ export class BoardConnection {
       this.stopHeartbeat()
       this.endPresence()
       if (this.stopped) return
-      if (event.code === CLOSE_FORBIDDEN) return this.setStatus("revoked")
+      if (event.code === CLOSE_FORBIDDEN) {
+        return this.setStatus(event.reason === "read-only" ? "resync" : "revoked")
+      }
       if (event.code === CLOSE_INVALID_TOKEN) {
         // The token expired between fetch and connect; try again straight away.
         this.attempt = 0
@@ -185,7 +204,7 @@ export class BoardConnection {
 
   /** The network is back: reconnect now instead of waiting out the backoff. */
   private onBrowserOnline = () => {
-    if (this.stopped || this.ws || this.status === "revoked") return
+    if (this.stopped || this.ws || this.status === "revoked" || this.status === "resync") return
     if (this.retryTimer) clearTimeout(this.retryTimer)
     this.attempt = 0
     void this.connect()
@@ -254,6 +273,10 @@ export class BoardConnection {
       this.sendPresence() // the board room lost track (hibernation): say who we are again
       return
     }
+    if (type === MESSAGE_ACCESS) {
+      this.onAccess(JSON.parse(decoding.readVarString(decoder)) as AccessNotice)
+      return
+    }
     if (type !== MESSAGE_SYNC) return
     const reply = encoding.createEncoder()
     encoding.writeVarUint(reply, MESSAGE_SYNC)
@@ -263,6 +286,14 @@ export class BoardConnection {
       this.attempt = 0
       this.setStatus("online")
     }
+  }
+
+  /** The Owner changed your Role (the Board follows at once) or removed you (a close follows). */
+  private onAccess(notice: AccessNotice) {
+    this.notice = notice
+    if (notice.role) this.role = notice.role
+    for (const l of this.accessListeners) l(notice)
+    for (const l of this.listeners) l()
   }
 
   // ---------- Presence ----------

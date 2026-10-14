@@ -9,6 +9,7 @@ import { migrate } from "drizzle-orm/pglite/migrator"
 import { expect } from "vitest"
 import { createApp } from "./app"
 import { createAuth } from "./auth"
+import type { AccessChange } from "./board-room"
 import * as schema from "./db/schema"
 import type { InvitationMessage } from "./email"
 
@@ -51,11 +52,16 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     magicLinkExpiresIn: options.magicLinkExpiresIn,
   })
   const invitations: InvitationMessage[] = []
+  /** Changes pushed to board rooms, in order. */
+  const access: { boardId: string; change: AccessChange }[] = []
   const app = createApp(() => ({
     db,
     auth,
     sendInvitation: async (m) => {
       invitations.push(m)
+    },
+    applyAccess: async (boardId, change) => {
+      access.push({ boardId, change })
     },
   }))
 
@@ -96,7 +102,7 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     return cookie
   }
 
-  return { request, requestLink, signIn, outbox, invitations, db, pg }
+  return { request, requestLink, signIn, outbox, invitations, access, db, pg }
 }
 
 export type TestApp = Awaited<ReturnType<typeof createTestApp>>

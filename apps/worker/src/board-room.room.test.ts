@@ -1,12 +1,12 @@
 import { env, evictDurableObject, SELF } from "cloudflare:test"
 import { ELEMENT_CAP, elementsOf, TEXT_LIMIT } from "@syncanvas/board-model"
-import type { Role } from "@syncanvas/shared"
+import type { AccessNotice, Role } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
 import { describe, expect, it } from "vitest"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
-import { CLOSE, HEARTBEAT_PING, HEARTBEAT_PONG, MESSAGE_SYNC } from "./board-room"
+import { CLOSE, HEARTBEAT_PING, HEARTBEAT_PONG, MESSAGE_ACCESS, MESSAGE_SYNC } from "./board-room"
 import { type BoardTokenKind, signBoardToken } from "./board-token"
 import {
   decodePresence,
@@ -39,6 +39,8 @@ class TestClient {
   /** Presence entries received, in order, and how many presence queries arrived. */
   readonly presence: PresenceEntry[] = []
   queries = 0
+  /** Access notices received (M3). */
+  readonly access: AccessNotice[] = []
   /** Text frames received (the heartbeat's "pong"). */
   readonly texts: string[] = []
   readonly ws: WebSocket
@@ -98,6 +100,10 @@ class TestClient {
       this.queries++
       return
     }
+    if (type === MESSAGE_ACCESS) {
+      this.access.push(JSON.parse(decoding.readVarString(decoder)))
+      return
+    }
     if (type !== MESSAGE_SYNC) return
     const reply = encoding.createEncoder()
     encoding.writeVarUint(reply, MESSAGE_SYNC)
@@ -148,10 +154,16 @@ class TestClient {
 async function token(
   boardId: string,
   role: Role,
-  extra: { kind?: BoardTokenKind; now?: number } = {},
+  extra: { kind?: BoardTokenKind; now?: number; userId?: string } = {},
 ) {
   const signed = await signBoardToken(
-    { userId: `user-${role}`, name: `User ${role}`, boardId, role, kind: extra.kind ?? "member" },
+    {
+      userId: extra.userId ?? `user-${role}`,
+      name: `User ${role}`,
+      boardId,
+      role,
+      kind: extra.kind ?? "member",
+    },
     env.BOARD_TOKEN_PRIVATE_KEY,
     extra.now,
   )
@@ -491,5 +503,101 @@ describe("BoardRoom", () => {
       a.close()
       b.close()
     })
+  })
+})
+
+// ---------- Access changes (M3 ticket 02, S7) ----------
+
+function room(boardId: string) {
+  return env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId))
+}
+
+async function joinAs(boardId: string, role: Role, userId: string, now?: number) {
+  const client = await TestClient.connect(boardId, await token(boardId, role, { userId, now }))
+  await until(() => client.synced || client.closed !== null, `${userId} to sync`)
+  return client
+}
+
+describe("BoardRoom access changes", () => {
+  it("downgrades a live socket: told at once, and its next update is refused", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const grace = await joinAs(board, "editor", "grace")
+    const graceTab2 = await joinAs(board, "editor", "grace")
+    grace.addRect("before")
+    await until(() => owner.rect("before") !== undefined, "the edit before the change")
+
+    await room(board).applyAccess({ userId: "grace", role: "viewer", by: "Ada" })
+    await until(() => grace.access.length > 0 && graceTab2.access.length > 0, "the notice")
+    expect(grace.access).toEqual([{ role: "viewer", by: "Ada" }])
+    expect(owner.access).toEqual([])
+
+    grace.addRect("after")
+    await until(() => grace.closed !== null, "grace's socket to close")
+    expect(grace.closed).toEqual({ code: CLOSE.forbidden, reason: "read-only" })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(owner.rect("after")).toBeUndefined()
+    expect(graceTab2.closed).toBeNull()
+    owner.close()
+    graceTab2.close()
+  })
+
+  it("upgrades a live socket: its edits are accepted from then on", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const grace = await joinAs(board, "viewer", "grace")
+    await room(board).applyAccess({ userId: "grace", role: "editor", by: "Ada" })
+    await until(() => grace.access.length > 0, "the notice")
+    grace.addRect("now-allowed")
+    await until(() => owner.rect("now-allowed") !== undefined, "the owner to see the edit")
+    expect(grace.closed).toBeNull()
+    owner.close()
+    grace.close()
+  })
+
+  it("closes a removed User's sockets with forbidden, after telling them", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const grace = await joinAs(board, "editor", "grace")
+    grace.sendPresence(77, { cursor: { x: 1, y: 2 } })
+    await until(() => owner.presenceOf(77) !== undefined, "grace's presence")
+
+    await room(board).applyAccess({ userId: "grace", role: null, by: "Ada" })
+    await until(() => grace.closed !== null, "grace's socket to close")
+    expect(grace.access).toEqual([{ role: null, by: "Ada" }])
+    expect(grace.closed).toEqual({ code: CLOSE.forbidden, reason: "removed" })
+    await until(() => owner.presenceOf(77) === null, "grace to leave the owner's presence")
+    expect(owner.closed).toBeNull()
+    owner.close()
+  })
+
+  it("never lets a token from before the change undo it", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const before = Date.now() - 2_000
+    await room(board).applyAccess({ userId: "grace", role: "viewer", by: "Ada" })
+
+    // An Editor token issued before the downgrade only gets Viewer rights.
+    const stale = await joinAs(board, "editor", "grace", before)
+    stale.addRect("stale")
+    await until(() => stale.closed !== null, "the stale socket to close")
+    expect(stale.closed?.reason).toBe("read-only")
+
+    // A token issued after it carries the Role the API saw.
+    const fresh = await joinAs(board, "editor", "grace", Date.now() + 2_000)
+    fresh.addRect("fresh")
+    await until(() => owner.rect("fresh") !== undefined, "the fresh token's edit")
+    fresh.close()
+
+    // Removed: an older token can't get back in at all.
+    await room(board).applyAccess({ userId: "linus", role: null, by: "Ada" })
+    const gone = await TestClient.connect(
+      board,
+      await token(board, "editor", { userId: "linus", now: before }),
+    )
+    await until(() => gone.closed !== null, "the removed User's socket to close")
+    expect(gone.closed).toEqual({ code: CLOSE.forbidden, reason: "removed" })
+    expect(owner.rect("stale")).toBeUndefined()
+    owner.close()
   })
 })

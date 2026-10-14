@@ -1,5 +1,6 @@
 import type {
   BoardTokenResponse,
+  ChangeRoleRequest,
   CreateBoardResponse,
   DashboardResponse,
   InviteRequest,
@@ -53,6 +54,16 @@ export const api = {
     ),
   cancelInvitation: (boardId: string, invitationId: string) =>
     request<{ ok: true }>(`${board(boardId)}/invitations/${encodeURIComponent(invitationId)}`, {
+      method: "DELETE",
+    }),
+  changeRole: (boardId: string, userId: string, input: ChangeRoleRequest) =>
+    request<{ ok: true }>(`${board(boardId)}/members/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  /** The Owner removes someone; with your own id, you leave. */
+  removeMember: (boardId: string, userId: string) =>
+    request<{ ok: true }>(`${board(boardId)}/members/${encodeURIComponent(userId)}`, {
       method: "DELETE",
     }),
 }

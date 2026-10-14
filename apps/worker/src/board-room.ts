@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers"
 import { checkUpdate } from "@syncanvas/board-model"
-import { canEdit, type Role } from "@syncanvas/shared"
+import { type AccessNotice, canEdit, type Role } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
 import * as syncProtocol from "y-protocols/sync"
@@ -21,6 +21,8 @@ import {
 // relays presence (M2): never stored, stamped with each connection's verified identity.
 
 export const MESSAGE_SYNC = 0
+/** Access changes (M3 ticket 02): a JSON AccessNotice, after y-protocols' 0–3. */
+export const MESSAGE_ACCESS = 4
 export const HEARTBEAT_PING = "ping"
 export const HEARTBEAT_PONG = "pong"
 
@@ -28,7 +30,10 @@ export const HEARTBEAT_PONG = "pong"
 export const CLOSE = {
   /** Token missing, forged, or expired: fetch a new one and reconnect. */
   invalidToken: 4401,
-  /** No right to this Board, or a read-only socket tried to edit: stop and explain. */
+  /**
+   * No right to this Board, or a read-only socket tried to edit: stop and explain. The reason
+   * tells them apart: "read-only" for a refused edit, anything else for lost access.
+   */
   forbidden: 4403,
   /** The update would make the Board invalid. */
   invalidUpdate: 4400,
@@ -41,6 +46,16 @@ type SocketInfo = {
   kind: BoardTokenKind
   /** The one awareness id this connection publishes under, once it has sent presence. */
   presenceId?: number
+}
+
+/** A change the Owner made: a User's new Role, or null once they no longer have access. */
+export type AccessChange = { userId: string; role: Role | null; by: string }
+
+export function accessMessage(notice: AccessNotice) {
+  const encoder = encoding.createEncoder()
+  encoding.writeVarUint(encoder, MESSAGE_ACCESS)
+  encoding.writeVarString(encoder, JSON.stringify(notice))
+  return encoding.toUint8Array(encoder)
 }
 
 function syncMessage(write: (encoder: encoding.Encoder) => void) {
@@ -67,6 +82,11 @@ export class BoardRoom extends DurableObject<Env> {
     ctx.blockConcurrencyWhile(async () => {
       this.ctx.storage.sql.exec(
         "create table if not exists updates (seq integer primary key autoincrement, data blob not null, at integer not null)",
+      )
+      // The last access change per User (M3): a board token issued before it carries a stale
+      // Role, so the change wins over the token until the token expires.
+      this.ctx.storage.sql.exec(
+        "create table if not exists access (user_id text primary key, role text, changed_at integer not null)",
       )
       for (const row of this.ctx.storage.sql.exec<{ data: ArrayBuffer }>(
         "select data from updates order by seq",
@@ -97,12 +117,25 @@ export class BoardRoom extends DurableObject<Env> {
     }
     if (!claims) return refuse(CLOSE.invalidToken, "invalid or expired token")
     if (claims.boardId !== boardId) return refuse(CLOSE.forbidden, "token is for another board")
+    let role: Role = claims.role
+    if (claims.kind === "member") {
+      const [change] = this.ctx.storage.sql
+        .exec<{ role: Role | null; changed_at: number }>(
+          "select role, changed_at from access where user_id = ?",
+          claims.userId,
+        )
+        .toArray()
+      if (change && claims.issuedAt * 1000 <= change.changed_at) {
+        if (change.role === null) return refuse(CLOSE.forbidden, "removed")
+        role = change.role
+      }
+    }
 
     this.ctx.acceptWebSocket(server)
     server.serializeAttachment({
       userId: claims.userId,
       name: claims.name,
-      role: claims.role,
+      role,
       kind: claims.kind,
     } satisfies SocketInfo)
     // Sync step 1: tell the client what we have, so it sends what we're missing.
@@ -153,6 +186,44 @@ export class BoardRoom extends DurableObject<Env> {
     const outgoing = syncMessage((e) => syncProtocol.writeUpdate(e, update))
     for (const other of this.ctx.getWebSockets()) {
       if (other !== ws) other.send(outgoing)
+    }
+  }
+
+  // ---------- Access changes (M3 ticket 02) ----------
+
+  /**
+   * Called by the API (Durable Object RPC, never reachable from the internet) after it saved
+   * a Role change or a removal. That User's open connections switch at once: a new Role is
+   * checked from their next update on; removed ones are told, then closed.
+   */
+  async applyAccess(change: AccessChange) {
+    this.ctx.storage.sql.exec(
+      "insert into access (user_id, role, changed_at) values (?, ?, ?) on conflict (user_id) do update set role = excluded.role, changed_at = excluded.changed_at",
+      change.userId,
+      change.role,
+      Date.now(),
+    )
+    const notice = accessMessage({ role: change.role, by: change.by })
+    for (const ws of this.ctx.getWebSockets()) {
+      const info = ws.deserializeAttachment() as SocketInfo
+      if (info.kind !== "member" || info.userId !== change.userId) continue
+      if (change.role === null) {
+        this.removePresence(ws)
+        try {
+          ws.send(notice)
+          ws.close(CLOSE.forbidden, "removed")
+        } catch {
+          // Already gone.
+        }
+        continue
+      }
+      info.role = change.role
+      ws.serializeAttachment(info)
+      try {
+        ws.send(notice)
+      } catch {
+        // Gone; its next connection gets the new Role from a fresh token.
+      }
     }
   }
 

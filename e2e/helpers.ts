@@ -112,3 +112,12 @@ export async function shareBoard(boardUrl: string, email: string, role = "editor
   `
   await sql.end()
 }
+
+/** Invites `email` to the Board open in `page`, through the real API, as that page's User. */
+export async function invite(page: Page, email: string, role = "editor") {
+  const boardId = new URL(page.url()).pathname.split("/").at(-1)
+  const res = await page.request.post(`/api/boards/${boardId}/invitations`, {
+    data: { email, role },
+  })
+  expect(res.status()).toBe(201)
+}

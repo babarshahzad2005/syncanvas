@@ -1,6 +1,7 @@
 import {
   displayNameOf,
   INVITATION_DAYS,
+  INVITE_ROLES,
   INVITES_PER_DAY,
   INVITES_PER_USER_PER_DAY,
   type InviteResponse,
@@ -13,6 +14,7 @@ import {
 import { and, asc, count, eq, gt, gte } from "drizzle-orm"
 import { HTTPException } from "hono/http-exception"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
+import type { AccessChange } from "./board-room"
 import { findMembership } from "./boards"
 import type { Database } from "./db/client"
 import { invitationEmails, invitations, memberships, user } from "./db/schema"
@@ -281,4 +283,82 @@ export async function convertInvitations(db: Database, newUser: { id: string; em
       .onConflictDoNothing()
   }
   await db.delete(invitations).where(eq(invitations.email, email))
+}
+
+// ---------- Changing access (M3 ticket 02) ----------
+
+/** Tells a Board's live room about a saved change (Durable Object RPC in production). */
+export type ApplyAccess = (boardId: string, change: AccessChange) => Promise<void>
+
+async function pushToRoom(applyAccess: ApplyAccess, boardId: string, change: AccessChange) {
+  try {
+    await applyAccess(boardId, change)
+  } catch (error) {
+    // Postgres already holds the change; the next board token carries it either way.
+    console.error("Couldn't reach the board room:", error instanceof Error ? error.message : error)
+  }
+}
+
+async function targetMember(db: Database, boardId: string, userId: string) {
+  const [row] = await db
+    .select({ role: memberships.role })
+    .from(memberships)
+    .where(and(eq(memberships.boardId, boardId), eq(memberships.userId, userId)))
+    .limit(1)
+  if (!row) throw refuse(404, { error: "That person doesn't have access anymore." })
+  if (row.role === "owner") throw refuse(400, { error: "The owner's access can't change." })
+  return row
+}
+
+/** The Owner changes a Member's Role (never to or from Owner). */
+export async function changeRole(
+  db: Database,
+  applyAccess: ApplyAccess,
+  input: { boardId: string; caller: Caller; userId: string; role: unknown },
+) {
+  const membership = await memberOrRefuse(db, input.boardId, input.caller)
+  if (membership.role !== "owner") {
+    throw refuse(403, { error: "Only the owner can change roles." })
+  }
+  const role = INVITE_ROLES.find((r) => r === input.role)
+  if (!role) throw refuse(400, { error: "Pick a role: editor, commenter, or viewer." })
+  const current = await targetMember(db, input.boardId, input.userId)
+  if (current.role === role) return
+  await db
+    .update(memberships)
+    .set({ role })
+    .where(and(eq(memberships.boardId, input.boardId), eq(memberships.userId, input.userId)))
+  await pushToRoom(applyAccess, input.boardId, {
+    userId: input.userId,
+    role,
+    by: displayNameOf(input.caller),
+  })
+}
+
+/**
+ * Ends a Membership: the Owner removes someone, or a Member (never the Owner) leaves. Their
+ * open connections close at once.
+ */
+export async function removeMember(
+  db: Database,
+  applyAccess: ApplyAccess,
+  input: { boardId: string; caller: Caller; userId: string },
+) {
+  const membership = await memberOrRefuse(db, input.boardId, input.caller)
+  const leaving = input.userId === input.caller.id
+  if (leaving && membership.role === "owner") {
+    throw refuse(400, { error: "The owner can't leave their own board." })
+  }
+  if (!leaving && membership.role !== "owner") {
+    throw refuse(403, { error: "Only the owner can remove people." })
+  }
+  if (!leaving) await targetMember(db, input.boardId, input.userId)
+  await db
+    .delete(memberships)
+    .where(and(eq(memberships.boardId, input.boardId), eq(memberships.userId, input.userId)))
+  await pushToRoom(applyAccess, input.boardId, {
+    userId: input.userId,
+    role: null,
+    by: displayNameOf(input.caller),
+  })
 }

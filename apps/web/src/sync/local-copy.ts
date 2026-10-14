@@ -15,6 +15,15 @@ export function openLocalCopy(boardId: string, doc: Y.Doc): IndexeddbPersistence
   }
 }
 
+/** Removes one Board's local copy (after leaving it); waits for open handles to close. */
+export function clearLocalCopy(boardId: string) {
+  try {
+    indexedDB.deleteDatabase(`${PREFIX}${boardId}`)
+  } catch {
+    // IndexedDB unavailable: nothing was saved.
+  }
+}
+
 /** Removes every saved Board on this device, e.g. on sign-out. */
 export async function clearAllLocalCopies() {
   try {

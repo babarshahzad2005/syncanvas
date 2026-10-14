@@ -17,9 +17,12 @@ import {
   Trash2,
   Workflow,
 } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { toast } from "sonner"
+import { errorMessage } from "@/board/share-dialog"
 import { AccountMenu } from "@/components/account-menu"
 import { BrandMark, Wordmark } from "@/components/brand"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -28,10 +31,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Toaster } from "@/components/ui/toaster"
 import { api, queryKeys } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
+import { showPendingToast } from "@/lib/next-page-toast"
 import { timeAgo } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { clearLocalCopy } from "@/sync/local-copy"
 
 // Dashboard, "Launcher" layout (DESIGN.md → Layout → Dashboard). Folders, favorites, search,
 // templates, and Trash arrive in later milestones; they're shown disabled only where the layout
@@ -54,6 +60,8 @@ export function Dashboard() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [filter, setFilter] = useState<Filter>("All")
+  // A message from the Board you just left or lost (M3 ticket 02).
+  useEffect(() => showPendingToast(), [])
 
   const dashboard = useQuery({ queryKey: queryKeys.dashboard, queryFn: api.dashboard })
   const create = useMutation({
@@ -199,12 +207,13 @@ export function Dashboard() {
           ) : (
             <BoardGrid>
               {shown.map((b) => (
-                <BoardTile key={b.id} board={b} isOwner={b.owner.id === me} />
+                <BoardTile key={b.id} board={b} me={me} />
               ))}
             </BoardGrid>
           )}
         </section>
       </main>
+      <Toaster placement="page" />
     </div>
   )
 }
@@ -213,7 +222,20 @@ function BoardGrid({ children }: { children: React.ReactNode }) {
   return <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">{children}</div>
 }
 
-function BoardTile({ board, isOwner }: { board: BoardSummary; isOwner: boolean }) {
+function BoardTile({ board, me }: { board: BoardSummary; me?: string }) {
+  const isOwner = board.owner.id === me
+  const queryClient = useQueryClient()
+  const [confirming, setConfirming] = useState(false)
+  const leave = useMutation({
+    mutationFn: () => api.removeMember(board.id, me ?? ""),
+    onSuccess: async () => {
+      clearLocalCopy(board.id)
+      setConfirming(false)
+      toast(`You left “${board.title}”`)
+      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
+    onError: (e) => toast(errorMessage(e)),
+  })
   return (
     <div className="group relative flex min-w-0 flex-col overflow-hidden rounded-xl border bg-surface transition-shadow hover:shadow-panel">
       <Link to="/b/$boardId" params={{ boardId: board.id }} className="flex flex-col outline-none">
@@ -262,12 +284,21 @@ function BoardTile({ board, isOwner }: { board: BoardSummary; isOwner: boolean }
               <Trash2 /> Delete board
             </DropdownMenuItem>
           ) : (
-            <DropdownMenuItem disabled>
+            <DropdownMenuItem variant="destructive" onClick={() => setConfirming(true)}>
               <LogOut /> Leave board
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`Leave “${board.title}”?`}
+        description="It leaves your dashboard, and you'll need a new invitation to get back in."
+        confirmLabel="Leave board"
+        pending={leave.isPending}
+        onConfirm={() => leave.mutate()}
+      />
     </div>
   )
 }

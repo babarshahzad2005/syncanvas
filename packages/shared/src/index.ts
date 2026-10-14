@@ -124,3 +124,12 @@ export type InviteRequest = { email: string; role: InviteRole }
 export type InviteResponse = { result: "member" | "invited" }
 /** The body of a 429: what happened, and when sending works again. */
 export type LimitError = { error: string; resetsAt: string }
+
+/**
+ * What the board room tells a User's open connections when the Owner changes their access
+ * (M3 ticket 02): their new Role, or null when they were removed (or left), and who did it.
+ */
+export type AccessNotice = { role: Role | null; by: string }
+
+/** PATCH /api/boards/:id/members/:userId (the Owner only). */
+export type ChangeRoleRequest = { role: InviteRole }

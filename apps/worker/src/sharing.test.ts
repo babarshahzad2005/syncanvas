@@ -253,3 +253,95 @@ describe("Invitations", () => {
     expect(t.invitations).toHaveLength(0)
   })
 })
+
+describe("Changing access", () => {
+  let ada: string
+  let board: string
+  beforeEach(async () => {
+    t = await createTestApp()
+    ada = await t.signIn("ada@example.com")
+    board = await createBoard(ada)
+  })
+
+  async function idOf(email: string) {
+    const state = await sharing(ada, board)
+    const id = state.members.find((m) => m.email === email)?.id
+    if (!id) throw new Error(`${email} isn't a Member`)
+    return id
+  }
+  const setRole = (cookie: string, userId: string, role: unknown) =>
+    t.request(`/api/boards/${board}/members/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+      cookie,
+    })
+  const remove = (cookie: string, userId: string) =>
+    t.request(`/api/boards/${board}/members/${userId}`, { method: "DELETE", cookie })
+
+  it("the Owner changes a Role: saved, then pushed to the board room", async () => {
+    const grace = await member(ada, board, "grace@example.com", "editor")
+    const graceId = await idOf("grace@example.com")
+
+    expect((await setRole(ada, graceId, "viewer")).status).toBe(200)
+    expect(await dashboardIds(grace)).toEqual([[board, "viewer"]])
+    expect(t.access).toEqual([
+      { boardId: board, change: { userId: graceId, role: "viewer", by: "Ada" } },
+    ])
+    // Setting the same Role again changes nothing and tells nobody.
+    expect((await setRole(ada, graceId, "viewer")).status).toBe(200)
+    expect(t.access).toHaveLength(1)
+  })
+
+  it("the Owner removes a Member, who loses the Board and its live connections", async () => {
+    const grace = await member(ada, board, "grace@example.com", "commenter")
+    const graceId = await idOf("grace@example.com")
+    expect((await remove(ada, graceId)).status).toBe(200)
+    expect(await dashboardIds(grace)).toEqual([])
+    expect(t.access.at(-1)).toEqual({
+      boardId: board,
+      change: { userId: graceId, role: null, by: "Ada" },
+    })
+    const token = await t.request(`/api/boards/${board}/token`, { method: "POST", cookie: grace })
+    expect(token.status).toBe(403)
+    expect((await remove(ada, graceId)).status).toBe(404)
+  })
+
+  it("only the Owner changes Roles or removes people, and never the Owner's own", async () => {
+    const editor = await member(ada, board, "ed@example.com", "editor")
+    await member(ada, board, "vi@example.com", "viewer")
+    const outsider = await t.signIn("out@example.com")
+    const viewerId = await idOf("vi@example.com")
+    const adaId = await idOf("ada@example.com")
+
+    expect((await setRole(editor, viewerId, "editor")).status).toBe(403)
+    expect((await remove(editor, viewerId)).status).toBe(403)
+    expect((await setRole(outsider, viewerId, "editor")).status).toBe(403)
+    expect((await remove(outsider, viewerId)).status).toBe(403)
+    expect((await setRole(ada, adaId, "viewer")).status).toBe(400)
+    expect((await setRole(ada, viewerId, "owner")).status).toBe(400)
+    expect((await setRole(ada, "nobody", "editor")).status).toBe(404)
+    expect(t.access).toEqual([])
+    expect((await sharing(ada, board)).members.map((m) => m.role)).toEqual([
+      "owner",
+      "editor",
+      "viewer",
+    ])
+  })
+
+  it("anyone but the Owner can leave", async () => {
+    const grace = await member(ada, board, "grace@example.com", "viewer")
+    const graceId = await idOf("grace@example.com")
+    const adaId = await idOf("ada@example.com")
+
+    expect((await remove(grace, graceId)).status).toBe(200)
+    expect(await dashboardIds(grace)).toEqual([])
+    expect(t.access.at(-1)?.change).toEqual({ userId: graceId, role: null, by: "Grace" })
+
+    const owner = await remove(ada, adaId)
+    expect(owner.status).toBe(400)
+    expect((await json<{ error: string }>(owner)).error).toBe(
+      "The owner can't leave their own board.",
+    )
+    expect(await dashboardIds(ada)).toEqual([[board, "owner"]])
+  })
+})

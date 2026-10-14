@@ -18,6 +18,9 @@ export type BoardTokenClaims = {
   kind: BoardTokenKind
 }
 
+/** A verified token's claims, plus when it was issued (seconds since the epoch). */
+export type VerifiedBoardToken = BoardTokenClaims & { issuedAt: number }
+
 /** Keys are stored as base64url-encoded JWK JSON (see scripts/gen-keys.mjs). */
 async function importKey(encoded: string): Promise<CryptoKey> {
   const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/")
@@ -62,20 +65,20 @@ export async function signBoardToken(
 export async function verifyBoardToken(
   token: string,
   publicKey: string,
-): Promise<BoardTokenClaims | null> {
+): Promise<VerifiedBoardToken | null> {
   try {
     const { payload } = await jwtVerify(token, await key(publicKey), {
       issuer: ISSUER,
       audience: AUDIENCE,
       algorithms: ["EdDSA"],
     })
-    const { sub, board, role, kind, name } = payload as Record<string, unknown>
+    const { sub, board, role, kind, name, iat } = payload as Record<string, unknown>
     if (typeof sub !== "string" || typeof board !== "string") return null
-    if (typeof name !== "string") return null
+    if (typeof name !== "string" || typeof iat !== "number") return null
     if (role !== "owner" && role !== "editor" && role !== "commenter" && role !== "viewer")
       return null
     if (kind !== "member" && kind !== "guest" && kind !== "embed") return null
-    return { userId: sub, name, boardId: board, role, kind }
+    return { userId: sub, name, boardId: board, role, kind, issuedAt: iat }
   } catch {
     return null
   }

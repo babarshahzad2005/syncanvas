@@ -272,7 +272,13 @@ export function Dock({
           return (
             <Hint
               key={t.label}
-              label={available ? t.label : `${t.label} (coming soon)`}
+              label={
+                available
+                  ? t.label
+                  : t.id === null
+                    ? `${t.label} (coming soon)`
+                    : `${t.label} (view only)`
+              }
               shortcut={t.shortcut}
             >
               <Button

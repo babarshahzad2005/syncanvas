@@ -1,6 +1,7 @@
 import {
   BOARD_TITLE_MAX,
   type BoardTokenResponse,
+  type ChangeRoleRequest,
   type CreateBoardResponse,
   type DashboardResponse,
   displayNameOf,
@@ -27,13 +28,23 @@ import {
   logInvitation,
   type SendInvitation,
 } from "./email"
-import { cancelInvitation, invite, resendInvitation, sharingState } from "./sharing"
+import {
+  type ApplyAccess,
+  cancelInvitation,
+  changeRole,
+  invite,
+  removeMember,
+  resendInvitation,
+  sharingState,
+} from "./sharing"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
 export type Services = {
   db: Database
   auth: Auth
   sendInvitation: SendInvitation
+  /** Pushes a saved access change to the Board's live room (M3 ticket 02). */
+  applyAccess: ApplyAccess
   dispose?: () => Promise<void>
 }
 export type ServicesFactory = (env: Env) => Services
@@ -54,7 +65,9 @@ export const productionServices: ServicesFactory = (env) => {
         : logMagicLink,
   })
   const sendInvitation = brevo ? brevoInvitationSender(brevo) : logInvitation
-  return { db, auth, sendInvitation, dispose: close }
+  const applyAccess: ApplyAccess = (boardId, change) =>
+    env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).applyAccess(change)
+  return { db, auth, sendInvitation, applyAccess, dispose: close }
 }
 
 type SessionUser = { id: string; email: string; name: string }
@@ -176,6 +189,27 @@ export function createApp(services: ServicesFactory = productionServices) {
       boardId: c.req.param("id"),
       invitationId: c.req.param("invitationId"),
       caller: c.var.user,
+    })
+    return c.json({ ok: true })
+  })
+
+  app.patch("/boards/:id/members/:userId", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as Partial<ChangeRoleRequest>
+    await changeRole(c.var.services.db, c.var.services.applyAccess, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+      userId: c.req.param("userId"),
+      role: input.role,
+    })
+    return c.json({ ok: true })
+  })
+
+  // The Owner removes someone, or anyone else leaves (their own id).
+  app.delete("/boards/:id/members/:userId", async (c) => {
+    await removeMember(c.var.services.db, c.var.services.applyAccess, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+      userId: c.req.param("userId"),
     })
     return c.json({ ok: true })
   })
