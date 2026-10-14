@@ -206,6 +206,8 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 - Sent by email through Brevo.
 - An Invitation to an existing User becomes a Membership immediately. One to an unknown email converts on that address's first sign-in.
 - Invitations expire after 30 days. The Owner can resend or cancel any pending Invitation; Editors can cancel their own.
+- Inviting someone who already has access is refused with a message: an Invitation never changes an existing Member's Role (the Owner does that in the Share dialog).
+- The daily Invitation limits count UTC days, like Brevo's own quota. Resending counts as a send.
 
 **Share Link**
 - A Board has at most one Share Link, with one Role and an optional expiry (never, 1, 7, or 30 days). The URL is `/b/{boardId}?s={token}`.

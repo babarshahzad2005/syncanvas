@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { brevoMagicLinkSender, magicLinkEmail } from "./email"
+import { brevoMagicLinkSender, invitationEmail, magicLinkEmail } from "./email"
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -38,5 +38,36 @@ describe("Brevo magic link sender", () => {
 
   it("escapes the link inside the HTML", () => {
     expect(magicLinkEmail('https://x.test/"><script>').htmlContent).not.toContain("<script>")
+  })
+})
+
+describe("invitation emails", () => {
+  const message = {
+    email: "grace@example.com",
+    inviter: "Ada <Lovelace>",
+    boardTitle: 'Q4 "retro" <script>',
+    role: "commenter" as const,
+    url: "https://x.test/b/abc",
+  }
+
+  it("tells a new address who invited them to which Board", () => {
+    const email = invitationEmail({ ...message, kind: "invitation" })
+    expect(email.subject).toBe('Ada <Lovelace> invited you to “Q4 "retro" <script>” on Syncanvas')
+    expect(email.textContent).toContain("invited you to comment on")
+    expect(email.textContent).toContain("https://x.test/b/abc")
+    expect(email.textContent).toContain("expires in 30 days")
+  })
+
+  it("tells an existing User the Board is shared with them", () => {
+    const email = invitationEmail({ ...message, kind: "shared", role: "viewer" })
+    expect(email.subject).toBe('Ada <Lovelace> shared “Q4 "retro" <script>” with you')
+    expect(email.textContent).toContain("invited you to view")
+  })
+
+  it("escapes names and titles inside the HTML", () => {
+    const { htmlContent } = invitationEmail({ ...message, kind: "invitation" })
+    expect(htmlContent).not.toContain("<script>")
+    expect(htmlContent).not.toContain("<Lovelace>")
+    expect(htmlContent).toContain("&#60;script&#62;")
   })
 })

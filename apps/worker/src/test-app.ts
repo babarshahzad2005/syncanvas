@@ -10,6 +10,7 @@ import { expect } from "vitest"
 import { createApp } from "./app"
 import { createAuth } from "./auth"
 import * as schema from "./db/schema"
+import type { InvitationMessage } from "./email"
 
 export const ORIGIN = "http://localhost:5173"
 /** A fresh Ed25519 pair in the same encoding as scripts/gen-keys.mjs. */
@@ -33,6 +34,8 @@ const ctx = {
 
 export async function createTestApp(options: { magicLinkExpiresIn?: number } = {}) {
   const pg = new PGlite()
+  // Neon runs in UTC; PGlite would use this machine's zone for now() and timestamps.
+  await pg.exec("set timezone = 'UTC'")
   const db = drizzle(pg, { schema })
   await migrate(db, {
     migrationsFolder: join(dirname(fileURLToPath(import.meta.url)), "../drizzle"),
@@ -47,7 +50,14 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     },
     magicLinkExpiresIn: options.magicLinkExpiresIn,
   })
-  const app = createApp(() => ({ db, auth }))
+  const invitations: InvitationMessage[] = []
+  const app = createApp(() => ({
+    db,
+    auth,
+    sendInvitation: async (m) => {
+      invitations.push(m)
+    },
+  }))
 
   const request = (path: string, init: RequestInit & { cookie?: string } = {}) => {
     const { cookie, ...rest } = init
@@ -86,7 +96,7 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     return cookie
   }
 
-  return { request, requestLink, signIn, outbox, db, pg }
+  return { request, requestLink, signIn, outbox, invitations, db, pg }
 }
 
 export type TestApp = Awaited<ReturnType<typeof createTestApp>>

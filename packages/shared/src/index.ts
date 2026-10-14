@@ -62,3 +62,65 @@ export function normalizeDisplayName(input: unknown): string | null {
 export function displayNameOf(user: { name?: string | null; email: string }): string {
   return normalizeDisplayName(user.name ?? "") ?? nameFromEmail(user.email)
 }
+
+// ---------- Sharing (M3; PRD A4) ----------
+
+/** Roles someone can be invited with: everything but Owner. */
+export const INVITE_ROLES = ["editor", "commenter", "viewer"] as const
+export type InviteRole = (typeof INVITE_ROLES)[number]
+
+const RANK: Record<Role, number> = { owner: 3, editor: 2, commenter: 1, viewer: 0 }
+
+/** The higher of two Roles. */
+export function higherRole<R extends Role>(a: R, b: R): R {
+  return RANK[a] >= RANK[b] ? a : b
+}
+
+/** Roles a Member may invite with: the Owner any, an Editor at their own Role or lower. */
+export function invitableRoles(role: Role): InviteRole[] {
+  return role === "owner" || role === "editor" ? [...INVITE_ROLES] : []
+}
+
+export const INVITATION_DAYS = 30
+/** Invitation emails per User per day, and in total (Brevo sends 300 a day, ADR 0007). */
+export const INVITES_PER_USER_PER_DAY = 20
+export const INVITES_PER_DAY = 200
+export const EMAIL_MAX = 254
+
+/** A trimmed, lowercased email address, or null if it doesn't look like one. */
+export function normalizeEmail(input: unknown): string | null {
+  if (typeof input !== "string") return null
+  const email = input.trim().toLowerCase()
+  return email.length <= EMAIL_MAX && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null
+}
+
+export type SharingMember = { id: string; name: string; email: string; role: Role }
+
+export type PendingInvitation = {
+  id: string
+  email: string
+  role: InviteRole
+  invitedBy: { id: string; name: string }
+  expiresAt: string
+  canResend: boolean
+  canCancel: boolean
+}
+
+/** GET /api/boards/:id/sharing: who has access, as one of the Board's Members sees it. */
+export type SharingResponse = {
+  board: { id: string; title: string }
+  you: { id: string; role: Role }
+  /** Roles you may invite with (empty: you can't invite). */
+  canInvite: InviteRole[]
+  /** Change Roles, remove Members, and manage the Share Link: the Owner only. */
+  canManage: boolean
+  members: SharingMember[]
+  /** Pending, unexpired Invitations; only shown to those who can invite. */
+  invitations: PendingInvitation[]
+}
+
+export type InviteRequest = { email: string; role: InviteRole }
+/** "member": the address had an account and has access now. "invited": a pending Invitation. */
+export type InviteResponse = { result: "member" | "invited" }
+/** The body of a 429: what happened, and when sending works again. */
+export type LimitError = { error: string; resetsAt: string }

@@ -76,7 +76,7 @@ export function PresencePill({ connection }: { connection: BoardConnection | nul
   return (
     <section
       aria-label="People on this board"
-      className="fixed top-3 right-3 flex h-10 items-center rounded-full bg-surface pr-1.5 pl-1.5 shadow-panel"
+      className="flex h-10 items-center rounded-full bg-surface pr-1.5 pl-1.5 shadow-panel"
     >
       <div className="flex -space-x-1">
         {shown.map((person) => (

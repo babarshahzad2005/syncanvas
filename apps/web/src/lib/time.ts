@@ -18,3 +18,11 @@ export function timeAgo(iso: string, now: Date = new Date()): string {
   }
   return format.format(Math.round(seconds / 60), "minute")
 }
+
+/** When a daily limit resets, in the viewer's own time: "at 5:00 AM" or "tomorrow at 5:00 AM". */
+export function resetTime(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso)
+  const time = at.toLocaleTimeString("en", { hour: "numeric", minute: "2-digit" })
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+  return at.toDateString() === tomorrow.toDateString() ? `tomorrow at ${time}` : `at ${time}`
+}

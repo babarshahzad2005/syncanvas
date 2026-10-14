@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import type * as Y from "yjs"
 import { BoardCanvas, type CanvasHandle } from "@/board/board-canvas"
 import { Dock, UndoZoomPill } from "@/board/chrome"
+import { ShareButton } from "@/board/share-dialog"
 import { ShortcutSheet } from "@/board/shortcut-sheet"
 import { useBoardUi } from "@/board/store"
 import { BrandMark } from "@/components/brand"
@@ -37,7 +38,11 @@ export function BoardScreen() {
           <BoardSurface doc={doc} connection={connection} editable={role ? canEdit(role) : false} />
         )}
         <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
-        <PresencePill connection={connection} />
+        {/* Top right: the presence pill, then Share (DESIGN.md → Board screen). */}
+        <div className="fixed top-3 right-3 flex items-center gap-2">
+          <PresencePill connection={connection} />
+          {role && <ShareButton boardId={boardId} title={board?.title} />}
+        </div>
         <FollowFrame connection={connection} />
       </div>
       <Toaster placement="board" />

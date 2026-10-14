@@ -4,6 +4,9 @@ import {
   type CreateBoardResponse,
   type DashboardResponse,
   displayNameOf,
+  type InviteRequest,
+  type InviteResponse,
+  type SharingResponse,
 } from "@syncanvas/shared"
 import { Hono } from "hono"
 import { createMiddleware } from "hono/factory"
@@ -18,25 +21,40 @@ import {
 import { signBoardToken } from "./board-token"
 import { createBoard, findMembership, listBoards } from "./boards"
 import { createDb, type Database } from "./db/client"
-import { brevoMagicLinkSender } from "./email"
+import {
+  brevoInvitationSender,
+  brevoMagicLinkSender,
+  logInvitation,
+  type SendInvitation,
+} from "./email"
+import { cancelInvitation, invite, resendInvitation, sharingState } from "./sharing"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
-export type Services = { db: Database; auth: Auth; dispose?: () => Promise<void> }
+export type Services = {
+  db: Database
+  auth: Auth
+  sendInvitation: SendInvitation
+  dispose?: () => Promise<void>
+}
 export type ServicesFactory = (env: Env) => Services
 
 export const productionServices: ServicesFactory = (env) => {
   const { db, close } = createDb(env.HYPERDRIVE.connectionString)
+  const brevo = env.BREVO_API_KEY
+    ? { apiKey: env.BREVO_API_KEY, senderEmail: env.BREVO_SENDER_EMAIL }
+    : null
   const auth = createAuth({
     db,
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
-    sendMagicLink: env.BREVO_API_KEY
-      ? brevoMagicLinkSender({ apiKey: env.BREVO_API_KEY, senderEmail: env.BREVO_SENDER_EMAIL })
+    sendMagicLink: brevo
+      ? brevoMagicLinkSender(brevo)
       : devInboxEnabled(env)
         ? logAndKeepMagicLink
         : logMagicLink,
   })
-  return { db, auth, dispose: close }
+  const sendInvitation = brevo ? brevoInvitationSender(brevo) : logInvitation
+  return { db, auth, sendInvitation, dispose: close }
 }
 
 type SessionUser = { id: string; email: string; name: string }
@@ -115,6 +133,51 @@ export function createApp(services: ServicesFactory = productionServices) {
       you: { id: c.var.user.id, name: displayNameOf(c.var.user) },
     }
     return c.json(body)
+  })
+
+  // ---------- Sharing (M3) ----------
+
+  app.get("/boards/:id/sharing", async (c) => {
+    const body: SharingResponse = await sharingState(
+      c.var.services.db,
+      c.req.param("id"),
+      c.var.user,
+    )
+    return c.json(body)
+  })
+
+  const mail = (c: { var: AppEnv["Variables"]; env: Env }) => ({
+    send: c.var.services.sendInvitation,
+    appUrl: c.env.BETTER_AUTH_URL,
+  })
+
+  app.post("/boards/:id/invitations", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as Partial<InviteRequest>
+    const body: InviteResponse = await invite(c.var.services.db, mail(c), {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+      email: input.email,
+      role: input.role,
+    })
+    return c.json(body, 201)
+  })
+
+  app.post("/boards/:id/invitations/:invitationId/resend", async (c) => {
+    await resendInvitation(c.var.services.db, mail(c), {
+      boardId: c.req.param("id"),
+      invitationId: c.req.param("invitationId"),
+      caller: c.var.user,
+    })
+    return c.json({ ok: true })
+  })
+
+  app.delete("/boards/:id/invitations/:invitationId", async (c) => {
+    await cancelInvitation(c.var.services.db, {
+      boardId: c.req.param("id"),
+      invitationId: c.req.param("invitationId"),
+      caller: c.var.user,
+    })
+    return c.json({ ok: true })
   })
 
   return app

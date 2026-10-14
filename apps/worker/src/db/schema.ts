@@ -1,5 +1,14 @@
 import { sql } from "drizzle-orm"
-import { boolean, check, index, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core"
+import {
+  boolean,
+  check,
+  index,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core"
 
 // Better Auth tables, from Better Auth's Drizzle schema generator (core + magic link).
 // Regenerate if auth plugins change; keep column names snake_case.
@@ -115,5 +124,51 @@ export const memberships = pgTable(
       "memberships_role_check",
       sql`${table.role} in ('owner', 'editor', 'commenter', 'viewer')`,
     ),
+  ],
+)
+
+// ---------- Sharing (M3; PRD A4, GLOSSARY: Invitation) ----------
+
+/**
+ * A pending Invitation for an email that has no User yet. It becomes a Membership on that
+ * address's first sign-in, and is deleted then (or when cancelled). One per Board and email.
+ */
+export const invitations = pgTable(
+  "invitations",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id")
+      .notNull()
+      .references(() => boards.id, { onDelete: "cascade" }),
+    /** Always lowercased. */
+    email: text("email").notNull(),
+    role: text("role", { enum: ["editor", "commenter", "viewer"] }).notNull(),
+    invitedBy: text("invited_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    lastSentAt: timestamp("last_sent_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("invitations_board_email_idx").on(table.boardId, table.email),
+    index("invitations_email_idx").on(table.email),
+    check("invitations_role_check", sql`${table.role} in ('editor', 'commenter', 'viewer')`),
+  ],
+)
+
+/** One row per invitation or "shared with you" email sent, for the daily limits. */
+export const invitationEmails = pgTable(
+  "invitation_emails",
+  {
+    id: text("id").primaryKey(),
+    senderId: text("sender_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    sentAt: timestamp("sent_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("invitation_emails_sent_idx").on(table.sentAt),
+    index("invitation_emails_sender_idx").on(table.senderId, table.sentAt),
   ],
 )

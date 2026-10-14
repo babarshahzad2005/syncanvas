@@ -4,6 +4,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { APIError } from "better-auth/api"
 import { magicLink } from "better-auth/plugins"
 import * as schema from "./db/schema"
+import { convertInvitations } from "./sharing"
 
 export type SendMagicLink = (message: { email: string; url: string }) => Promise<void>
 
@@ -47,6 +48,12 @@ export function createAuth(options: {
     trustedOrigins: [options.baseURL],
     databaseHooks: {
       user: {
+        create: {
+          // A first sign-in turns the address's pending Invitations into Memberships (M3).
+          after: async (user) => {
+            await convertInvitations(options.db, user)
+          },
+        },
         update: {
           // Display names (M2 ticket 01) are set through Better Auth's update-user route:
           // trimmed, 1–50 characters. Photos aren't a feature yet, so `image` can't be set.
