@@ -3,6 +3,7 @@ import type {
   ChangeRoleRequest,
   CreateBoardResponse,
   DashboardResponse,
+  GuestTokenResponse,
   InviteRequest,
   InviteResponse,
   JoinResponse,
@@ -80,6 +81,12 @@ export const api = {
     request<{ ok: true }>(`${board(boardId)}/share-link`, { method: "DELETE" }),
   join: (boardId: string, token: string) =>
     request<JoinResponse>(`${board(boardId)}/join`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+  /** A Guest's pass from a Share Link token, without signing in (M3 ticket 04). */
+  guestToken: (boardId: string, token: string) =>
+    request<GuestTokenResponse>(`/api/guest/boards/${encodeURIComponent(boardId)}/token`, {
       method: "POST",
       body: JSON.stringify({ token }),
     }),

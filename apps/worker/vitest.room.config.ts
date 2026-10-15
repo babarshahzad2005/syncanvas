@@ -21,6 +21,8 @@ export default defineProject({
           BOARD_TOKEN_PRIVATE_KEY: encode(privateKey),
           BOARD_TOKEN_PUBLIC_KEY: encode(publicKey),
           BETTER_AUTH_SECRET: "unused-in-room-tests",
+          // A small connection cap, so the tests can fill a Board.
+          CONNECTION_CAP: "4",
         },
       },
     }),

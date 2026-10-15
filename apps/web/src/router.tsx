@@ -19,7 +19,13 @@ const authedRoute = createRoute({
   id: "authed",
   beforeLoad: async ({ location }) => {
     const { data } = await authClient.getSession()
-    if (!data) throw redirect({ to: "/sign-in", search: { redirect: location.href } })
+    // A Share Link opens without signing in, as a Guest (M3 ticket 04).
+    const shareLink =
+      /^\/b\/[^/]+$/.test(location.pathname) &&
+      typeof (location.search as { s?: unknown }).s === "string"
+    if (!data && !shareLink) {
+      throw redirect({ to: "/sign-in", search: { redirect: location.href } })
+    }
     return { session: data }
   },
 })

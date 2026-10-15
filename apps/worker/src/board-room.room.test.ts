@@ -601,3 +601,95 @@ describe("BoardRoom access changes", () => {
     owner.close()
   })
 })
+
+// ---------- Guests and the connection cap (M3 ticket 04) ----------
+
+async function joinGuest(boardId: string, id: string, now?: number) {
+  const client = await TestClient.connect(
+    boardId,
+    await token(boardId, "viewer", { kind: "guest", userId: id, now }),
+  )
+  await until(() => client.synced || client.closed !== null, `${id} to sync`)
+  return client
+}
+
+/** The name the board room stamped on an awareness id's presence. */
+function stampedName(observer: TestClient, clientId: number) {
+  return (observer.presenceOf(clientId)?.user as { name: string; guest: boolean } | undefined)?.name
+}
+
+describe("BoardRoom Guests and cap", () => {
+  it("numbers Guests per Board, reusing the lowest free number", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const first = await joinGuest(board, "guest-a")
+    const second = await joinGuest(board, "guest-b")
+    first.sendPresence(11, {})
+    second.sendPresence(12, {})
+    await until(() => owner.presenceOf(12) !== undefined, "both guests' presence")
+    expect(stampedName(owner, 11)).toBe("Guest 1")
+    expect(stampedName(owner, 12)).toBe("Guest 2")
+    expect(owner.presenceOf(11)?.user).toMatchObject({ guest: true })
+
+    first.close()
+    await until(() => owner.presenceOf(11) === null, "guest 1 to leave")
+    const third = await joinGuest(board, "guest-c")
+    third.sendPresence(13, {})
+    await until(() => owner.presenceOf(13) !== undefined, "the new guest's presence")
+    expect(stampedName(owner, 13)).toBe("Guest 1")
+    owner.close()
+    second.close()
+    third.close()
+  })
+
+  it("refuses every update from a Guest (S7)", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const guest = await joinGuest(board, "guest-a")
+    guest.addRect("sneaky")
+    await until(() => guest.closed !== null, "the guest to be closed")
+    expect(guest.closed).toEqual({ code: CLOSE.forbidden, reason: "read-only" })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(owner.rect("sneaky")).toBeUndefined()
+    owner.close()
+  })
+
+  it("at the cap, admits Members and turns Guests away as busy", async () => {
+    const board = newBoardId() // the room tests run with a cap of 4
+    const members = await Promise.all(["a", "b", "c"].map((id) => joinAs(board, "editor", id)))
+    const guest = await joinGuest(board, "guest-a")
+    expect(guest.closed).toBeNull() // 4 of 4
+
+    const late = await joinGuest(board, "guest-b")
+    expect(late.closed).toEqual({ code: CLOSE.busy, reason: "busy" })
+    const member = await joinAs(board, "viewer", "d")
+    expect(member.closed).toBeNull()
+    expect(member.synced).toBe(true)
+
+    // Room again: the next Guest gets in.
+    for (const m of [...members, member]) m.close()
+    await new Promise((r) => setTimeout(r, 200))
+    const again = await joinGuest(board, "guest-c")
+    expect(again.closed).toBeNull()
+    guest.close()
+    again.close()
+  })
+
+  it("closes every Guest when the link goes off, and refuses their old tokens", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const before = Date.now() - 2_000
+    const guest = await joinGuest(board, "guest-a")
+    await room(board).closeGuests()
+    await until(() => guest.closed !== null, "the guest to be closed")
+    expect(guest.closed).toEqual({ code: CLOSE.forbidden, reason: "link off" })
+    expect(owner.closed).toBeNull()
+
+    const stale = await joinGuest(board, "guest-b", before)
+    expect(stale.closed).toEqual({ code: CLOSE.forbidden, reason: "removed" })
+    const fresh = await joinGuest(board, "guest-c", Date.now() + 2_000)
+    expect(fresh.closed).toBeNull()
+    owner.close()
+    fresh.close()
+  })
+})

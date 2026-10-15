@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { signIn, waitUntilOnline } from "./helpers"
+import { finishSignIn, signIn, waitUntilOnline } from "./helpers"
 
 // M3 ticket 03: the Owner's Share Link makes whoever opens it a lasting Member.
 
@@ -48,25 +48,13 @@ test("people join through the Share Link, and a regenerated link retires the old
   await grace.goto("/")
   await expect(grace.getByRole("link", { name: /Untitled board/ })).toBeVisible()
 
-  // Linus isn't signed in: he signs in and lands back on the Board as a Member.
-  const linusEmail = `e2e-linus-${stamp}@example.com`
+  // Linus isn't signed in: he looks as a Guest (ticket 04), signs in from the button, and
+  // lands back on the Board as a Member.
   const linus = await (await browser.newContext()).newPage()
   await linus.goto(editLink)
+  await linus.getByRole("link", { name: "Sign in to edit" }).click()
   await linus.waitForURL(/\/sign-in\?redirect=/)
-  await linus.getByLabel("Email").fill(linusEmail)
-  await linus.getByRole("button", { name: "Continue with email" }).click()
-  await expect(linus.getByRole("heading", { name: "Check your email" })).toBeVisible()
-  let magic = ""
-  await expect
-    .poll(async () => {
-      const res = await linus.request.get(
-        `/api/dev/magic-link?email=${encodeURIComponent(linusEmail)}`,
-      )
-      if (res.ok()) magic = ((await res.json()) as { url: string }).url
-      return magic
-    })
-    .not.toBe("")
-  await linus.goto(magic)
+  await finishSignIn(linus, `e2e-linus-${stamp}@example.com`)
   await linus.waitForURL(boardUrl)
   await ada.reload()
   await ada.getByRole("button", { name: "Share" }).click()

@@ -1,13 +1,15 @@
 import type {
   CreateBoardResponse,
   DashboardResponse,
+  GuestTokenResponse,
   LimitError,
   Role,
   ShareLinkState,
   SharingResponse,
 } from "@syncanvas/shared"
 import { beforeEach, describe, expect, it } from "vitest"
-import { createTestApp, type TestApp } from "./test-app"
+import { verifyBoardToken } from "./board-token"
+import { createTestApp, env, type TestApp } from "./test-app"
 
 // Sharing API (M3 ticket 01): Invitations, their Role rules and limits, and the sharing state.
 
@@ -485,5 +487,73 @@ describe("Share Link", () => {
         })
       ).status,
     ).toBe(401)
+  })
+})
+
+describe("Guests", () => {
+  let ada: string
+  let board: string
+  beforeEach(async () => {
+    t = await createTestApp()
+    ada = await t.signIn("ada@example.com")
+    board = await createBoard(ada)
+  })
+
+  const guestToken = (token: unknown, boardId = board) =>
+    t.request(`/api/guest/boards/${boardId}/token`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    })
+  const setLink = (body: object) =>
+    t.request(`/api/boards/${board}/share-link`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+      cookie: ada,
+    })
+
+  it("gives anyone with a working link a view-only Guest token, no session needed", async () => {
+    const link = await json<ShareLinkState>(await setLink({ role: "commenter" }))
+    const res = await guestToken(link.token)
+    expect(res.status).toBe(200)
+    const body = await json<GuestTokenResponse>(res)
+    expect(body).toMatchObject({
+      role: "viewer",
+      linkRole: "commenter",
+      board: { id: board, title: "Q4 retro" },
+      you: { name: "Guest" },
+    })
+    const claims = await verifyBoardToken(body.token, env.BOARD_TOKEN_PUBLIC_KEY)
+    expect(claims).toMatchObject({ kind: "guest", role: "viewer", name: "", boardId: board })
+    expect(claims?.userId).toMatch(/^guest-/)
+    // Each visit is a fresh Guest.
+    const again = await json<GuestTokenResponse>(await guestToken(link.token))
+    expect(again.you.id).not.toBe(body.you.id)
+    // Nobody became a Member.
+    expect((await sharing(ada, board)).members).toHaveLength(1)
+  })
+
+  it("refuses bad, old, and expired links alike", async () => {
+    const link = await json<ShareLinkState>(await setLink({}))
+    const wrong = await guestToken("nope")
+    expect(wrong.status).toBe(403)
+    expect((await guestToken(link.token, "no-such-board")).status).toBe(403)
+    expect((await guestToken(undefined)).status).toBe(403)
+    await t.pg.exec("update share_links set expires_at = now() - interval '1 minute'")
+    const expired = await guestToken(link.token)
+    expect(expired.status).toBe(403)
+    expect(await expired.json()).toEqual(await wrong.json())
+  })
+
+  it("disconnects Guests when the link is turned off, replaced, or given a new Role", async () => {
+    await setLink({})
+    expect(t.guestsClosed).toEqual([])
+    await setLink({ expiresInDays: 7 }) // same token: Guests stay
+    expect(t.guestsClosed).toEqual([])
+    await setLink({ role: "editor" })
+    expect(t.guestsClosed).toEqual([board])
+    await t.request(`/api/boards/${board}/share-link/regenerate`, { method: "POST", cookie: ada })
+    expect(t.guestsClosed).toEqual([board, board])
+    await t.request(`/api/boards/${board}/share-link`, { method: "DELETE", cookie: ada })
+    expect(t.guestsClosed).toEqual([board, board, board])
   })
 })

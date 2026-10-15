@@ -1,4 +1,9 @@
-import { type AccessNotice, type BoardTokenResponse, canEdit } from "@syncanvas/shared"
+import {
+  type AccessNotice,
+  type BoardTokenResponse,
+  canEdit,
+  type InviteRole,
+} from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
 import * as awarenessProtocol from "y-protocols/awareness"
@@ -19,7 +24,14 @@ import { type TabPresence, tabPresence } from "@/presence/model"
  * "revoked": no access (anymore). "resync": the board room refused an edit this copy made
  * after a downgrade, so the local copy has to be thrown away and loaded fresh.
  */
-export type ConnectionStatus = "connecting" | "online" | "offline" | "revoked" | "resync"
+export type ConnectionStatus =
+  | "connecting"
+  | "online"
+  | "offline"
+  | "revoked"
+  | "resync"
+  /** The Board is full and this isn't a Member: it tries again every 30 s (M3 ticket 04). */
+  | "busy"
 
 const MESSAGE_SYNC = 0
 const MESSAGE_AWARENESS = 1
@@ -43,6 +55,9 @@ declare global {
 /** Must match CLOSE in the Worker's board-room.ts. */
 const CLOSE_INVALID_TOKEN = 4401
 const CLOSE_FORBIDDEN = 4403
+const CLOSE_BUSY = 4429
+/** How long a turned-away Guest waits before trying again (PRD A4). */
+export const BUSY_RETRY_MS = 30_000
 
 /** Full jitter: a random wait between 0 and min(cap, base·2^attempt). */
 export function backoffDelay(attempt: number, random = Math.random, base = 500, cap = 15_000) {
@@ -59,6 +74,8 @@ export class BoardConnection {
   presence: TabPresence[] = []
   /** The last access change the board room announced for you (M3 ticket 02). */
   notice: AccessNotice | null = null
+  /** For a Guest: what the Share Link grants once they sign in (M3 ticket 04). */
+  linkRole: InviteRole | null = null
 
   private ws: WebSocket | null = null
   private attempt = 0
@@ -78,10 +95,13 @@ export class BoardConnection {
 
   readonly boardId: string
   readonly doc: Y.Doc
+  /** A Share Link token: connect as a Guest instead of a Member (M3 ticket 04). */
+  readonly guestLink: string | null
 
-  constructor(boardId: string, doc: Y.Doc) {
+  constructor(boardId: string, doc: Y.Doc, options: { guestLink?: string } = {}) {
     this.boardId = boardId
     this.doc = doc
+    this.guestLink = options.guestLink ?? null
     doc.on("update", this.onLocalUpdate)
   }
 
@@ -137,12 +157,19 @@ export class BoardConnection {
 
   private async connect() {
     if (this.stopped) return
-    this.setStatus(this.attempt === 0 ? "connecting" : "offline")
+    // A busy Board keeps saying so until we're in.
+    if (this.status !== "busy") this.setStatus(this.attempt === 0 ? "connecting" : "offline")
 
     let pass: BoardTokenResponse
     try {
       // A fresh token for every connection attempt, so an expired one is never reused.
-      pass = await api.boardToken(this.boardId)
+      if (this.guestLink) {
+        const guest = await api.guestToken(this.boardId, this.guestLink)
+        this.linkRole = guest.linkRole
+        pass = guest
+      } else {
+        pass = await api.boardToken(this.boardId)
+      }
     } catch (error) {
       if (error instanceof ApiError && error.status === 403) return this.setStatus("revoked")
       if (error instanceof ApiError && error.status === 401) {
@@ -182,6 +209,13 @@ export class BoardConnection {
       this.stopHeartbeat()
       this.endPresence()
       if (this.stopped) return
+      if (event.code === CLOSE_BUSY) {
+        this.setStatus("busy")
+        this.attempt = 0
+        if (this.retryTimer) clearTimeout(this.retryTimer)
+        this.retryTimer = setTimeout(() => void this.connect(), BUSY_RETRY_MS)
+        return
+      }
       if (event.code === CLOSE_FORBIDDEN) {
         return this.setStatus(event.reason === "read-only" ? "resync" : "revoked")
       }

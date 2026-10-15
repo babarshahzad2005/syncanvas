@@ -158,3 +158,9 @@ export type JoinResponse = { role: Role }
 export function shareLinkPath(boardId: string, token: string) {
   return `/b/${encodeURIComponent(boardId)}?s=${encodeURIComponent(token)}`
 }
+
+/**
+ * POST /api/guest/boards/:id/token: a Guest's pass to a Board, from a valid Share Link and no
+ * session (M3 ticket 04). Always view-only; `linkRole` picks the "Sign in to …" button.
+ */
+export type GuestTokenResponse = BoardTokenResponse & { linkRole: InviteRole }

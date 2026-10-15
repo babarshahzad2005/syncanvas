@@ -37,7 +37,15 @@ export const CLOSE = {
   forbidden: 4403,
   /** The update would make the Board invalid. */
   invalidUpdate: 4400,
+  /** The Board is at its connection cap and this isn't a Member: try again later (M3). */
+  busy: 4429,
 } as const
+
+/** Live connections per Board (PRD A4). Members always get in; others wait past this. */
+export const CONNECTION_CAP = 100
+
+/** The `access` row that stands for every Guest: their link was turned off or replaced. */
+const GUESTS = "*guests*"
 
 type SocketInfo = {
   userId: string
@@ -46,6 +54,8 @@ type SocketInfo = {
   kind: BoardTokenKind
   /** The one awareness id this connection publishes under, once it has sent presence. */
   presenceId?: number
+  /** Guests are numbered per Board while connected: "Guest 1", "Guest 2"… (M3). */
+  guestNumber?: number
 }
 
 /** A change the Owner made: a User's new Role, or null once they no longer have access. */
@@ -118,26 +128,39 @@ export class BoardRoom extends DurableObject<Env> {
     if (!claims) return refuse(CLOSE.invalidToken, "invalid or expired token")
     if (claims.boardId !== boardId) return refuse(CLOSE.forbidden, "token is for another board")
     let role: Role = claims.role
-    if (claims.kind === "member") {
+    if (claims.kind !== "embed") {
+      // An access change after this token was issued wins over it (M3 ticket 02). For Guests,
+      // it's their link going off or being replaced (ticket 04).
       const [change] = this.ctx.storage.sql
         .exec<{ role: Role | null; changed_at: number }>(
           "select role, changed_at from access where user_id = ?",
-          claims.userId,
+          claims.kind === "guest" ? GUESTS : claims.userId,
         )
         .toArray()
-      if (change && claims.issuedAt * 1000 <= change.changed_at) {
+      if (change && claims.issuedAt <= change.changed_at) {
         if (change.role === null) return refuse(CLOSE.forbidden, "removed")
         role = change.role
       }
     }
+    // The cap (PRD A4): Members always get in; Guests and Embed viewers wait.
+    const open = this.ctx.getWebSockets()
+    if (claims.kind !== "member" && open.length >= this.connectionCap()) {
+      return refuse(CLOSE.busy, "busy")
+    }
 
+    const info: SocketInfo = { userId: claims.userId, name: claims.name, role, kind: claims.kind }
+    if (claims.kind === "guest") {
+      // The lowest number no connected Guest has.
+      const taken = new Set(
+        open.map((ws) => (ws.deserializeAttachment() as SocketInfo).guestNumber),
+      )
+      let n = 1
+      while (taken.has(n)) n++
+      info.guestNumber = n
+      info.name = `Guest ${n}`
+    }
     this.ctx.acceptWebSocket(server)
-    server.serializeAttachment({
-      userId: claims.userId,
-      name: claims.name,
-      role,
-      kind: claims.kind,
-    } satisfies SocketInfo)
+    server.serializeAttachment(info)
     // Sync step 1: tell the client what we have, so it sends what we're missing.
     server.send(syncMessage((e) => syncProtocol.writeSyncStep1(e, this.doc)))
     this.greetWithPresence(server)
@@ -225,6 +248,33 @@ export class BoardRoom extends DurableObject<Env> {
         // Gone; its next connection gets the new Role from a fresh token.
       }
     }
+  }
+
+  /**
+   * The Share Link was turned off, replaced, or changed (M3 ticket 04): every Guest leaves at
+   * once, and Guest tokens issued until now stop working.
+   */
+  async closeGuests() {
+    this.ctx.storage.sql.exec(
+      "insert into access (user_id, role, changed_at) values (?, null, ?) on conflict (user_id) do update set role = null, changed_at = excluded.changed_at",
+      GUESTS,
+      Date.now(),
+    )
+    for (const ws of this.ctx.getWebSockets()) {
+      if ((ws.deserializeAttachment() as SocketInfo).kind !== "guest") continue
+      this.removePresence(ws)
+      try {
+        ws.close(CLOSE.forbidden, "link off")
+      } catch {
+        // Already gone.
+      }
+    }
+  }
+
+  private connectionCap() {
+    // Tests set a small cap through the environment; production uses the PRD's 100.
+    const configured = Number((this.env as { CONNECTION_CAP?: string }).CONNECTION_CAP)
+    return Number.isFinite(configured) && configured > 0 ? configured : CONNECTION_CAP
   }
 
   // ---------- Presence ----------

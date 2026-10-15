@@ -298,10 +298,16 @@ export async function convertInvitations(db: Database, newUser: { id: string; em
 
 /** Tells a Board's live room about a saved change (Durable Object RPC in production). */
 export type ApplyAccess = (boardId: string, change: AccessChange) => Promise<void>
+/** Disconnects a Board's Guests: its Share Link went off or changed (M3 ticket 04). */
+export type CloseGuests = (boardId: string) => Promise<void>
 
 async function pushToRoom(applyAccess: ApplyAccess, boardId: string, change: AccessChange) {
+  await tellRoom(() => applyAccess(boardId, change))
+}
+
+async function tellRoom(call: () => Promise<void>) {
   try {
-    await applyAccess(boardId, change)
+    await call()
   } catch (error) {
     // Postgres already holds the change; the next board token carries it either way.
     console.error("Couldn't reach the board room:", error instanceof Error ? error.message : error)
@@ -402,6 +408,7 @@ async function ownerOrRefuse(db: Database, boardId: string, caller: Caller) {
  */
 export async function setShareLink(
   db: Database,
+  closeGuests: CloseGuests,
   input: { boardId: string; caller: Caller; role?: unknown; expiresInDays?: unknown },
 ): Promise<ShareLinkState> {
   await ownerOrRefuse(db, input.boardId, input.caller)
@@ -449,12 +456,15 @@ export async function setShareLink(
     .where(eq(shareLinks.boardId, input.boardId))
     .returning()
   if (!row) throw new Error("Share link update returned no row")
+  // A new token (new Role): Guests came in under the old one.
+  if (row.token !== current.token) await tellRoom(() => closeGuests(input.boardId))
   return linkState(row)
 }
 
 /** A new token for the same link: the old URL stops working (the Owner only). */
 export async function regenerateShareLink(
   db: Database,
+  closeGuests: CloseGuests,
   input: { boardId: string; caller: Caller },
 ): Promise<ShareLinkState> {
   await ownerOrRefuse(db, input.boardId, input.caller)
@@ -464,13 +474,42 @@ export async function regenerateShareLink(
     .where(eq(shareLinks.boardId, input.boardId))
     .returning()
   if (!row) throw refuse(404, { error: "The share link is off." })
+  await tellRoom(() => closeGuests(input.boardId))
   return linkState(row)
 }
 
-/** Turns the link off. Members who joined through it stay (PRD A4). */
-export async function deleteShareLink(db: Database, input: { boardId: string; caller: Caller }) {
+/** Turns the link off: Guests leave, Members who joined through it stay (PRD A4). */
+export async function deleteShareLink(
+  db: Database,
+  closeGuests: CloseGuests,
+  input: { boardId: string; caller: Caller },
+) {
   await ownerOrRefuse(db, input.boardId, input.caller)
-  await db.delete(shareLinks).where(eq(shareLinks.boardId, input.boardId))
+  const removed = await db
+    .delete(shareLinks)
+    .where(eq(shareLinks.boardId, input.boardId))
+    .returning({ token: shareLinks.token })
+  if (removed.length > 0) await tellRoom(() => closeGuests(input.boardId))
+}
+
+/**
+ * The Share Link behind a token, if it still works: right Board, not expired, Board not in
+ * Trash. Every other case gets the same refusal, so tokens can't be probed.
+ */
+export async function liveLink(db: Database, boardId: string, token: unknown) {
+  if (typeof token !== "string" || token.length === 0) throw refuse(403, { error: NO_LINK })
+  const [link] = await db
+    .select({ role: shareLinks.role, expiresAt: shareLinks.expiresAt, title: boards.title })
+    .from(shareLinks)
+    .innerJoin(boards, eq(boards.id, shareLinks.boardId))
+    .where(
+      and(eq(shareLinks.boardId, boardId), eq(shareLinks.token, token), isNull(boards.deletedAt)),
+    )
+    .limit(1)
+  if (!link || (link.expiresAt && link.expiresAt <= new Date())) {
+    throw refuse(403, { error: NO_LINK })
+  }
+  return link
 }
 
 /**
@@ -482,24 +521,7 @@ export async function joinByLink(
   db: Database,
   input: { boardId: string; caller: Caller; token: unknown },
 ): Promise<JoinResponse> {
-  if (typeof input.token !== "string" || input.token.length === 0) {
-    throw refuse(403, { error: NO_LINK })
-  }
-  const [link] = await db
-    .select({ role: shareLinks.role, expiresAt: shareLinks.expiresAt })
-    .from(shareLinks)
-    .innerJoin(boards, eq(boards.id, shareLinks.boardId))
-    .where(
-      and(
-        eq(shareLinks.boardId, input.boardId),
-        eq(shareLinks.token, input.token),
-        isNull(boards.deletedAt),
-      ),
-    )
-    .limit(1)
-  if (!link || (link.expiresAt && link.expiresAt <= new Date())) {
-    throw refuse(403, { error: NO_LINK })
-  }
+  const link = await liveLink(db, input.boardId, input.token)
   const existing = await findMembership(db, input.boardId, input.caller.id)
   if (!existing) {
     await db

@@ -5,6 +5,7 @@ import {
   type CreateBoardResponse,
   type DashboardResponse,
   displayNameOf,
+  type GuestTokenResponse,
   type InviteRequest,
   type InviteResponse,
   type JoinRequest,
@@ -34,11 +35,13 @@ import {
 } from "./email"
 import {
   type ApplyAccess,
+  type CloseGuests,
   cancelInvitation,
   changeRole,
   deleteShareLink,
   invite,
   joinByLink,
+  liveLink,
   regenerateShareLink,
   removeMember,
   resendInvitation,
@@ -53,6 +56,8 @@ export type Services = {
   sendInvitation: SendInvitation
   /** Pushes a saved access change to the Board's live room (M3 ticket 02). */
   applyAccess: ApplyAccess
+  /** Disconnects a Board's Guests when its Share Link goes off or changes (M3 ticket 04). */
+  closeGuests: CloseGuests
   dispose?: () => Promise<void>
 }
 export type ServicesFactory = (env: Env) => Services
@@ -75,7 +80,9 @@ export const productionServices: ServicesFactory = (env) => {
   const sendInvitation = brevo ? brevoInvitationSender(brevo) : logInvitation
   const applyAccess: ApplyAccess = (boardId, change) =>
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).applyAccess(change)
-  return { db, auth, sendInvitation, applyAccess, dispose: close }
+  const closeGuests: CloseGuests = (boardId) =>
+    env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).closeGuests()
+  return { db, auth, sendInvitation, applyAccess, closeGuests, dispose: close }
 }
 
 type SessionUser = { id: string; email: string; name: string }
@@ -94,7 +101,9 @@ export function createApp(services: ServicesFactory = productionServices) {
       if (s.dispose) c.executionCtx.waitUntil(s.dispose())
     }
   })
-  for (const path of ["/auth/*", "/boards", "/boards/*", "/dashboard"]) app.use(path, withServices)
+  for (const path of ["/auth/*", "/boards", "/boards/*", "/dashboard", "/guest/*"]) {
+    app.use(path, withServices)
+  }
 
   // Signed-in User for everything except auth itself.
   const requireUser = createMiddleware<AppEnv>(async (c, next) => {
@@ -226,7 +235,7 @@ export function createApp(services: ServicesFactory = productionServices) {
 
   app.put("/boards/:id/share-link", async (c) => {
     const input = (await c.req.json().catch(() => ({}))) as ShareLinkRequest
-    const body: ShareLinkState = await setShareLink(c.var.services.db, {
+    const body: ShareLinkState = await setShareLink(c.var.services.db, c.var.services.closeGuests, {
       boardId: c.req.param("id"),
       caller: c.var.user,
       role: input.role,
@@ -236,15 +245,22 @@ export function createApp(services: ServicesFactory = productionServices) {
   })
 
   app.post("/boards/:id/share-link/regenerate", async (c) => {
-    const body: ShareLinkState = await regenerateShareLink(c.var.services.db, {
-      boardId: c.req.param("id"),
-      caller: c.var.user,
-    })
+    const body: ShareLinkState = await regenerateShareLink(
+      c.var.services.db,
+      c.var.services.closeGuests,
+      {
+        boardId: c.req.param("id"),
+        caller: c.var.user,
+      },
+    )
     return c.json(body)
   })
 
   app.delete("/boards/:id/share-link", async (c) => {
-    await deleteShareLink(c.var.services.db, { boardId: c.req.param("id"), caller: c.var.user })
+    await deleteShareLink(c.var.services.db, c.var.services.closeGuests, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+    })
     return c.json({ ok: true })
   })
 
@@ -255,6 +271,29 @@ export function createApp(services: ServicesFactory = productionServices) {
       caller: c.var.user,
       token: input.token,
     })
+    return c.json(body)
+  })
+
+  // ---------- Guests (M3 ticket 04): no session, just a working Share Link ----------
+
+  app.post("/guest/boards/:id/token", async (c) => {
+    const boardId = c.req.param("id")
+    const input = (await c.req.json().catch(() => ({}))) as { token?: unknown }
+    const link = await liveLink(c.var.services.db, boardId, input.token)
+    const guestId = `guest-${crypto.randomUUID()}`
+    // No name: the board room numbers Guests ("Guest 1", "Guest 2"…) as they connect.
+    const { token, expiresAt } = await signBoardToken(
+      { userId: guestId, name: "", boardId, role: "viewer", kind: "guest" },
+      c.env.BOARD_TOKEN_PRIVATE_KEY,
+    )
+    const body: GuestTokenResponse = {
+      token,
+      expiresAt,
+      role: "viewer",
+      board: { id: boardId, title: link.title },
+      you: { id: guestId, name: "Guest" },
+      linkRole: link.role,
+    }
     return c.json(body)
   })
 

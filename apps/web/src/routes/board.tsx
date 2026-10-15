@@ -1,5 +1,5 @@
 import { createUndoManager } from "@syncanvas/board-model"
-import { canEdit, normalizeDisplayName } from "@syncanvas/shared"
+import { canEdit, type InviteRole, normalizeDisplayName } from "@syncanvas/shared"
 import { useQueryClient } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { ChevronDown, CloudOff, Eye, Loader2, Lock } from "lucide-react"
@@ -13,7 +13,7 @@ import { ShortcutSheet } from "@/board/shortcut-sheet"
 import { useBoardUi } from "@/board/store"
 import { BrandMark } from "@/components/brand"
 import { NameDialog } from "@/components/name-dialog"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ApiError, api, queryKeys } from "@/lib/api"
@@ -31,7 +31,10 @@ const route = getRouteApi("/authed/b/$boardId")
 export function BoardScreen() {
   const { boardId } = route.useParams()
   const { s: linkToken } = route.useSearch()
-  // Opened from a Share Link: join first, then open the Board as a Member (M3 ticket 03).
+  const { session } = route.useRouteContext()
+  // Opened from a Share Link: signed out, look as a Guest (M3 ticket 04); signed in, join
+  // first, then open the Board as a Member (ticket 03).
+  if (linkToken && !session) return <BoardView boardId={boardId} guestLink={linkToken} />
   if (linkToken) return <JoinByLink boardId={boardId} token={linkToken} />
   return <BoardView boardId={boardId} />
 }
@@ -86,8 +89,8 @@ function JoinByLink({ boardId, token }: { boardId: string; token: string }) {
   )
 }
 
-function BoardView({ boardId }: { boardId: string }) {
-  const { connection, status, board, role, doc } = useBoardConnection(boardId)
+function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string }) {
+  const { connection, status, board, role, doc } = useBoardConnection(boardId, guestLink)
   const navigate = useNavigate()
   const leaving = useRef(false)
 
@@ -124,6 +127,8 @@ function BoardView({ boardId }: { boardId: string }) {
   }
 
   if (removedLive || leaving.current) return null
+  if (status === "busy") return <Busy />
+  if (status === "revoked" && guestLink) return <LinkGone />
   if (status === "revoked") return <NoAccess />
 
   return (
@@ -137,7 +142,11 @@ function BoardView({ boardId }: { boardId: string }) {
         {/* Top right: the presence pill, then Share (DESIGN.md → Board screen). */}
         <div className="fixed top-3 right-3 flex items-center gap-2">
           <PresencePill connection={connection} />
-          {role && <ShareButton boardId={boardId} title={board?.title} onLeave={leave} />}
+          {guestLink ? (
+            <GuestSignIn linkRole={connection?.linkRole ?? null} />
+          ) : (
+            role && <ShareButton boardId={boardId} title={board?.title} onLeave={leave} />
+          )}
         </div>
         <FollowFrame connection={connection} />
       </div>
@@ -263,6 +272,59 @@ function NoAccess() {
         <Button nativeButton={false} render={<Link to="/" />}>
           Back to your boards
         </Button>
+      }
+    />
+  )
+}
+
+/**
+ * A Guest's way in (DESIGN.md → Guests): signing in comes back to this same Share Link, which
+ * then makes them a Member with its Role.
+ */
+function GuestSignIn({ linkRole }: { linkRole: InviteRole | null }) {
+  if (!linkRole) return null
+  const label =
+    linkRole === "editor"
+      ? "Sign in to edit"
+      : linkRole === "commenter"
+        ? "Sign in to comment"
+        : "Sign in"
+  // A plain link (it navigates), styled as the one primary button.
+  return (
+    <a
+      href={`/sign-in?redirect=${encodeURIComponent(location.pathname + location.search)}`}
+      className={cn(buttonVariants(), "h-10 rounded-full px-4 shadow-panel")}
+    >
+      {label}
+    </a>
+  )
+}
+
+/** A Guest's link was turned off or replaced (M3 ticket 04). */
+function LinkGone() {
+  return (
+    <Notice
+      title="This link doesn't work anymore"
+      body="The board's owner turned it off or replaced it. Ask them for a new one, or sign in if they've invited you."
+      action={
+        <Button nativeButton={false} render={<Link to="/sign-in" />}>
+          Sign in
+        </Button>
+      }
+    />
+  )
+}
+
+/** The Board is at its connection cap; the connection tries again every 30 s by itself. */
+function Busy() {
+  return (
+    <Notice
+      title="This board is busy right now"
+      body="It has as many visitors as it can take. We'll try again every 30 seconds, so you can leave this page open."
+      action={
+        <span className="type-caption flex items-center gap-1.5 text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" /> Waiting for room…
+        </span>
       }
     />
   )

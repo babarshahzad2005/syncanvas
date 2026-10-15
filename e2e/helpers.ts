@@ -121,3 +121,28 @@ export async function invite(page: Page, email: string, role = "editor") {
   })
   expect(res.status()).toBe(201)
 }
+
+/** Turns on the Share Link of the Board open in `page` and returns its address. */
+export async function shareLinkOf(page: Page, role = "viewer") {
+  const boardId = new URL(page.url()).pathname.split("/").at(-1) ?? ""
+  const res = await page.request.put(`/api/boards/${boardId}/share-link`, { data: { role } })
+  expect(res.ok()).toBe(true)
+  const { token } = (await res.json()) as { token: string }
+  return new URL(`/b/${boardId}?s=${encodeURIComponent(token)}`, page.url()).toString()
+}
+
+/** On the sign-in page: asks for a link for `email` and follows it from the dev inbox. */
+export async function finishSignIn(page: Page, email: string) {
+  await page.getByLabel("Email").fill(email)
+  await page.getByRole("button", { name: "Continue with email" }).click()
+  await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible()
+  let link = ""
+  await expect
+    .poll(async () => {
+      const res = await page.request.get(`/api/dev/magic-link?email=${encodeURIComponent(email)}`)
+      if (res.ok()) link = ((await res.json()) as { url: string }).url
+      return link
+    })
+    .not.toBe("")
+  await page.goto(link)
+}

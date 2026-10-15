@@ -18,7 +18,10 @@ export type BoardTokenClaims = {
   kind: BoardTokenKind
 }
 
-/** A verified token's claims, plus when it was issued (seconds since the epoch). */
+/**
+ * A verified token's claims, plus when it was issued in milliseconds (the "iatMs" claim), so
+ * an access change and a token issued in the same second can still be told apart.
+ */
 export type VerifiedBoardToken = BoardTokenClaims & { issuedAt: number }
 
 /** Keys are stored as base64url-encoded JWK JSON (see scripts/gen-keys.mjs). */
@@ -50,6 +53,7 @@ export async function signBoardToken(
     role: claims.role,
     kind: claims.kind,
     name: claims.name,
+    iatMs: now,
   })
     .setProtectedHeader({ alg: "EdDSA" })
     .setSubject(claims.userId)
@@ -72,13 +76,14 @@ export async function verifyBoardToken(
       audience: AUDIENCE,
       algorithms: ["EdDSA"],
     })
-    const { sub, board, role, kind, name, iat } = payload as Record<string, unknown>
+    const { sub, board, role, kind, name, iat, iatMs } = payload as Record<string, unknown>
     if (typeof sub !== "string" || typeof board !== "string") return null
     if (typeof name !== "string" || typeof iat !== "number") return null
     if (role !== "owner" && role !== "editor" && role !== "commenter" && role !== "viewer")
       return null
     if (kind !== "member" && kind !== "guest" && kind !== "embed") return null
-    return { userId: sub, name, boardId: board, role, kind, issuedAt: iat }
+    const issuedAt = typeof iatMs === "number" ? iatMs : iat * 1000
+    return { userId: sub, name, boardId: board, role, kind, issuedAt }
   } catch {
     return null
   }
