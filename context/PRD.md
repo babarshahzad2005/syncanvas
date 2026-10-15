@@ -97,7 +97,10 @@ The **board room** is the source of truth for Board content. **Postgres** is the
 | Boards per User (owned) | 50 | Creation is blocked with a message |
 | Image size / storage per User | 5 MB / 50 MB (KV free tier: 1 GB total) | Upload rejected with a message. Allowed types: PNG, JPEG, GIF (first frame), WebP |
 | PNG export | 8,192 px longest side | Scaled down automatically, with a notice |
-| Invitation emails | 20 per User per day, 200 per day in total (Brevo's free 300/day keeps 100 for sign-in links) | Sending is blocked with a message saying when it resets |
+| Invitation emails | 20 per User per day, 150 per day in total | Sending is blocked with a message saying when it resets |
+| Digest emails | 50 per day in total, at most one per User every 3 hours | Unread Notifications wait for the next digest (the next day once the 50 are spent) |
+| Email budget | Brevo's free 300/day: 100 kept for sign-in links, 150 invitations, 50 digests (M4 planning) | Sign-in links are never limited by the other two |
+| Comment length | 2,000 characters | The reply box stops accepting text and says so |
 
 ## 7. Key risks
 
@@ -125,7 +128,7 @@ If the schedule slips, **cut in this order:** (1) Version history, (2) email dig
 | **M1 Canvas core** | All tools, connectors, selection/group/align/layer/Lock, copy/paste, local-only undo, throttled moves, shortcuts | Fuzz suite (S1, S2) green |
 | **M2 Presence and offline** | Cursors, presence list, follow mode, reconnect with backoff and jitter | Offline merge tests green |
 | **M3 Sharing and access** | Invitations, Share Link, Roles, live downgrade and revoke, connection cap | S7 green |
-| **M4 Comments and notifications** | Threads, pins, Mentions, replies, resolve, notification list, digest with unsubscribe | |
+| **M4 Comments and notifications** | Threads, pins, Mentions, replies, resolve, notification list, digest with unsubscribe | Two browsers: a Commenter pins a Thread to an Element and mentions the Owner, who sees the pin and the Notification live; the pin follows the Element, detaches when it's deleted, and reattaches on undo. Viewers and Guests are refused every comment write |
 | **M5 Dashboard and content** | Dashboard, Folders, favorites, recent, Trash, search, templates, images, thumbnails, Versions, quotas, account deletion | |
 | **M6 Export, Embed, hardening** | PNG/SVG/PDF export, Embed, Share Link expiry, load and perf tests, README and portfolio write-up with a live Embed | S3–S6 and S8 green |
 
@@ -235,11 +238,16 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
   - Authors can edit and delete their own comments.
   - The Owner can delete any comment or Thread.
   - Viewers and Guests can read Threads but not write in them.
-- **Mentions:** `@` suggests only Members of the Board.
+- **Comments** are plain text up to 2,000 characters: line breaks kept, web links clickable, and Mentions. No other formatting (M4 planning).
+- **Pins** sit exactly where they were placed. A pin on an Element keeps its spot relative to the Element's box, so it moves and scales with it.
+- **Deleting:** deleting a Thread's first comment removes the whole Thread if nobody has replied; otherwise it reads "Comment deleted" and the replies stay. The Owner's "Delete thread" removes it all, after a confirmation.
+- **Offline:** comments need a connection. They aren't part of the offline copy.
+- **Mentions:** `@` suggests only Members of the Board. A Mention stores the Member's account, so it always shows their current name; someone who no longer has access shows as plain text.
 - **Notifications:** a Notification goes to the mentioned Member, and to everyone who has posted in or been mentioned in a Thread when it gets a reply. The person replying is never notified of their own reply.
-- **Notification list:** a bell icon opens your Notifications across all Boards, newest first. Clicking one opens the Board with the Thread focused. Items can be marked read one by one or all at once, and are kept for 90 days. The badge updates live.
+- **Notification list:** a bell icon opens your Notifications across all Boards, newest first. Clicking one opens the Board with the Thread focused. Items can be marked read one by one or all at once, and are kept for 90 days. Notifications for Boards you can no longer open are hidden.
+- **Live badge:** on a Board, its Notifications arrive instantly over the Board connection. Elsewhere the badge checks every 30 s while the tab is visible, and again when it gets focus (M4 planning).
 - **Visibility filter:** open, resolved, or both. Resolved Threads are hidden by default.
-- **Hourly digest:** one email per User covering Notifications that are unread and not yet emailed, then marks them emailed. Every email has a one-click unsubscribe, and settings have a toggle for it (on by default).
+- **Hourly digest:** one email per User covering Notifications that are unread and not yet emailed, then marks them emailed; at most one per User every 3 hours, and 50 a day in total. Every email has a one-click unsubscribe link and `List-Unsubscribe` headers, and the account menu's "Notifications…" has a switch for it (on by default).
 
 ### A6. Accounts and dashboard (P0, search P1)
 
