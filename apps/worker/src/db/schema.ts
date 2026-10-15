@@ -172,3 +172,28 @@ export const invitationEmails = pgTable(
     index("invitation_emails_sender_idx").on(table.senderId, table.sentAt),
   ],
 )
+
+/**
+ * A Board's Share Link (PRD A4): at most one. Its token is stored as is, so the Owner can copy
+ * the link again; changing the Role or regenerating writes a new token, and turning the link
+ * off deletes the row. Members who joined through it keep their Memberships.
+ */
+export const shareLinks = pgTable(
+  "share_links",
+  {
+    boardId: text("board_id")
+      .primaryKey()
+      .references(() => boards.id, { onDelete: "cascade" }),
+    token: text("token").notNull().unique(),
+    role: text("role", { enum: ["editor", "commenter", "viewer"] }).notNull(),
+    /** Null: never expires. */
+    expiresAt: timestamp("expires_at"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    check("share_links_role_check", sql`${table.role} in ('editor', 'commenter', 'viewer')`),
+  ],
+)

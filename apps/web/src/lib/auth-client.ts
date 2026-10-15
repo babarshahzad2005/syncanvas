@@ -11,5 +11,6 @@ export type Session = typeof authClient.$Infer.Session
 
 /** Only same-site paths are allowed as post-sign-in destinations (no open redirects). */
 export function safeRedirect(value: unknown): string {
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : "/"
+  // "//x" and "/\x" both mean another site to a browser.
+  return typeof value === "string" && /^\/(?![/\\])/.test(value) ? value : "/"
 }

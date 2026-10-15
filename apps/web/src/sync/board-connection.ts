@@ -146,7 +146,9 @@ export class BoardConnection {
     } catch (error) {
       if (error instanceof ApiError && error.status === 403) return this.setStatus("revoked")
       if (error instanceof ApiError && error.status === 401) {
-        window.location.assign(`/sign-in?redirect=${encodeURIComponent(location.pathname)}`)
+        window.location.assign(
+          `/sign-in?redirect=${encodeURIComponent(location.pathname + location.search)}`,
+        )
         return
       }
       return this.scheduleRetry()

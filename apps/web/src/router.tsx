@@ -33,6 +33,10 @@ const dashboardRoute = createRoute({
 const boardRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/b/$boardId",
+  // ?s= carries a Share Link token (M3 ticket 03).
+  validateSearch: (search: Record<string, unknown>): { s?: string } => ({
+    s: typeof search.s === "string" ? search.s : undefined,
+  }),
   component: BoardScreen,
 })
 

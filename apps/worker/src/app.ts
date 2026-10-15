@@ -7,6 +7,10 @@ import {
   displayNameOf,
   type InviteRequest,
   type InviteResponse,
+  type JoinRequest,
+  type JoinResponse,
+  type ShareLinkRequest,
+  type ShareLinkState,
   type SharingResponse,
 } from "@syncanvas/shared"
 import { Hono } from "hono"
@@ -32,9 +36,13 @@ import {
   type ApplyAccess,
   cancelInvitation,
   changeRole,
+  deleteShareLink,
   invite,
+  joinByLink,
+  regenerateShareLink,
   removeMember,
   resendInvitation,
+  setShareLink,
   sharingState,
 } from "./sharing"
 
@@ -212,6 +220,42 @@ export function createApp(services: ServicesFactory = productionServices) {
       userId: c.req.param("userId"),
     })
     return c.json({ ok: true })
+  })
+
+  // ---------- Share Link (M3 ticket 03) ----------
+
+  app.put("/boards/:id/share-link", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as ShareLinkRequest
+    const body: ShareLinkState = await setShareLink(c.var.services.db, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+      role: input.role,
+      expiresInDays: input.expiresInDays,
+    })
+    return c.json(body)
+  })
+
+  app.post("/boards/:id/share-link/regenerate", async (c) => {
+    const body: ShareLinkState = await regenerateShareLink(c.var.services.db, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+    })
+    return c.json(body)
+  })
+
+  app.delete("/boards/:id/share-link", async (c) => {
+    await deleteShareLink(c.var.services.db, { boardId: c.req.param("id"), caller: c.var.user })
+    return c.json({ ok: true })
+  })
+
+  app.post("/boards/:id/join", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as Partial<JoinRequest>
+    const body: JoinResponse = await joinByLink(c.var.services.db, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+      token: input.token,
+    })
+    return c.json(body)
   })
 
   return app

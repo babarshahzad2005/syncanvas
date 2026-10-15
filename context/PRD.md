@@ -214,6 +214,7 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 - Changing its Role or regenerating it invalidates the old URL.
 - A signed-in User who opens it becomes a lasting Member. Turning the link off doesn't remove Members who already joined through it.
 - Anonymous visitors become Guests with view access only.
+- Only the Owner sees and manages the link. A new link is Viewer and never expires; choosing an expiry counts from that moment. Every bad, old, or expired link gets the same answer, so tokens can't be probed.
 
 **Leaving and access changes**
 - Any Member except the Owner can leave a Board.

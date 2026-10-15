@@ -1,23 +1,27 @@
 import {
   displayNameOf,
+  higherRole,
   INVITATION_DAYS,
   INVITE_ROLES,
   INVITES_PER_DAY,
   INVITES_PER_USER_PER_DAY,
   type InviteResponse,
   invitableRoles,
+  type JoinResponse,
+  LINK_EXPIRY_DAYS,
   type LimitError,
   normalizeEmail,
   type Role,
+  type ShareLinkState,
   type SharingResponse,
 } from "@syncanvas/shared"
-import { and, asc, count, eq, gt, gte } from "drizzle-orm"
+import { and, asc, count, eq, gt, gte, isNull } from "drizzle-orm"
 import { HTTPException } from "hono/http-exception"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 import type { AccessChange } from "./board-room"
 import { findMembership } from "./boards"
 import type { Database } from "./db/client"
-import { invitationEmails, invitations, memberships, user } from "./db/schema"
+import { boards, invitationEmails, invitations, memberships, shareLinks, user } from "./db/schema"
 import type { SendInvitation } from "./email"
 
 // Sharing (M3; PRD A4): who has access to a Board, Invitations, and their daily limits.
@@ -78,8 +82,13 @@ export async function sharingState(
           .where(and(eq(invitations.boardId, boardId), gt(invitations.expiresAt, new Date())))
           .orderBy(asc(invitations.createdAt))
 
+  const [link] = isOwner
+    ? await db.select().from(shareLinks).where(eq(shareLinks.boardId, boardId)).limit(1)
+    : []
+
   return {
     board: { id: boardId, title: membership.title },
+    link: link ? linkState(link) : null,
     you: { id: caller.id, role: membership.role },
     canInvite,
     canManage: isOwner,
@@ -361,4 +370,155 @@ export async function removeMember(
     role: null,
     by: displayNameOf(input.caller),
   })
+}
+
+// ---------- Share Link (M3 ticket 03) ----------
+
+const NO_LINK = "This link doesn't work anymore. Ask the board's owner for a new one."
+
+/** 24 random bytes, URL-safe: unguessable, and short enough to paste. */
+function newLinkToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24))
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "")
+}
+
+function linkState(row: typeof shareLinks.$inferSelect): ShareLinkState {
+  return { token: row.token, role: row.role, expiresAt: row.expiresAt?.toISOString() ?? null }
+}
+
+async function ownerOrRefuse(db: Database, boardId: string, caller: Caller) {
+  const membership = await memberOrRefuse(db, boardId, caller)
+  if (membership.role !== "owner") {
+    throw refuse(403, { error: "Only the owner can change the share link." })
+  }
+}
+
+/**
+ * Turns the Share Link on, or changes its Role or expiry (the Owner only). A different Role
+ * gets a new token, so the old URL stops granting it (PRD A4). Picking an expiry counts from now.
+ */
+export async function setShareLink(
+  db: Database,
+  input: { boardId: string; caller: Caller; role?: unknown; expiresInDays?: unknown },
+): Promise<ShareLinkState> {
+  await ownerOrRefuse(db, input.boardId, input.caller)
+  const role = input.role === undefined ? undefined : INVITE_ROLES.find((r) => r === input.role)
+  if (input.role !== undefined && !role) {
+    throw refuse(400, { error: "Pick a role: editor, commenter, or viewer." })
+  }
+  const days =
+    input.expiresInDays === undefined
+      ? undefined
+      : LINK_EXPIRY_DAYS.find((d) => d === input.expiresInDays)
+  if (input.expiresInDays !== undefined && days === undefined) {
+    throw refuse(400, { error: "Links last 1, 7, or 30 days, or never expire." })
+  }
+  const expiresAt =
+    days === undefined ? undefined : days === null ? null : new Date(Date.now() + days * DAY)
+
+  const [current] = await db
+    .select()
+    .from(shareLinks)
+    .where(eq(shareLinks.boardId, input.boardId))
+    .limit(1)
+  if (!current) {
+    const [row] = await db
+      .insert(shareLinks)
+      .values({
+        boardId: input.boardId,
+        token: newLinkToken(),
+        role: role ?? "viewer",
+        expiresAt: expiresAt ?? null,
+        createdBy: input.caller.id,
+      })
+      .returning()
+    if (!row) throw new Error("Share link insert returned no row")
+    return linkState(row)
+  }
+  const changes = {
+    ...(role && role !== current.role ? { role, token: newLinkToken() } : {}),
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
+  }
+  if (Object.keys(changes).length === 0) return linkState(current)
+  const [row] = await db
+    .update(shareLinks)
+    .set(changes)
+    .where(eq(shareLinks.boardId, input.boardId))
+    .returning()
+  if (!row) throw new Error("Share link update returned no row")
+  return linkState(row)
+}
+
+/** A new token for the same link: the old URL stops working (the Owner only). */
+export async function regenerateShareLink(
+  db: Database,
+  input: { boardId: string; caller: Caller },
+): Promise<ShareLinkState> {
+  await ownerOrRefuse(db, input.boardId, input.caller)
+  const [row] = await db
+    .update(shareLinks)
+    .set({ token: newLinkToken(), createdBy: input.caller.id, createdAt: new Date() })
+    .where(eq(shareLinks.boardId, input.boardId))
+    .returning()
+  if (!row) throw refuse(404, { error: "The share link is off." })
+  return linkState(row)
+}
+
+/** Turns the link off. Members who joined through it stay (PRD A4). */
+export async function deleteShareLink(db: Database, input: { boardId: string; caller: Caller }) {
+  await ownerOrRefuse(db, input.boardId, input.caller)
+  await db.delete(shareLinks).where(eq(shareLinks.boardId, input.boardId))
+}
+
+/**
+ * A signed-in User opens a Share Link: with a valid, unexpired token they become a lasting
+ * Member with its Role, or keep the higher Role they already had. Every bad token (wrong,
+ * old, expired, or for a Board in Trash) gets the same answer.
+ */
+export async function joinByLink(
+  db: Database,
+  input: { boardId: string; caller: Caller; token: unknown },
+): Promise<JoinResponse> {
+  if (typeof input.token !== "string" || input.token.length === 0) {
+    throw refuse(403, { error: NO_LINK })
+  }
+  const [link] = await db
+    .select({ role: shareLinks.role, expiresAt: shareLinks.expiresAt })
+    .from(shareLinks)
+    .innerJoin(boards, eq(boards.id, shareLinks.boardId))
+    .where(
+      and(
+        eq(shareLinks.boardId, input.boardId),
+        eq(shareLinks.token, input.token),
+        isNull(boards.deletedAt),
+      ),
+    )
+    .limit(1)
+  if (!link || (link.expiresAt && link.expiresAt <= new Date())) {
+    throw refuse(403, { error: NO_LINK })
+  }
+  const existing = await findMembership(db, input.boardId, input.caller.id)
+  if (!existing) {
+    await db
+      .insert(memberships)
+      .values({
+        boardId: input.boardId,
+        userId: input.caller.id,
+        role: link.role,
+        via: "share_link",
+      })
+      .onConflictDoNothing()
+    return { role: link.role }
+  }
+  const role = higherRole(existing.role, link.role)
+  if (role !== existing.role) {
+    await db
+      .update(memberships)
+      .set({ role })
+      .where(and(eq(memberships.boardId, input.boardId), eq(memberships.userId, input.caller.id)))
+  }
+  return { role }
 }

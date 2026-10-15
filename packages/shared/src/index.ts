@@ -117,6 +117,8 @@ export type SharingResponse = {
   members: SharingMember[]
   /** Pending, unexpired Invitations; only shown to those who can invite. */
   invitations: PendingInvitation[]
+  /** The Share Link, shown to the Owner only (null: off, or not the Owner). */
+  link: ShareLinkState | null
 }
 
 export type InviteRequest = { email: string; role: InviteRole }
@@ -133,3 +135,26 @@ export type AccessNotice = { role: Role | null; by: string }
 
 /** PATCH /api/boards/:id/members/:userId (the Owner only). */
 export type ChangeRoleRequest = { role: InviteRole }
+
+// ---------- Share Link (M3 ticket 03) ----------
+
+/** How long a Share Link lasts: null for never (the default), or days. */
+export const LINK_EXPIRY_DAYS = [null, 1, 7, 30] as const
+export type LinkExpiry = (typeof LINK_EXPIRY_DAYS)[number]
+
+export type ShareLinkState = { token: string; role: InviteRole; expiresAt: string | null }
+
+/**
+ * PUT /api/boards/:id/share-link (the Owner only): turns the link on, or changes it. Missing
+ * fields stay as they are (a new link is Viewer, never expiring). A new Role means a new token.
+ */
+export type ShareLinkRequest = { role?: InviteRole; expiresInDays?: LinkExpiry }
+
+/** POST /api/boards/:id/join: become a Member through the Share Link. */
+export type JoinRequest = { token: string }
+export type JoinResponse = { role: Role }
+
+/** The path a Share Link opens. */
+export function shareLinkPath(boardId: string, token: string) {
+  return `/b/${encodeURIComponent(boardId)}?s=${encodeURIComponent(token)}`
+}

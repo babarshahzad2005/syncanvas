@@ -3,6 +3,7 @@ import type {
   DashboardResponse,
   LimitError,
   Role,
+  ShareLinkState,
   SharingResponse,
 } from "@syncanvas/shared"
 import { beforeEach, describe, expect, it } from "vitest"
@@ -343,5 +344,146 @@ describe("Changing access", () => {
       "The owner can't leave their own board.",
     )
     expect(await dashboardIds(ada)).toEqual([[board, "owner"]])
+  })
+})
+
+describe("Share Link", () => {
+  let ada: string
+  let board: string
+  beforeEach(async () => {
+    t = await createTestApp()
+    ada = await t.signIn("ada@example.com")
+    board = await createBoard(ada)
+  })
+
+  const setLink = (cookie: string, body: object) =>
+    t.request(`/api/boards/${board}/share-link`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+      cookie,
+    })
+  async function linkOf(body: object = {}) {
+    const res = await setLink(ada, body)
+    expect(res.status).toBe(200)
+    return json<ShareLinkState>(res)
+  }
+  const join = (cookie: string, token: unknown, boardId = board) =>
+    t.request(`/api/boards/${boardId}/join`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
+      cookie,
+    })
+
+  it("turns on as Viewer, never expiring, and only the Owner sees it", async () => {
+    const link = await linkOf()
+    expect(link).toMatchObject({ role: "viewer", expiresAt: null })
+    expect(link.token).toMatch(/^[\w-]{32}$/)
+    expect((await sharing(ada, board)).link).toEqual(link)
+
+    const editor = await member(ada, board, "ed@example.com", "editor")
+    expect((await sharing(editor, board)).link).toBeNull()
+  })
+
+  it("lets only the Owner manage it", async () => {
+    await linkOf()
+    const editor = await member(ada, board, "ed@example.com", "editor")
+    const outsider = await t.signIn("out@example.com")
+    for (const cookie of [editor, outsider]) {
+      expect((await setLink(cookie, { role: "editor" })).status).toBe(403)
+      const regen = await t.request(`/api/boards/${board}/share-link/regenerate`, {
+        method: "POST",
+        cookie,
+      })
+      expect(regen.status).toBe(403)
+      const off = await t.request(`/api/boards/${board}/share-link`, { method: "DELETE", cookie })
+      expect(off.status).toBe(403)
+    }
+    expect((await setLink(ada, { role: "owner" })).status).toBe(400)
+    expect((await setLink(ada, { expiresInDays: 3 })).status).toBe(400)
+  })
+
+  it("makes a signed-in visitor a lasting Member with the link's Role", async () => {
+    const { token } = await linkOf({ role: "commenter" })
+    const grace = await t.signIn("grace@example.com")
+    const res = await join(grace, token)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ role: "commenter" })
+    expect(await dashboardIds(grace)).toEqual([[board, "commenter"]])
+    const [row] = (
+      await t.pg.query<{ via: string }>("select via from memberships where role = 'commenter'")
+    ).rows
+    expect(row?.via).toBe("share_link")
+
+    // Turning the link off keeps her; it just stops working for anyone new.
+    expect(
+      (await t.request(`/api/boards/${board}/share-link`, { method: "DELETE", cookie: ada }))
+        .status,
+    ).toBe(200)
+    expect((await sharing(ada, board)).link).toBeNull()
+    expect(await dashboardIds(grace)).toEqual([[board, "commenter"]])
+    const linus = await t.signIn("linus@example.com")
+    expect((await join(linus, token)).status).toBe(403)
+  })
+
+  it("keeps the higher Role for someone who's already a Member", async () => {
+    const { token } = await linkOf({ role: "commenter" })
+    const editor = await member(ada, board, "ed@example.com", "editor")
+    const viewer = await member(ada, board, "vi@example.com", "viewer")
+    expect(await json(await join(editor, token))).toEqual({ role: "editor" })
+    expect(await json(await join(viewer, token))).toEqual({ role: "commenter" })
+    expect(await json(await join(ada, token))).toEqual({ role: "owner" })
+    expect(await dashboardIds(viewer)).toEqual([[board, "commenter"]])
+  })
+
+  it("changing the Role or regenerating retires the old URL", async () => {
+    const first = await linkOf()
+    // Changing only the expiry keeps the token.
+    const dated = await linkOf({ expiresInDays: 7 })
+    expect(dated.token).toBe(first.token)
+    const days = (new Date(dated.expiresAt ?? 0).getTime() - Date.now()) / 86_400_000
+    expect(Math.round(days)).toBe(7)
+
+    const editorLink = await linkOf({ role: "editor" })
+    expect(editorLink.token).not.toBe(first.token)
+    expect(editorLink.expiresAt).toBe(dated.expiresAt)
+    const regen = await t.request(`/api/boards/${board}/share-link/regenerate`, {
+      method: "POST",
+      cookie: ada,
+    })
+    const fresh = await json<ShareLinkState>(regen)
+    expect(fresh.token).not.toBe(editorLink.token)
+
+    const grace = await t.signIn("grace@example.com")
+    const old = await join(grace, first.token)
+    const wrongBoard = await join(grace, fresh.token, "no-such-board")
+    expect(old.status).toBe(403)
+    expect(wrongBoard.status).toBe(403)
+    expect(await old.json()).toEqual(await wrongBoard.json())
+    expect((await join(grace, editorLink.token)).status).toBe(403)
+    expect((await join(grace, "")).status).toBe(403)
+    expect((await join(grace, fresh.token)).status).toBe(200)
+  })
+
+  it("stops working when it expires", async () => {
+    const { token } = await linkOf({ expiresInDays: 1 })
+    await t.pg.exec("update share_links set expires_at = now() - interval '1 minute'")
+    const grace = await t.signIn("grace@example.com")
+    expect((await join(grace, token)).status).toBe(403)
+    expect(await dashboardIds(grace)).toEqual([])
+    // Back to never expiring: it works again.
+    await linkOf({ expiresInDays: null })
+    expect((await join(grace, token)).status).toBe(200)
+  })
+
+  it("needs a signed-in User", async () => {
+    const { token } = await linkOf()
+    expect(
+      (
+        await t.request(`/api/boards/${board}/join`, {
+          method: "POST",
+          body: JSON.stringify({ token }),
+        })
+      ).status,
+    ).toBe(401)
   })
 })

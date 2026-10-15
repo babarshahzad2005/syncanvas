@@ -1,10 +1,15 @@
 import {
   INVITE_ROLES,
   type InviteRole,
+  LINK_EXPIRY_DAYS,
+  type LinkExpiry,
   type PendingInvitation,
   type Role,
+  type ShareLinkRequest,
+  type ShareLinkState,
   type SharingMember,
   type SharingResponse,
+  shareLinkPath,
 } from "@syncanvas/shared"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ChevronDown, Loader2, Mail } from "lucide-react"
@@ -24,13 +29,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { ApiError, api, queryKeys } from "@/lib/api"
 import { resetTime } from "@/lib/time"
 import { presenceColor } from "@/presence/model"
 
-// The Share button and dialog (DESIGN.md → Share dialog; M3 tickets 01–02): invite by email,
-// everyone with access plus pending Invitations, the Owner's Role menu and Remove, and Leave. The server decides what the caller may do
-// (`canInvite`, `canResend`, `canCancel`); the dialog only shows those controls.
+// The Share button and dialog (DESIGN.md → Share dialog; M3 tickets 01–03): invite by email,
+// everyone with access plus pending Invitations, the Owner's Role menu and Remove, the Share
+// Link (the Owner only), and Leave. The server decides what the caller may do (`canInvite`,
+// `canManage`, `canResend`, `canCancel`); the dialog only shows those controls.
 
 export const ROLE_LABEL: Record<Role, string> = {
   owner: "Owner",
@@ -109,6 +116,7 @@ function ShareDialogBody({ boardId, title, onLeave }: ShareProps) {
           <People boardId={boardId} state={sharing.data} />
         )}
       </section>
+      {state?.canManage && <ShareLinkSection boardId={boardId} link={state.link} />}
       {state && state.you.role !== "owner" && (
         <LeaveBoard title={state.board.title} onLeave={onLeave} />
       )}
@@ -436,5 +444,178 @@ function InvitationRow({
         </Button>
       )}
     </li>
+  )
+}
+
+// ---------- Share link (M3 ticket 03) ----------
+
+const LINK_VERB: Record<InviteRole, string> = {
+  editor: "edit",
+  commenter: "comment",
+  viewer: "view",
+}
+
+const EXPIRY_LABEL = (days: LinkExpiry) =>
+  days === null ? "Never" : days === 1 ? "1 day" : `${days} days`
+
+const shortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("en", { month: "short", day: "numeric" })
+
+/** On/off, its Role and expiry, the URL with Copy, and Regenerate (the Owner only). */
+function ShareLinkSection({ boardId, link }: { boardId: string; link: ShareLinkState | null }) {
+  const queryClient = useQueryClient()
+  const show = (next: ShareLinkState | null) =>
+    queryClient.setQueryData<SharingResponse>(queryKeys.sharing(boardId), (old) =>
+      old ? { ...old, link: next } : old,
+    )
+  const onError = (e: unknown) => toast(errorMessage(e))
+  const toggle = useMutation({
+    mutationFn: async (on: boolean) => {
+      if (on) return api.setShareLink(boardId, {})
+      await api.deleteShareLink(boardId)
+      return null
+    },
+    onSuccess: show,
+    onError,
+  })
+  const change = useMutation({
+    mutationFn: (input: ShareLinkRequest) => api.setShareLink(boardId, input),
+    onSuccess: (next, input) => {
+      if (link && input.role && next.token !== link.token) {
+        toast("Link updated", { description: "The old link no longer works." })
+      }
+      show(next)
+    },
+    onError,
+  })
+  const regenerate = useMutation({
+    mutationFn: () => api.regenerateShareLink(boardId),
+    onSuccess: (next) => {
+      toast("New link ready", { description: "The old link no longer works." })
+      show(next)
+    },
+    onError,
+  })
+  const url = link ? `${location.origin}${shareLinkPath(boardId, link.token)}` : ""
+  const busy = toggle.isPending || change.isPending || regenerate.isPending
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url)
+      toast("Link copied")
+    } catch {
+      toast("Couldn't copy the link", { description: "Select it and copy it yourself." })
+    }
+  }
+
+  return (
+    <section aria-labelledby="share-link" className="flex flex-col gap-3 border-t pt-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex min-w-0 flex-col">
+          <h3 id="share-link" className="type-body-strong">
+            Share link
+          </h3>
+          <span className="type-caption text-muted-foreground">
+            {link
+              ? "Anyone with the link can open the board and stays a member."
+              : "Off. Only the people above can open this board."}
+          </span>
+        </span>
+        <Switch
+          aria-label="Share link"
+          checked={link !== null}
+          disabled={busy}
+          onCheckedChange={(on) => toggle.mutate(on)}
+        />
+      </div>
+      {link && (
+        <>
+          <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
+            <span>Anyone with the link can</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={busy}
+                render={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Link role: ${ROLE_LABEL[link.role]}`}
+                    className="font-semibold"
+                  />
+                }
+              >
+                {LINK_VERB[link.role]}
+                <ChevronDown className="text-muted-foreground" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-52">
+                <DropdownMenuRadioGroup
+                  value={link.role}
+                  onValueChange={(v) => {
+                    if (v !== link.role) change.mutate({ role: v as InviteRole })
+                  }}
+                >
+                  {INVITE_ROLES.map((r) => (
+                    <DropdownMenuRadioItem
+                      key={r}
+                      value={r}
+                      closeOnClick
+                      className="flex-col items-start gap-0"
+                    >
+                      <span>{ROLE_LABEL[r]}</span>
+                      <span className="type-caption text-muted-foreground">{ROLE_HINT[r]}</span>
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <span className="ml-2 text-muted-foreground">Expires</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={busy}
+                render={<Button variant="ghost" size="sm" aria-label="Link expiry" />}
+              >
+                {link.expiresAt ? shortDate(link.expiresAt) : "Never"}
+                <ChevronDown className="text-muted-foreground" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-40">
+                {LINK_EXPIRY_DAYS.map((days) => (
+                  <DropdownMenuItem
+                    key={String(days)}
+                    onClick={() => change.mutate({ expiresInDays: days })}
+                  >
+                    {EXPIRY_LABEL(days)}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div className="flex gap-2">
+            <Input
+              readOnly
+              aria-label="Share link address"
+              value={url}
+              onFocus={(e) => e.currentTarget.select()}
+              className="min-w-0 flex-1 text-muted-foreground"
+            />
+            <Button variant="outline" onClick={() => void copy()}>
+              Copy link
+            </Button>
+          </div>
+          <p className="type-caption flex items-center gap-1 text-muted-foreground">
+            {link.expiresAt ? `Expires ${shortDate(link.expiresAt)}` : "Never expires"}
+            <span aria-hidden>·</span>
+            <Button
+              variant="link"
+              size="xs"
+              className="h-auto px-0"
+              disabled={busy}
+              onClick={() => regenerate.mutate()}
+            >
+              Regenerate
+            </Button>
+          </p>
+        </>
+      )}
+    </section>
   )
 }

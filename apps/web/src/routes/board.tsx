@@ -1,8 +1,9 @@
 import { createUndoManager } from "@syncanvas/board-model"
 import { canEdit, normalizeDisplayName } from "@syncanvas/shared"
+import { useQueryClient } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { ChevronDown, CloudOff, Eye, Loader2, Lock } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import type * as Y from "yjs"
 import { BoardCanvas, type CanvasHandle } from "@/board/board-canvas"
@@ -15,7 +16,7 @@ import { NameDialog } from "@/components/name-dialog"
 import { Button } from "@/components/ui/button"
 import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { api } from "@/lib/api"
+import { ApiError, api, queryKeys } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { toastOnNextPage } from "@/lib/next-page-toast"
 import { cn } from "@/lib/utils"
@@ -29,6 +30,63 @@ const route = getRouteApi("/authed/b/$boardId")
 /** Board screen (DESIGN.md → Layout → Board screen, "Dock tray"). */
 export function BoardScreen() {
   const { boardId } = route.useParams()
+  const { s: linkToken } = route.useSearch()
+  // Opened from a Share Link: join first, then open the Board as a Member (M3 ticket 03).
+  if (linkToken) return <JoinByLink boardId={boardId} token={linkToken} />
+  return <BoardView boardId={boardId} />
+}
+
+/**
+ * Joins through the Share Link, then drops `?s=` from the address (it's the Owner's to
+ * share, and a Member doesn't need it) and opens the Board.
+ */
+function JoinByLink({ boardId, token }: { boardId: string; token: string }) {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const [failed, setFailed] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    api.join(boardId, token).then(
+      async () => {
+        if (cancelled) return
+        await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })
+        await navigate({ to: "/b/$boardId", params: { boardId }, search: {}, replace: true })
+      },
+      (error) => {
+        if (cancelled) return
+        setFailed(
+          error instanceof ApiError
+            ? error.message
+            : "Couldn't open the link. Check your connection and try again.",
+        )
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [boardId, token, navigate, queryClient])
+
+  if (failed) {
+    return (
+      <Notice
+        title="This link doesn't work"
+        body={failed}
+        action={
+          <Button nativeButton={false} render={<Link to="/" />}>
+            Back to your boards
+          </Button>
+        }
+      />
+    )
+  }
+  return (
+    <main className="flex min-h-svh items-center justify-center gap-2 text-muted-foreground">
+      <Loader2 className="size-4 animate-spin" /> Opening the board…
+    </main>
+  )
+}
+
+function BoardView({ boardId }: { boardId: string }) {
   const { connection, status, board, role, doc } = useBoardConnection(boardId)
   const navigate = useNavigate()
   const leaving = useRef(false)
@@ -198,21 +256,31 @@ function TitlePill({
 
 function NoAccess() {
   return (
+    <Notice
+      title="You don't have access to this board"
+      body="It may have been deleted, or the owner hasn't shared it with you. Ask them for an invite."
+      action={
+        <Button nativeButton={false} render={<Link to="/" />}>
+          Back to your boards
+        </Button>
+      }
+    />
+  )
+}
+
+/** A full-page message with a lock (no access, a dead Share Link). */
+function Notice({ title, body, action }: { title: string; body: string; action: ReactNode }) {
+  return (
     <main className="flex min-h-svh items-center justify-center px-4">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
         <span className="flex size-10 items-center justify-center rounded-full bg-muted">
           <Lock className="size-5 text-muted-foreground" />
         </span>
         <div className="flex flex-col gap-1">
-          <h1 className="type-title">You don't have access to this board</h1>
-          <p className="text-muted-foreground">
-            It may have been deleted, or the owner hasn't shared it with you. Ask them for an
-            invite.
-          </p>
+          <h1 className="type-title">{title}</h1>
+          <p className="text-muted-foreground">{body}</p>
         </div>
-        <Button nativeButton={false} render={<Link to="/" />}>
-          Back to your boards
-        </Button>
+        {action}
       </div>
     </main>
   )

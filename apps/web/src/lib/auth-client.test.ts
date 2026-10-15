@@ -8,6 +8,7 @@ describe("safeRedirect", () => {
   it("rejects other sites and junk", () => {
     expect(safeRedirect("https://evil.example")).toBe("/")
     expect(safeRedirect("//evil.example")).toBe("/")
+    expect(safeRedirect("/\\evil.example")).toBe("/")
     expect(safeRedirect(undefined)).toBe("/")
   })
 })

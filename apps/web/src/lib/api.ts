@@ -5,6 +5,9 @@ import type {
   DashboardResponse,
   InviteRequest,
   InviteResponse,
+  JoinResponse,
+  ShareLinkRequest,
+  ShareLinkState,
   SharingResponse,
 } from "@syncanvas/shared"
 
@@ -65,6 +68,20 @@ export const api = {
   removeMember: (boardId: string, userId: string) =>
     request<{ ok: true }>(`${board(boardId)}/members/${encodeURIComponent(userId)}`, {
       method: "DELETE",
+    }),
+  setShareLink: (boardId: string, input: ShareLinkRequest) =>
+    request<ShareLinkState>(`${board(boardId)}/share-link`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+  regenerateShareLink: (boardId: string) =>
+    request<ShareLinkState>(`${board(boardId)}/share-link/regenerate`, { method: "POST" }),
+  deleteShareLink: (boardId: string) =>
+    request<{ ok: true }>(`${board(boardId)}/share-link`, { method: "DELETE" }),
+  join: (boardId: string, token: string) =>
+    request<JoinResponse>(`${board(boardId)}/join`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
     }),
 }
 
