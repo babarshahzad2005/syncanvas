@@ -693,3 +693,81 @@ describe("BoardRoom Guests and cap", () => {
     fresh.close()
   })
 })
+
+// ---------- S7: every write path is refused for read-only connections (M3 ticket 05) ----------
+
+/** A sync message as a client would send it. */
+function rawSync(write: (e: encoding.Encoder) => void) {
+  const e = encoding.createEncoder()
+  encoding.writeVarUint(e, MESSAGE_SYNC)
+  write(e)
+  return encoding.toUint8Array(e)
+}
+
+/** A doc holding one rectangle, standing in for a client's own content. */
+function docWithRect(id: string) {
+  const doc = new Y.Doc()
+  const m = new Y.Map<unknown>()
+  for (const [k, v] of Object.entries({
+    type: "rect",
+    position: { x: 1, y: 2 },
+    size: { w: 30, h: 40 },
+    z: "a0",
+    color: "ink",
+  }))
+    m.set(k, v)
+  elementsOf(doc).set(id, m)
+  return doc
+}
+
+describe("S7: read-only connections can't write", () => {
+  const readOnly = [
+    ["Viewer", (board: string) => joinAs(board, "viewer", "vi")],
+    ["Commenter", (board: string) => joinAs(board, "commenter", "co")],
+    ["Guest", (board: string) => joinGuest(board, "guest-s7")],
+  ] as const
+  const paths = [
+    [
+      "a sync update",
+      (doc: Y.Doc) => rawSync((e) => syncProtocol.writeUpdate(e, Y.encodeStateAsUpdate(doc))),
+    ],
+    ["a step-2 reply", (doc: Y.Doc) => rawSync((e) => syncProtocol.writeSyncStep2(e, doc))],
+  ] as const
+
+  for (const [who, connect] of readOnly) {
+    for (const [path, message] of paths) {
+      it(`refuses ${path} from a ${who}: closed, nothing stored or broadcast`, async () => {
+        const board = newBoardId()
+        const owner = await joinAs(board, "owner", "ada")
+        const client = await connect(board)
+        client.ws.send(message(docWithRect("sneaky")))
+        await until(() => client.closed !== null, `the ${who} to be closed`)
+        expect(client.closed).toEqual({ code: CLOSE.forbidden, reason: "read-only" })
+        await new Promise((r) => setTimeout(r, 200))
+        expect(owner.rect("sneaky")).toBeUndefined()
+        owner.close()
+        const late = await joinAs(board, "editor", "late")
+        expect(late.rect("sneaky")).toBeUndefined()
+        late.close()
+      })
+    }
+  }
+
+  it("never lets presence write the document", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const viewer = await joinAs(board, "viewer", "vi")
+    // Presence that tries to smuggle a document update, or claims to be someone else.
+    const update = Array.from(Y.encodeStateAsUpdate(docWithRect("via-presence")))
+    viewer.sendPresence(21, { update, elements: { r: { type: "rect" } }, user: { id: "ada" } })
+    await until(() => owner.presenceOf(21) !== undefined, "the presence to arrive")
+    expect(owner.presenceOf(21)?.user).toMatchObject({ id: "vi", guest: false })
+    expect(viewer.closed).toBeNull()
+    owner.close()
+    viewer.close()
+    const late = await joinAs(board, "editor", "late")
+    expect(late.rect("via-presence")).toBeUndefined()
+    expect(elementsOf(late.doc).size).toBe(0)
+    late.close()
+  })
+})

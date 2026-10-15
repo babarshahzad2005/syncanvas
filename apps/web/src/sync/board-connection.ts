@@ -74,6 +74,8 @@ export class BoardConnection {
   presence: TabPresence[] = []
   /** The last access change the board room announced for you (M3 ticket 02). */
   notice: AccessNotice | null = null
+  /** Whether this connection was ever online: losing access after that isn't a first visit. */
+  wasOnline = false
   /** For a Guest: what the Share Link grants once they sign in (M3 ticket 04). */
   linkRole: InviteRole | null = null
 
@@ -320,6 +322,7 @@ export class BoardConnection {
     if (encoding.length(reply) > 1) this.ws?.send(encoding.toUint8Array(reply))
     if (syncType === syncProtocol.messageYjsSyncStep2) {
       this.attempt = 0
+      this.wasOnline = true
       this.setStatus("online")
     }
   }

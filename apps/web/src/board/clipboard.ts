@@ -56,7 +56,7 @@ const decode = (base64: string) =>
   new TextDecoder().decode(Uint8Array.from(atob(base64), (c) => c.codePointAt(0) ?? 0))
 
 /** A PNG of the Elements, drawn like the canvas in the light theme. */
-async function pictureOf(
+export async function pictureOf(
   elements: readonly ElementWithId[],
   byId: ReadonlyMap<string, ElementWithId>,
 ): Promise<Blob> {

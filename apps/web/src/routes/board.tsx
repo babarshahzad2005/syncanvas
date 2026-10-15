@@ -1,19 +1,21 @@
-import { createUndoManager } from "@syncanvas/board-model"
+import { createUndoManager, indexById, listElements } from "@syncanvas/board-model"
 import { canEdit, type InviteRole, normalizeDisplayName } from "@syncanvas/shared"
 import { useQueryClient } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
-import { ChevronDown, CloudOff, Eye, Loader2, Lock } from "lucide-react"
+import { ChevronDown, CloudOff, Download, Eye, Loader2, Lock } from "lucide-react"
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import type * as Y from "yjs"
 import { BoardCanvas, type CanvasHandle } from "@/board/board-canvas"
 import { Dock, UndoZoomPill } from "@/board/chrome"
+import { pictureOf } from "@/board/clipboard"
 import { errorMessage, ROLE_LABEL, ShareButton } from "@/board/share-dialog"
 import { ShortcutSheet } from "@/board/shortcut-sheet"
 import { useBoardUi } from "@/board/store"
 import { BrandMark } from "@/components/brand"
 import { NameDialog } from "@/components/name-dialog"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ApiError, api, queryKeys } from "@/lib/api"
@@ -90,7 +92,10 @@ function JoinByLink({ boardId, token }: { boardId: string; token: string }) {
 }
 
 function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string }) {
-  const { connection, status, board, role, doc } = useBoardConnection(boardId, guestLink)
+  const { connection, status, board, role, doc, lostWork, discardLocalCopy } = useBoardConnection(
+    boardId,
+    guestLink,
+  )
   const navigate = useNavigate()
   const leaving = useRef(false)
 
@@ -104,7 +109,13 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
   )
 
   // Removed while here (not left yourself): back to the dashboard, which says why.
-  const removedLive = status === "revoked" && connection?.notice?.role === null
+  // Removed while here, or refused on reconnecting after being here (FLOWS §2). A first visit
+  // without access gets the no-access page instead; unsaved work gets the picture dialog.
+  const removedLive =
+    status === "revoked" &&
+    !guestLink &&
+    !lostWork &&
+    (connection?.notice?.role === null || connection?.wasOnline === true)
   useEffect(() => {
     if (!removedLive || leaving.current) return
     toastOnNextPage(`You no longer have access to “${board?.title ?? "this board"}”`)
@@ -129,6 +140,19 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
   if (removedLive || leaving.current) return null
   if (status === "busy") return <Busy />
   if (status === "revoked" && guestLink) return <LinkGone />
+  if (status === "revoked" && lostWork && doc) {
+    return (
+      <LostAccess
+        doc={doc}
+        title={lostWork.title ?? board?.title ?? null}
+        onDiscard={async () => {
+          await discardLocalCopy()
+          toastOnNextPage(`You no longer have access to “${lostWork.title ?? "this board"}”`)
+          await navigate({ to: "/" })
+        }}
+      />
+    )
+  }
   if (status === "revoked") return <NoAccess />
 
   return (
@@ -327,6 +351,71 @@ function Busy() {
         </span>
       }
     />
+  )
+}
+
+/**
+ * Access is gone and this device holds edits the room never received (M3 ticket 05; FLOWS §2):
+ * offer a picture of the local copy before clearing it. SVG export arrives in M6.
+ */
+function LostAccess({
+  doc,
+  title,
+  onDiscard,
+}: {
+  doc: Y.Doc
+  title: string | null
+  onDiscard: () => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+  // Focus starts on the safe choice: Enter must never throw the work away.
+  const downloadButton = useRef<HTMLButtonElement>(null)
+  async function download() {
+    const elements = listElements(doc)
+    const blob = await pictureOf(elements, indexById(elements))
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `${(title ?? "board").replace(/[\\/:*?"<>|]+/g, " ").trim() || "board"}.png`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+  return (
+    <>
+      <NoAccess />
+      <Dialog open onOpenChange={() => {}} disablePointerDismissal>
+        <DialogContent
+          showCloseButton={false}
+          initialFocus={downloadButton}
+          className="grid-cols-[minmax(0,1fr)]"
+        >
+          <div className="flex flex-col gap-1.5">
+            <DialogTitle>
+              You no longer have access to {title ? `“${title}”` : "this board"}
+            </DialogTitle>
+            <DialogDescription>
+              Changes you made while offline couldn't be saved to the board. Download a picture of
+              your copy before it's removed from this device.
+            </DialogDescription>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true)
+                void onDiscard().finally(() => setBusy(false))
+              }}
+            >
+              Discard and close
+            </Button>
+            <Button ref={downloadButton} disabled={busy} onClick={() => void download()}>
+              <Download /> Download a picture
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
