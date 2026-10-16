@@ -47,6 +47,9 @@ export function useThreads(boardId: string, connection: BoardConnection | null, 
             (old ?? []).filter((t) => t.id !== message.threadId),
           )
           if (useComments.getState().open === message.threadId) useComments.getState().close()
+        } else if (message.type === "notify") {
+          // Something new for you: the bell catches up now instead of at its next check.
+          void queryClient.invalidateQueries({ queryKey: queryKeys.notifications })
         } else {
           setBoxes((n) => n + 1)
         }

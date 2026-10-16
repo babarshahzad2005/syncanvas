@@ -12,6 +12,7 @@ import {
   type InviteResponse,
   type JoinRequest,
   type JoinResponse,
+  type NotificationsResponse,
   type ReplyRequest,
   type ShareLinkRequest,
   type ShareLinkState,
@@ -38,6 +39,7 @@ import {
   logInvitation,
   type SendInvitation,
 } from "./email"
+import { listNotifications, markAllRead, markRead, unreadFor } from "./notifications"
 import {
   type ApplyAccess,
   type CloseGuests,
@@ -121,7 +123,15 @@ export function createApp(services: ServicesFactory = productionServices) {
       if (s.dispose) c.executionCtx.waitUntil(s.dispose())
     }
   })
-  for (const path of ["/auth/*", "/boards", "/boards/*", "/dashboard", "/guest/*"]) {
+  for (const path of [
+    "/auth/*",
+    "/boards",
+    "/boards/*",
+    "/dashboard",
+    "/guest/*",
+    "/notifications",
+    "/notifications/*",
+  ]) {
     app.use(path, withServices)
   }
 
@@ -132,7 +142,9 @@ export function createApp(services: ServicesFactory = productionServices) {
     c.set("user", { id: session.user.id, email: session.user.email, name: session.user.name })
     await next()
   })
-  for (const path of ["/boards", "/boards/*", "/dashboard"]) app.use(path, requireUser)
+  for (const path of ["/boards", "/boards/*", "/dashboard", "/notifications", "/notifications/*"]) {
+    app.use(path, requireUser)
+  }
 
   app.get("/health", (c) => c.json({ ok: true }))
 
@@ -370,6 +382,27 @@ export function createApp(services: ServicesFactory = productionServices) {
       return c.json(body)
     })
   }
+
+  // ---------- Notifications (M4 ticket 03) ----------
+
+  app.get("/notifications", async (c) => {
+    const body: NotificationsResponse = await listNotifications(c.var.services.db, c.var.user)
+    return c.json(body)
+  })
+
+  app.get("/notifications/unread", async (c) =>
+    c.json(await unreadFor(c.var.services.db, c.var.user)),
+  )
+
+  app.post("/notifications/read-all", async (c) => {
+    await markAllRead(c.var.services.db, c.var.user)
+    return c.json({ ok: true })
+  })
+
+  app.post("/notifications/:id/read", async (c) => {
+    await markRead(c.var.services.db, c.var.user, c.req.param("id"))
+    return c.json({ ok: true })
+  })
 
   // A Guest reads Threads with the board token they connected with (M4).
   app.get("/guest/boards/:id/threads", async (c) => {

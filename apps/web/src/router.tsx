@@ -39,9 +39,10 @@ const dashboardRoute = createRoute({
 const boardRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/b/$boardId",
-  // ?s= carries a Share Link token (M3 ticket 03).
-  validateSearch: (search: Record<string, unknown>): { s?: string } => ({
+  // ?s= carries a Share Link token (M3 ticket 03); ?thread= opens a Thread's card (M4 ticket 03).
+  validateSearch: (search: Record<string, unknown>): { s?: string; thread?: string } => ({
     s: typeof search.s === "string" ? search.s : undefined,
+    thread: typeof search.thread === "string" ? search.thread : undefined,
   }),
   component: BoardScreen,
 })

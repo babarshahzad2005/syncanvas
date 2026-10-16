@@ -895,3 +895,24 @@ describe("BoardRoom Detached Threads (ADR 0012)", () => {
     watcher.close()
   })
 })
+
+describe("BoardRoom notification signals (M4 ticket 03)", () => {
+  it("sends a notify only to the notified Users' own tabs", async () => {
+    const board = newBoardId()
+    const ada = await joinAs(board, "owner", "ada")
+    const grace = await joinAs(board, "commenter", "grace")
+    const graceTab2 = await joinAs(board, "commenter", "grace")
+    const linus = await joinAs(board, "viewer", "linus")
+    const guest = await joinGuest(board, "grace") // a Guest can't pose as a Member
+
+    await room(board).control({ type: "notify", userIds: ["grace"] })
+    await until(
+      () => grace.control.length > 0 && graceTab2.control.length > 0,
+      "both of Grace's tabs to hear it",
+    )
+    expect(grace.control).toEqual([{ type: "notify", userIds: ["grace"] }])
+    await new Promise((r) => setTimeout(r, 200))
+    for (const other of [ada, linus, guest]) expect(other.control).toEqual([])
+    for (const c of [ada, grace, graceTab2, linus, guest]) c.close()
+  })
+})

@@ -99,7 +99,11 @@ describe("Threads", () => {
       ["Ada", "First"],
       ["Grace", "Line one\nline two"],
     ])
-    expect(t.broadcasts.at(-1)?.message).toEqual({ type: "thread-updated", thread: updated })
+    // The Thread goes out live (then a "notify" for Ada, who follows it).
+    expect(t.broadcasts.map((b) => b.message)).toContainEqual({
+      type: "thread-updated",
+      thread: updated,
+    })
   })
 
   it("lets Commenters and above write, and everyone on the Board read", async () => {

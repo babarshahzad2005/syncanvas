@@ -7,7 +7,7 @@ import {
   normalizeDisplayName,
   type ThreadView,
 } from "@syncanvas/shared"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { ChevronDown, CloudOff, Download, Eye, Loader2, Lock } from "lucide-react"
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react"
@@ -21,10 +21,11 @@ import { ShortcutSheet } from "@/board/shortcut-sheet"
 import { useBoardUi } from "@/board/store"
 import { CommentsButton } from "@/comments/comments-button"
 import { PinLayer } from "@/comments/pin-layer"
-import { useComments } from "@/comments/store"
+import { anchorPoint, useCanvasView, useComments } from "@/comments/store"
 import { useThreads } from "@/comments/use-threads"
 import { BrandMark } from "@/components/brand"
 import { NameDialog } from "@/components/name-dialog"
+import { NotificationBell } from "@/components/notification-bell"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { Toaster } from "@/components/ui/toaster"
@@ -104,6 +105,32 @@ function JoinByLink({ boardId, token }: { boardId: string; token: string }) {
 
 const NO_BOXES = new Map<string, ElementBox>()
 
+/**
+ * Opened from a Notification (`?thread=`): once that Thread is loaded and the canvas is
+ * drawing, center its pin, open its card, and drop the parameter (M4 ticket 03).
+ */
+function useThreadFromLink(
+  threads: readonly ThreadView[],
+  lastBoxes: ReadonlyMap<string, ElementBox>,
+) {
+  const { thread: wanted } = route.useSearch()
+  const navigate = useNavigate()
+  const frame = useCanvasView((s) => s.frame)
+  // Once per link: leaving the address takes a moment, and every frame in between would
+  // otherwise open the card and move the view again.
+  const handled = useRef<string | null>(null)
+  useEffect(() => {
+    if (!wanted || frame === 0 || handled.current === wanted) return
+    const thread = threads.find((t) => t.id === wanted)
+    if (!thread) return
+    handled.current = wanted
+    useComments
+      .getState()
+      .focus(thread.id, anchorPoint(thread.anchor, useCanvasView.getState().boxOf, lastBoxes))
+    void navigate({ to: ".", search: (prev) => ({ ...prev, thread: undefined }), replace: true })
+  }, [wanted, frame, threads, lastBoxes, navigate])
+}
+
 function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string }) {
   const { connection, status, board, role, doc, lostWork, discardLocalCopy } = useBoardConnection(
     boardId,
@@ -113,6 +140,7 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
   const leaving = useRef(false)
   // Comments (M4): loaded once connected, then kept live by the board room.
   const threads = useThreads(boardId, connection, status === "online")
+  useThreadFromLink(threads, connection?.lastBoxes ?? NO_BOXES)
 
   // The Owner changed your Role: the Board has already switched; say who did it.
   useEffect(
@@ -189,6 +217,7 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
         <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
         {/* Top right: the presence pill, then Share (DESIGN.md → Board screen). */}
         <div className="fixed top-3 right-3 flex items-center gap-2">
+          {!guestLink && <NotificationBell placement="board" />}
           <PresencePill connection={connection} />
           {doc && (
             <CommentsButton threads={threads} lastBoxes={connection?.lastBoxes ?? NO_BOXES} />
@@ -268,6 +297,17 @@ function BoardSurface({
     const allowed = tool === "select" || (tool === "comment" ? canCommentNow : editable)
     if (!allowed) useBoardUi.setState({ tool: "select" })
   }, [editable, canCommentNow])
+  // The Members a comment can mention, fetched once you start commenting (the comment tool,
+  // or an open Thread), so they're ready before the first "@" (M4 ticket 03). Not at Board
+  // open: that's the busiest moment, and most visits never comment.
+  const commenting = useBoardUi((s) => s.tool === "comment")
+  const threadOpen = useComments((s) => s.open !== null || s.draft !== null)
+  useQuery({
+    queryKey: queryKeys.sharing(boardId),
+    queryFn: () => api.sharing(boardId),
+    enabled: canCommentNow && (commenting || threadOpen),
+    staleTime: 60_000,
+  })
   // A new Board starts with no Thread open.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset whenever the doc changes
   useEffect(() => useComments.getState().close(), [doc])

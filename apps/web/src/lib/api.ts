@@ -9,6 +9,7 @@ import type {
   InviteRequest,
   InviteResponse,
   JoinResponse,
+  NotificationsResponse,
   ReplyRequest,
   ShareLinkRequest,
   ShareLinkState,
@@ -131,6 +132,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  // ---------- Notifications (M4 ticket 03) ----------
+  notifications: () => request<NotificationsResponse>("/api/notifications"),
+  markNotificationRead: (id: string) =>
+    request<{ ok: true }>(`/api/notifications/${encodeURIComponent(id)}/read`, {
+      method: "POST",
+    }),
+  markAllNotificationsRead: () =>
+    request<{ ok: true }>("/api/notifications/read-all", { method: "POST" }),
 }
 
 function board(boardId: string) {
@@ -141,4 +150,5 @@ export const queryKeys = {
   dashboard: ["dashboard"] as const,
   sharing: (boardId: string) => ["sharing", boardId] as const,
   threads: (boardId: string) => ["threads", boardId] as const,
+  notifications: ["notifications"] as const,
 }

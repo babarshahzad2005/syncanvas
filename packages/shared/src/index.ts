@@ -187,6 +187,8 @@ export type CommentView = {
   author: { id: string; name: string } | null
   /** A first comment deleted after others replied: it reads "Comment deleted" (PRD A5). */
   deleted: boolean
+  /** Who `<@id>` in the body is: their current name, and whether they're still a Member. */
+  mentions: MentionView[]
   body: string
   createdAt: string
   editedAt: string | null
@@ -220,6 +222,8 @@ export type ControlMessage =
   | { type: "thread-removed"; threadId: string }
   | { type: "element-gone"; elementId: string; box: ElementBox }
   | { type: "last-boxes"; boxes: Record<string, ElementBox> }
+  /** These Users have new Notifications (only their own sockets hear it, M4 ticket 03). */
+  | { type: "notify"; userIds: string[] }
 
 export type EditCommentRequest = { body: string }
 
@@ -229,3 +233,41 @@ export function normalizeComment(input: unknown): string | null {
   const body = input.replace(/\r\n?/g, "\n").trim()
   return body.length >= 1 && body.length <= COMMENT_MAX ? body : null
 }
+
+// ---------- Mentions and Notifications (M4 ticket 03) ----------
+
+/**
+ * How a Mention is stored in a comment: `<@userId>`. It's shown with the person's current
+ * name (PRD A5), highlighted while they're a Member of the Board and plain text after.
+ */
+export const MENTION_PATTERN = /<@([A-Za-z0-9_-]{1,64})>/g
+
+export type MentionView = { id: string; name: string; member: boolean }
+
+/** The User ids a comment mentions, each once. */
+export function mentionedIds(body: string): string[] {
+  return [...new Set([...body.matchAll(MENTION_PATTERN)].map((m) => m[1] as string))]
+}
+
+/** A comment as plain text: Mentions become "@Name" (unknown ones "@someone"). */
+export function plainComment(body: string, mentions: readonly MentionView[]): string {
+  return body.replace(MENTION_PATTERN, (_, id: string) => {
+    const name = mentions.find((m) => m.id === id)?.name
+    return `@${name ?? "someone"}`
+  })
+}
+
+export type NotificationView = {
+  id: string
+  kind: "mention" | "reply"
+  board: { id: string; title: string }
+  threadId: string
+  actor: { id: string; name: string } | null
+  /** The comment's first line, as plain text. */
+  excerpt: string
+  createdAt: string
+  read: boolean
+}
+
+/** GET /api/notifications: newest first (Boards you can't open are left out), and the unread count. */
+export type NotificationsResponse = { notifications: NotificationView[]; unread: number }

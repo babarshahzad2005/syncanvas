@@ -1,7 +1,7 @@
-import { COMMENT_MAX, type CommentView, type ThreadView } from "@syncanvas/shared"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { COMMENT_MAX, type CommentView, type MentionView, type ThreadView } from "@syncanvas/shared"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, Ellipsis, Loader2, RotateCcw, Send } from "lucide-react"
-import { Fragment, useState } from "react"
+import { Fragment, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useBoardUi } from "@/board/store"
 import { initials } from "@/components/account-menu"
@@ -17,6 +17,7 @@ import { ApiError, api, queryKeys } from "@/lib/api"
 import { timeAgo } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { presenceColor } from "@/presence/model"
+import { mentionAt, type Picked, suggestions, toEditable, toStored } from "./mentions"
 import { useComments } from "./store"
 import { upsertThread } from "./use-threads"
 
@@ -24,6 +25,7 @@ import { upsertThread } from "./use-threads"
 // for Commenters and above. For a new Thread it's just the box; the Thread is saved with it.
 // Authors edit and delete their own comments, the Owner deletes any, and Commenters and above
 // resolve and reopen. The server checks every one of these; the card only offers them.
+// Typing "@" suggests the Board's Members (M4 ticket 03).
 
 /** The counter shows from here up to COMMENT_MAX. */
 const COUNTER_FROM = 1800
@@ -33,11 +35,42 @@ const URL_PATTERN = /(https?:\/\/[^\s<>"]+)/g
 const failed = (e: unknown) =>
   e instanceof ApiError ? e.message : "Couldn't save that. Check your connection."
 
-/** Comment text with its line breaks kept and web links made clickable. */
-function Body({ text }: { text: string }) {
-  const parts = text.split(URL_PATTERN)
+const TOKEN_SPLIT = /(<@[A-Za-z0-9_-]{1,64}>)/
+const TOKEN = /^<@([A-Za-z0-9_-]{1,64})>$/
+
+/**
+ * Comment text with its line breaks kept, web links clickable, and Mentions as "@Name":
+ * highlighted for Members, plain once they've left (PRD A5).
+ */
+function Body({ text, mentions }: { text: string; mentions: readonly MentionView[] }) {
   return (
     <p className="whitespace-pre-wrap break-words">
+      {text.split(TOKEN_SPLIT).map((part, i) => {
+        const id = TOKEN.exec(part)?.[1]
+        if (!id) {
+          // biome-ignore lint/suspicious/noArrayIndexKey: parts never reorder
+          return <Linked key={i} text={part} />
+        }
+        const view = mentions.find((m) => m.id === id)
+        return view?.member ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: parts never reorder
+          <span key={i} className="font-medium text-primary">
+            @{view.name}
+          </span>
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: parts never reorder
+          <Fragment key={i}>@{view?.name ?? "someone"}</Fragment>
+        )
+      })}
+    </p>
+  )
+}
+
+/** Plain text with its web links made clickable. */
+function Linked({ text }: { text: string }) {
+  const parts = text.split(URL_PATTERN)
+  return (
+    <>
       {parts.map((part, i) =>
         i % 2 === 1 ? (
           <a
@@ -55,11 +88,18 @@ function Body({ text }: { text: string }) {
           <Fragment key={i}>{part}</Fragment>
         ),
       )}
-    </p>
+    </>
   )
 }
 
-/** A comment box: Enter sends, Shift+Enter is a new line, a counter near the limit. */
+/** Someone who can be mentioned: the Board's Members. */
+type Candidate = { id: string; name: string; email: string }
+
+/**
+ * A comment box: Enter sends, Shift+Enter is a new line, a counter near the limit. Typing "@"
+ * opens a Member picker (arrows, Enter or Tab to pick, Escape to close); a picked name is
+ * reported through `onPick`, so it can be saved as a Mention.
+ */
 function CommentBox({
   label,
   placeholder,
@@ -68,6 +108,8 @@ function CommentBox({
   onSubmit,
   onEscape,
   disabled,
+  members = [],
+  onPick,
 }: {
   label: string
   placeholder: string
@@ -77,27 +119,115 @@ function CommentBox({
   /** Return true when the Escape was handled here (it then goes no further). */
   onEscape?: () => boolean
   disabled: boolean
+  members?: readonly Candidate[]
+  onPick?: (name: string, id: string) => void
 }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const [caret, setCaret] = useState(0)
+  const [active, setActive] = useState(0)
+  const [dismissed, setDismissed] = useState<number | null>(null)
+  const at = members.length > 0 ? mentionAt(value, caret) : null
+  const options = at && dismissed !== at.start ? suggestions(members, at.query) : []
+  const picking = options.length > 0
+
+  function pick(member: Candidate) {
+    if (!at) return
+    const inserted = `@${member.name} `
+    const next = value.slice(0, at.start) + inserted + value.slice(caret)
+    onPick?.(member.name, member.id)
+    onChange(next)
+    const position = at.start + inserted.length
+    setCaret(position)
+    requestAnimationFrame(() => ref.current?.setSelectionRange(position, position))
+  }
+
   return (
-    <textarea
-      aria-label={label}
-      placeholder={placeholder}
-      disabled={disabled}
-      value={value}
-      maxLength={COMMENT_MAX}
-      rows={Math.min(6, Math.max(1, value.split("\n").length))}
-      // biome-ignore lint/a11y/noAutofocus: a new comment, a reply, or an edit starts typing here
-      autoFocus
-      onChange={(e) => onChange(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-          e.preventDefault()
-          onSubmit()
-        }
-        if (e.key === "Escape" && onEscape?.()) e.stopPropagation()
-      }}
-      className="min-h-9 flex-1 resize-none rounded-lg border border-input bg-surface px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-    />
+    <div className="relative flex-1">
+      <textarea
+        ref={ref}
+        aria-label={label}
+        placeholder={placeholder}
+        disabled={disabled}
+        value={value}
+        maxLength={COMMENT_MAX}
+        rows={Math.min(6, Math.max(1, value.split("\n").length))}
+        // biome-ignore lint/a11y/noAutofocus: a new comment, a reply, or an edit starts typing here
+        autoFocus
+        aria-controls={picking ? "mention-options" : undefined}
+        aria-autocomplete="list"
+        onChange={(e) => {
+          onChange(e.target.value)
+          setCaret(e.target.selectionStart)
+          setActive(0)
+        }}
+        onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+        onKeyDown={(e) => {
+          if (picking) {
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault()
+              const step = e.key === "ArrowDown" ? 1 : -1
+              setActive((i) => (i + step + options.length) % options.length)
+              return
+            }
+            if ((e.key === "Enter" || e.key === "Tab") && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              const chosen = options[active] ?? options[0]
+              if (chosen) pick(chosen)
+              return
+            }
+            if (e.key === "Escape") {
+              e.stopPropagation()
+              setDismissed(at?.start ?? null)
+              return
+            }
+          }
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault()
+            onSubmit()
+          }
+          if (e.key === "Escape" && onEscape?.()) e.stopPropagation()
+        }}
+        className="block min-h-9 w-full resize-none rounded-lg border border-input bg-surface px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+      />
+      {picking && (
+        <div
+          id="mention-options"
+          role="listbox"
+          aria-label="Mention someone"
+          className="absolute bottom-full left-0 z-30 mb-1 w-full overflow-hidden rounded-xl bg-popover p-1 shadow-popover"
+        >
+          {options.map((m, i) => (
+            <div
+              key={m.id}
+              role="option"
+              tabIndex={-1}
+              aria-selected={i === active}
+              onPointerDown={(e) => {
+                e.preventDefault() // keep the focus in the box
+                pick(m)
+              }}
+              onPointerEnter={() => setActive(i)}
+              className={cn(
+                "flex cursor-default items-center gap-2 rounded-md px-2 py-1.5",
+                i === active && "bg-accent",
+              )}
+            >
+              <span
+                aria-hidden
+                className="type-label flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] text-white"
+                style={{ background: presenceColor(m.id) }}
+              >
+                {initials(m.name)}
+              </span>
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate">{m.name}</span>
+                <span className="type-caption truncate text-muted-foreground">{m.email}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -117,20 +247,25 @@ type CardContext = {
   isOwner: boolean
   youId: string | null
   online: boolean
+  /** Who can be mentioned (everyone else on the Board). */
+  members: readonly Candidate[]
   /** Puts a server answer in the cache (null: the Thread is gone). */
   apply: (thread: ThreadView | null) => void
 }
 
 function Comment({ comment, context }: { comment: CommentView; context: CardContext }) {
-  const { boardId, thread, canWrite, isOwner, youId, online, apply } = context
+  const { boardId, thread, canWrite, isOwner, youId, online, members, apply } = context
   const [editing, setEditing] = useState(false)
-  const [text, setText] = useState(comment.body)
+  const editable = toEditable(comment.body, comment.mentions)
+  const [text, setText] = useState(editable.text)
+  const picked = useRef(editable.picked)
   const mine = comment.author !== null && comment.author.id === youId
   const canEditIt = mine && canWrite && online
   const canDeleteIt = !comment.deleted && online && ((mine && canWrite) || isOwner)
 
   const edit = useMutation({
-    mutationFn: (body: string) => api.editComment(boardId, thread.id, comment.id, { body }),
+    mutationFn: (text: string) =>
+      api.editComment(boardId, thread.id, comment.id, { body: toStored(text, picked.current) }),
     onSuccess: (saved) => {
       apply(saved)
       setEditing(false)
@@ -181,10 +316,12 @@ function Comment({ comment, context }: { comment: CommentView; context: CardCont
               onSubmit={() => text.trim() && edit.mutate(text.trim())}
               onEscape={() => {
                 setEditing(false)
-                setText(comment.body)
+                setText(editable.text)
                 return true
               }}
               disabled={edit.isPending}
+              members={members}
+              onPick={(name, id) => picked.current.set(name, id)}
             />
             <Counter length={text.length} />
             <div className="flex justify-end gap-1">
@@ -194,7 +331,7 @@ function Comment({ comment, context }: { comment: CommentView; context: CardCont
                 size="xs"
                 onClick={() => {
                   setEditing(false)
-                  setText(comment.body)
+                  setText(editable.text)
                 }}
               >
                 Cancel
@@ -205,7 +342,7 @@ function Comment({ comment, context }: { comment: CommentView; context: CardCont
             </div>
           </form>
         ) : (
-          <Body text={comment.body} />
+          <Body text={comment.body} mentions={comment.mentions} />
         )}
       </div>
       {(canEditIt || canDeleteIt) && !editing && (
@@ -333,6 +470,15 @@ export function ThreadCard({
   const queryClient = useQueryClient()
   const [text, setText] = useState("")
   const [error, setError] = useState<string | null>(null)
+  const picked = useRef(new Map<string, string>())
+  // Members to mention: from the Share dialog's list, which every Member can read.
+  const sharing = useQuery({
+    queryKey: queryKeys.sharing(boardId),
+    queryFn: () => api.sharing(boardId),
+    enabled: canWrite && online,
+    staleTime: 60_000,
+  })
+  const members: Candidate[] = (sharing.data?.members ?? []).filter((m) => m.id !== youId)
   const apply = (saved: ThreadView | null) => {
     queryClient.setQueryData<ThreadView[]>(queryKeys.threads(boardId), (old) =>
       saved ? upsertThread(old ?? [], saved) : (old ?? []).filter((t) => t.id !== thread?.id),
@@ -340,7 +486,8 @@ export function ThreadCard({
     if (!saved) useComments.getState().close()
   }
   const send = useMutation({
-    mutationFn: async (body: string) => {
+    mutationFn: async (typed: string) => {
+      const body = toStored(typed, picked.current as Picked)
       if (thread) return api.reply(boardId, thread.id, { body })
       const anchor = useComments.getState().draft
       if (!anchor) throw new Error("no draft")
@@ -349,6 +496,7 @@ export function ThreadCard({
     onSuccess: (saved) => {
       apply(saved)
       setText("")
+      picked.current = new Map()
       setError(null)
       if (!thread) {
         useComments.getState().openThread(saved.id)
@@ -363,7 +511,9 @@ export function ThreadCard({
     if (body && !send.isPending) send.mutate(body)
   }
 
-  const context = thread ? { boardId, thread, canWrite, isOwner, youId, online, apply } : null
+  const context = thread
+    ? { boardId, thread, canWrite, isOwner, youId, online, members, apply }
+    : null
   return (
     <section
       data-comment-ui
@@ -411,6 +561,8 @@ export function ThreadCard({
                 setError(null)
               }}
               onSubmit={submit}
+              members={members}
+              onPick={(name, id) => picked.current.set(name, id)}
               // Escape with nothing typed drops a new Thread (DESIGN.md → Comment tool).
               onEscape={() => {
                 if (thread || text.trim() !== "") return false

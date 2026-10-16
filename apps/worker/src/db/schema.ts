@@ -254,3 +254,46 @@ export const comments = pgTable(
   },
   (table) => [index("comments_thread_idx").on(table.threadId, table.createdAt)],
 )
+
+/** Who follows a Thread: they posted in it or were mentioned, so replies notify them (PRD A5). */
+export const threadParticipants = pgTable(
+  "thread_participants",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+  },
+  (table) => [primaryKey({ columns: [table.threadId, table.userId] })],
+)
+
+/** A User was mentioned, or a Thread they follow got a reply (GLOSSARY: Notification). */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["mention", "reply"] }).notNull(),
+    boardId: text("board_id")
+      .notNull()
+      .references(() => boards.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    commentId: text("comment_id")
+      .notNull()
+      .references(() => comments.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").references(() => user.id, { onDelete: "set null" }),
+    readAt: timestamp("read_at"),
+    emailedAt: timestamp("emailed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("notifications_user_idx").on(table.userId, table.createdAt),
+    check("notifications_kind_check", sql`${table.kind} in ('mention', 'reply')`),
+  ],
+)

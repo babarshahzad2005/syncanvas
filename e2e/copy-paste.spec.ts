@@ -15,6 +15,7 @@ async function newBoard(page: Page) {
 }
 
 test("a group with its connector pastes into another Board", async ({ browser }) => {
+  test.setTimeout(120_000) // two accounts and two Boards: close to 60 s on a slow runner
   const contextA = await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] })
   const x = await contextA.newPage()
   await enableTestHooks(x)

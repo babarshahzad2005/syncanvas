@@ -3,6 +3,7 @@ import {
   type ControlMessage,
   canComment,
   displayNameOf,
+  mentionedIds,
   normalizeComment,
   type ThreadAnchor,
   type ThreadView,
@@ -10,6 +11,7 @@ import {
 import { and, asc, eq, inArray } from "drizzle-orm"
 import type { Database } from "./db/client"
 import { comments, threads, user } from "./db/schema"
+import { mentionViews, notifyForComment, withValidMentions } from "./notifications"
 import { type Caller, memberOrRefuse, refuse } from "./sharing"
 
 // Threads and comments (M4; PRD A5, FLOWS §4). Postgres is their source of truth; the board
@@ -88,6 +90,11 @@ async function views(db: Database, rows: (typeof threads.$inferSelect)[]): Promi
       ),
     )
     .orderBy(asc(comments.createdAt), asc(comments.id))
+  // Every Thread here is on one Board (a list, or a single Thread).
+  const boardId = rows[0]?.boardId ?? ""
+  const mentions = await mentionViews(db, boardId, [
+    ...new Set(all.flatMap((c) => (c.deletedAt ? [] : mentionedIds(c.body)))),
+  ])
   const byThread = new Map<string, CommentView[]>()
   for (const c of all) {
     const list = byThread.get(c.threadId) ?? []
@@ -101,6 +108,7 @@ async function views(db: Database, rows: (typeof threads.$inferSelect)[]): Promi
       deleted,
       // A deleted comment's text never leaves the server.
       body: deleted ? "" : c.body,
+      mentions: deleted ? [] : mentions.filter((m) => c.body.includes(`<@${m.id}>`)),
       createdAt: c.createdAt.toISOString(),
       editedAt: c.editedAt?.toISOString() ?? null,
     })
@@ -152,8 +160,9 @@ export async function createThread(
   await commenterOrRefuse(db, input.boardId, input.caller)
   const anchor = parseAnchor(input.anchor)
   if (!anchor) throw refuse(400, { error: "A comment needs a place on the board." })
-  const body = bodyOrRefuse(input.body)
+  const { body, mentioned } = await withValidMentions(db, input.boardId, bodyOrRefuse(input.body))
   const id = crypto.randomUUID()
+  const commentId = crypto.randomUUID()
   const now = new Date()
   await db.transaction(async (tx) => {
     await tx.insert(threads).values({
@@ -167,7 +176,7 @@ export async function createThread(
       updatedAt: now,
     })
     await tx.insert(comments).values({
-      id: crypto.randomUUID(),
+      id: commentId,
       threadId: id,
       authorId: input.caller.id,
       body,
@@ -176,6 +185,14 @@ export async function createThread(
   })
   const thread = await viewOf(db, id)
   await relay(broadcast, input.boardId, { type: "thread-added", thread })
+  await notifyForComment(db, broadcast, {
+    boardId: input.boardId,
+    threadId: id,
+    commentId,
+    authorId: input.caller.id,
+    mentioned,
+    isReply: false,
+  })
   return thread
 }
 
@@ -186,7 +203,7 @@ export async function reply(
   input: { boardId: string; threadId: string; caller: Caller; body: unknown },
 ): Promise<ThreadView> {
   await commenterOrRefuse(db, input.boardId, input.caller)
-  const body = bodyOrRefuse(input.body)
+  const { body, mentioned } = await withValidMentions(db, input.boardId, bodyOrRefuse(input.body))
   const [thread] = await db
     .select({ id: threads.id })
     .from(threads)
@@ -194,12 +211,21 @@ export async function reply(
     .limit(1)
   if (!thread) throw refuse(404, { error: "That thread doesn't exist anymore." })
   const now = new Date()
+  const commentId = crypto.randomUUID()
   await db
     .insert(comments)
-    .values({ id: crypto.randomUUID(), threadId: thread.id, authorId: input.caller.id, body })
+    .values({ id: commentId, threadId: thread.id, authorId: input.caller.id, body })
   await db.update(threads).set({ updatedAt: now }).where(eq(threads.id, thread.id))
   const view = await viewOf(db, thread.id)
   await relay(broadcast, input.boardId, { type: "thread-updated", thread: view })
+  await notifyForComment(db, broadcast, {
+    boardId: input.boardId,
+    threadId: thread.id,
+    commentId,
+    authorId: input.caller.id,
+    mentioned,
+    isReply: true,
+  })
   return view
 }
 
@@ -241,14 +267,25 @@ export async function editComment(
   input: { boardId: string; threadId: string; commentId: string; caller: Caller; body: unknown },
 ): Promise<ThreadView> {
   await commenterOrRefuse(db, input.boardId, input.caller)
-  const body = bodyOrRefuse(input.body)
+  const { body, mentioned } = await withValidMentions(db, input.boardId, bodyOrRefuse(input.body))
   await threadOrRefuse(db, input.boardId, input.threadId)
   const comment = await commentOrRefuse(db, input.threadId, input.commentId)
   if (comment.authorId !== input.caller.id) {
     throw refuse(403, { error: "You can only edit your own comments." })
   }
   await db.update(comments).set({ body, editedAt: new Date() }).where(eq(comments.id, comment.id))
-  return touched(db, broadcast, input.boardId, input.threadId)
+  const thread = await touched(db, broadcast, input.boardId, input.threadId)
+  // Only people newly mentioned by the edit hear about it.
+  const before = new Set(mentionedIds(comment.body))
+  await notifyForComment(db, broadcast, {
+    boardId: input.boardId,
+    threadId: input.threadId,
+    commentId: comment.id,
+    authorId: input.caller.id,
+    mentioned: mentioned.filter((id) => !before.has(id)),
+    isReply: false,
+  })
+  return thread
 }
 
 /**

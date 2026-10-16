@@ -363,6 +363,21 @@ export class BoardRoom extends DurableObject<Env> {
         message.thread.anchor.elementId,
       )
     }
+    if (message.type === "notify") {
+      // Only the notified Users' own Member sockets hear it.
+      const frame = controlFrame(message)
+      const users = new Set(message.userIds)
+      for (const ws of this.ctx.getWebSockets()) {
+        const info = ws.deserializeAttachment() as SocketInfo
+        if (info.kind !== "member" || !users.has(info.userId)) continue
+        try {
+          ws.send(frame)
+        } catch {
+          // Gone; the 30 s check catches up.
+        }
+      }
+      return
+    }
     this.sendControl(message)
   }
 

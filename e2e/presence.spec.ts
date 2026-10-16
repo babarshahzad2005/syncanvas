@@ -4,6 +4,7 @@ import { enableTestHooks, shareBoard, signIn, waitUntilOnline } from "./helpers"
 // M2 ticket 02: the presence pill shows who else is on the Board, and updates when they leave.
 
 test("two people see each other in the presence pill", async ({ browser }) => {
+  test.setTimeout(120_000) // two accounts and two Boards: close to 60 s on a slow runner
   const stamp = Date.now()
   const adaEmail = `e2e-ada-${stamp}@example.com`
   const graceEmail = `e2e-grace-${stamp}@example.com`

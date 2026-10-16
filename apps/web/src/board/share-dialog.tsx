@@ -81,8 +81,12 @@ function ShareDialogBody({ boardId, title, onLeave }: ShareProps) {
   const sharing = useQuery({
     queryKey: queryKeys.sharing(boardId),
     queryFn: () => api.sharing(boardId),
+    // Who has access right now, even if the mention picker loaded the list a moment ago.
+    refetchOnMount: "always",
   })
-  const state = sharing.data
+  // Only what was fetched since the dialog opened: an older list would show (and let you
+  // flip) a Share link switch in a state it's no longer in.
+  const state = sharing.isFetchedAfterMount ? sharing.data : undefined
   return (
     <>
       <div className="flex flex-col gap-1.5 pr-8">
@@ -104,16 +108,16 @@ function ShareDialogBody({ boardId, title, onLeave }: ShareProps) {
         <h3 id="share-people" className="type-label text-muted-foreground">
           People with access
         </h3>
-        {sharing.isPending ? (
-          <p className="flex items-center gap-2 py-2 text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Loading…
-          </p>
+        {state ? (
+          <People boardId={boardId} state={state} />
         ) : sharing.isError ? (
           <p role="alert" className="py-2 text-destructive">
             Couldn't load who has access. Check your connection and try again.
           </p>
         ) : (
-          <People boardId={boardId} state={sharing.data} />
+          <p className="flex items-center gap-2 py-2 text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" /> Loading…
+          </p>
         )}
       </section>
       {state?.canManage && <ShareLinkSection boardId={boardId} link={state.link} />}

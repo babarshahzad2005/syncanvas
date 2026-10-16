@@ -23,6 +23,7 @@ import { errorMessage } from "@/board/share-dialog"
 import { AccountMenu } from "@/components/account-menu"
 import { BrandMark, Wordmark } from "@/components/brand"
 import { ConfirmDialog } from "@/components/confirm-dialog"
+import { NotificationBell } from "@/components/notification-bell"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -94,7 +95,10 @@ export function Dashboard() {
             className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
           />
         </label>
-        <div className="ml-auto md:ml-0">{session && <AccountMenu user={session.user} />}</div>
+        <div className="ml-auto flex items-center gap-1 md:ml-0">
+          {session && <NotificationBell placement="page" />}
+          {session && <AccountMenu user={session.user} />}
+        </div>
       </header>
 
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pt-4 pb-16 md:px-8">
