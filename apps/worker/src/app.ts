@@ -3,6 +3,7 @@ import {
   type BoardTokenResponse,
   type ChangeRoleRequest,
   type CreateBoardResponse,
+  type CreateThreadRequest,
   type DashboardResponse,
   displayNameOf,
   type GuestTokenResponse,
@@ -10,9 +11,12 @@ import {
   type InviteResponse,
   type JoinRequest,
   type JoinResponse,
+  type ReplyRequest,
   type ShareLinkRequest,
   type ShareLinkState,
   type SharingResponse,
+  type ThreadsResponse,
+  type ThreadView,
 } from "@syncanvas/shared"
 import { Hono } from "hono"
 import { createMiddleware } from "hono/factory"
@@ -24,7 +28,7 @@ import {
   logAndKeepMagicLink,
   logMagicLink,
 } from "./auth"
-import { signBoardToken } from "./board-token"
+import { signBoardToken, verifyBoardToken } from "./board-token"
 import { createBoard, findMembership, listBoards } from "./boards"
 import { createDb, type Database } from "./db/client"
 import {
@@ -48,6 +52,7 @@ import {
   setShareLink,
   sharingState,
 } from "./sharing"
+import { type Broadcast, createThread, listThreads, listThreadsFor, reply } from "./threads"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
 export type Services = {
@@ -58,6 +63,8 @@ export type Services = {
   applyAccess: ApplyAccess
   /** Disconnects a Board's Guests when its Share Link goes off or changes (M3 ticket 04). */
   closeGuests: CloseGuests
+  /** Relays a comment change to everyone on the Board (M4). */
+  broadcast: Broadcast
   dispose?: () => Promise<void>
 }
 export type ServicesFactory = (env: Env) => Services
@@ -82,7 +89,9 @@ export const productionServices: ServicesFactory = (env) => {
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).applyAccess(change)
   const closeGuests: CloseGuests = (boardId) =>
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).closeGuests()
-  return { db, auth, sendInvitation, applyAccess, closeGuests, dispose: close }
+  const broadcast: Broadcast = (boardId, message) =>
+    env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).control(message)
+  return { db, auth, sendInvitation, applyAccess, closeGuests, broadcast, dispose: close }
 }
 
 type SessionUser = { id: string; email: string; name: string }
@@ -271,6 +280,48 @@ export function createApp(services: ServicesFactory = productionServices) {
       caller: c.var.user,
       token: input.token,
     })
+    return c.json(body)
+  })
+
+  // ---------- Threads (M4) ----------
+
+  app.get("/boards/:id/threads", async (c) => {
+    const threads = await listThreadsFor(c.var.services.db, c.req.param("id"), c.var.user)
+    const body: ThreadsResponse = { threads }
+    return c.json(body)
+  })
+
+  app.post("/boards/:id/threads", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as Partial<CreateThreadRequest>
+    const body: ThreadView = await createThread(c.var.services.db, c.var.services.broadcast, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+      anchor: input.anchor,
+      body: input.body,
+    })
+    return c.json(body, 201)
+  })
+
+  app.post("/boards/:id/threads/:threadId/comments", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as Partial<ReplyRequest>
+    const body: ThreadView = await reply(c.var.services.db, c.var.services.broadcast, {
+      boardId: c.req.param("id"),
+      threadId: c.req.param("threadId"),
+      caller: c.var.user,
+      body: input.body,
+    })
+    return c.json(body, 201)
+  })
+
+  // A Guest reads Threads with the board token they connected with (M4).
+  app.get("/guest/boards/:id/threads", async (c) => {
+    const boardId = c.req.param("id")
+    const bearer = c.req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? ""
+    const claims = await verifyBoardToken(bearer, c.env.BOARD_TOKEN_PUBLIC_KEY)
+    if (!claims || claims.boardId !== boardId) {
+      return c.json({ error: "You don't have access to this board." }, 403)
+    }
+    const body: ThreadsResponse = { threads: await listThreads(c.var.services.db, boardId) }
     return c.json(body)
   })
 

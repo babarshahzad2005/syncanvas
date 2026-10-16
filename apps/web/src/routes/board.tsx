@@ -1,5 +1,5 @@
 import { createUndoManager, indexById, listElements } from "@syncanvas/board-model"
-import { canEdit, type InviteRole, normalizeDisplayName } from "@syncanvas/shared"
+import { canComment, canEdit, type InviteRole, normalizeDisplayName } from "@syncanvas/shared"
 import { useQueryClient } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { ChevronDown, CloudOff, Download, Eye, Loader2, Lock } from "lucide-react"
@@ -12,6 +12,8 @@ import { pictureOf } from "@/board/clipboard"
 import { errorMessage, ROLE_LABEL, ShareButton } from "@/board/share-dialog"
 import { ShortcutSheet } from "@/board/shortcut-sheet"
 import { useBoardUi } from "@/board/store"
+import { PinLayer } from "@/comments/pin-layer"
+import { useComments } from "@/comments/store"
 import { BrandMark } from "@/components/brand"
 import { NameDialog } from "@/components/name-dialog"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -160,7 +162,14 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
       {/* clip, not hidden: a text editor running off-screen must never scroll the Board. */}
       <div className="fixed inset-0 overflow-clip bg-background">
         {doc && (
-          <BoardSurface doc={doc} connection={connection} editable={role ? canEdit(role) : false} />
+          <BoardSurface
+            boardId={boardId}
+            doc={doc}
+            connection={connection}
+            editable={role ? canEdit(role) : false}
+            commenter={role !== null && canComment(role) && !guestLink}
+            online={status === "online"}
+          />
         )}
         <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
         {/* Top right: the presence pill, then Share (DESIGN.md → Board screen). */}
@@ -198,13 +207,20 @@ function FirstNamePrompt() {
 }
 
 function BoardSurface({
+  boardId,
   doc,
   connection,
   editable,
+  commenter,
+  online,
 }: {
+  boardId: string
   doc: Y.Doc
   connection: BoardConnection | null
   editable: boolean
+  /** Commenter and above (M4); comments also need a connection. */
+  commenter: boolean
+  online: boolean
 }) {
   // This tab's transaction origin: the UndoManager only tracks (and undoes) these.
   const origin = useMemo(() => ({ tab: "local" }), [])
@@ -222,10 +238,17 @@ function BoardSurface({
   useEffect(() => {
     useBoardUi.setState({ tool: "select", selection: new Set(), following: null })
   }, [doc])
-  // Downgraded to read-only (M3 ticket 02): put the tools away.
+  // Downgraded to read-only (M3 ticket 02): put the tools away. The comment tool stays for
+  // Commenters while connected (M4).
+  const canCommentNow = commenter && online
   useEffect(() => {
-    if (!editable) useBoardUi.setState({ tool: "select" })
-  }, [editable])
+    const { tool } = useBoardUi.getState()
+    const allowed = tool === "select" || (tool === "comment" ? canCommentNow : editable)
+    if (!allowed) useBoardUi.setState({ tool: "select" })
+  }, [editable, canCommentNow])
+  // A new Board starts with no Thread open.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset whenever the doc changes
+  useEffect(() => useComments.getState().close(), [doc])
 
   const canvas = useRef<CanvasHandle>(null)
   if (!undoManager) return null
@@ -237,9 +260,18 @@ function BoardSurface({
         origin={origin}
         undoManager={undoManager}
         canEdit={editable}
+        canComment={canCommentNow}
         connection={connection}
       />
-      <Dock doc={doc} origin={origin} undoManager={undoManager} canEdit={editable} />
+      <PinLayer boardId={boardId} connection={connection} online={online} canWrite={commenter} />
+      <Dock
+        doc={doc}
+        origin={origin}
+        undoManager={undoManager}
+        canEdit={editable}
+        canComment={canCommentNow}
+        online={online}
+      />
       <UndoZoomPill undoManager={undoManager} canvas={canvas} canEdit={editable} />
     </>
   )

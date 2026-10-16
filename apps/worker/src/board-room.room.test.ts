@@ -1,12 +1,19 @@
 import { env, evictDurableObject, SELF } from "cloudflare:test"
 import { ELEMENT_CAP, elementsOf, TEXT_LIMIT } from "@syncanvas/board-model"
-import type { AccessNotice, Role } from "@syncanvas/shared"
+import type { AccessNotice, ControlMessage, Role } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
 import { describe, expect, it } from "vitest"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
-import { CLOSE, HEARTBEAT_PING, HEARTBEAT_PONG, MESSAGE_ACCESS, MESSAGE_SYNC } from "./board-room"
+import {
+  CLOSE,
+  HEARTBEAT_PING,
+  HEARTBEAT_PONG,
+  MESSAGE_ACCESS,
+  MESSAGE_CONTROL,
+  MESSAGE_SYNC,
+} from "./board-room"
 import { type BoardTokenKind, signBoardToken } from "./board-token"
 import {
   decodePresence,
@@ -41,6 +48,8 @@ class TestClient {
   queries = 0
   /** Access notices received (M3). */
   readonly access: AccessNotice[] = []
+  /** Comment events received (M4). */
+  readonly control: ControlMessage[] = []
   /** Text frames received (the heartbeat's "pong"). */
   readonly texts: string[] = []
   readonly ws: WebSocket
@@ -102,6 +111,10 @@ class TestClient {
     }
     if (type === MESSAGE_ACCESS) {
       this.access.push(JSON.parse(decoding.readVarString(decoder)))
+      return
+    }
+    if (type === MESSAGE_CONTROL) {
+      this.control.push(JSON.parse(decoding.readVarString(decoder)))
       return
     }
     if (type !== MESSAGE_SYNC) return
@@ -769,5 +782,43 @@ describe("S7: read-only connections can't write", () => {
     expect(late.rect("via-presence")).toBeUndefined()
     expect(elementsOf(late.doc).size).toBe(0)
     late.close()
+  })
+})
+
+// ---------- Comments (M4 ticket 01) ----------
+
+describe("BoardRoom comment events", () => {
+  it("relays a comment change to Members and Guests, never to Embed viewers", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const viewer = await joinAs(board, "viewer", "vi")
+    const guest = await joinGuest(board, "guest-a")
+    const embed = await TestClient.connect(
+      board,
+      await token(board, "viewer", { kind: "embed", userId: "embed-1" }),
+    )
+    await until(() => embed.synced, "the embed to sync")
+
+    const message: ControlMessage = {
+      type: "thread-added",
+      thread: {
+        id: "t1",
+        boardId: board,
+        anchor: { x: 1, y: 2 },
+        last: null,
+        status: "open",
+        createdAt: new Date(0).toISOString(),
+        comments: [],
+      },
+    }
+    await room(board).control(message)
+    await until(
+      () => [owner, viewer, guest].every((c) => c.control.length === 1),
+      "everyone but the embed to hear it",
+    )
+    expect(owner.control).toEqual([message])
+    await new Promise((r) => setTimeout(r, 200))
+    expect(embed.control).toEqual([])
+    for (const c of [owner, viewer, guest, embed]) c.close()
   })
 })

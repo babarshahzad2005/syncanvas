@@ -30,15 +30,18 @@ import type { SendInvitation } from "./email"
 export type Caller = { id: string; email: string; name: string }
 
 const DAY = 24 * 60 * 60 * 1000
-const NO_ACCESS = "You don't have access to this board."
+export const NO_ACCESS = "You don't have access to this board."
 
 /** Stops the request with a JSON error body (Hono turns it into the response). */
-function refuse(status: ContentfulStatusCode, body: { error: string } & Record<string, unknown>) {
+export function refuse(
+  status: ContentfulStatusCode,
+  body: { error: string } & Record<string, unknown>,
+) {
   return new HTTPException(status, { res: Response.json(body, { status }) })
 }
 
 /** The caller's Membership, or the same 403 for "no such Board" and "not a Member". */
-async function memberOrRefuse(db: Database, boardId: string, caller: Caller) {
+export async function memberOrRefuse(db: Database, boardId: string, caller: Caller) {
   const membership = await findMembership(db, boardId, caller.id)
   if (!membership) throw refuse(403, { error: NO_ACCESS })
   return membership

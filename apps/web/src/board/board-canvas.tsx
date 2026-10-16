@@ -58,6 +58,7 @@ import {
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react"
 import { toast } from "sonner"
 import type * as Y from "yjs"
+import { useCanvasView, useComments } from "@/comments/store"
 import { useResolvedTheme } from "@/lib/theme"
 import { CursorLayer } from "@/presence/cursor-layer"
 import { LocalPresence } from "@/presence/local-presence"
@@ -166,6 +167,8 @@ type Props = {
   origin: object
   undoManager: Y.UndoManager
   canEdit: boolean
+  /** Commenter and above, while connected: the comment tool places pins (M4). */
+  canComment?: boolean
   /** The live connection: presence goes out and comes in through it. */
   connection?: BoardConnection | null
 }
@@ -270,7 +273,7 @@ function previewOf(
 }
 
 export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
-  { doc, origin, undoManager, canEdit, connection = null },
+  { doc, origin, undoManager, canEdit, canComment = false, connection = null },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -366,6 +369,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       })
       placeEditor()
       s.cursors?.setCamera(s.camera)
+      // Comment pins follow every frame (M4).
+      useCanvasView.setState((v) => ({ camera: s.camera, frame: v.frame + 1 }))
       // What this tab shows, for anyone following it (M2 ticket 05).
       if (s.size.w > 0 && s.size.h > 0) {
         s.presence?.view({
@@ -420,6 +425,20 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     render()
     return useBoardUi.subscribe(render)
   })
+
+  // Comment pins (M4) read Element boxes as drawn, from the live index.
+  useEffect(() => {
+    useCanvasView.setState({
+      boxOf: (id) => {
+        const { index } = state.current
+        const element = index.byId.get(id)
+        if (!element) return null
+        const { position, size } = elementBox(element, index.byId)
+        return { x: position.x, y: position.y, w: size.w, h: size.h }
+      },
+    })
+    return () => useCanvasView.setState({ boxOf: () => null })
+  }, [])
 
   // Presence (M2): publish this tab's cursor and away state, and draw everyone else's cursors.
   useEffect(() => {
@@ -725,6 +744,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         case "c":
           if (canEdit) ui().setTool("connector")
           return
+        case "m":
+          if (canComment) ui().setTool("comment")
+          return
         case "s":
           if (canEdit) ui().setTool("sticky")
           return
@@ -829,6 +851,27 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     }
     if (e.button !== 0) return
 
+    if (ui.tool === "comment") {
+      // A pin on the topmost Element under the pointer, at that spot of its box; else on the
+      // canvas (M4).
+      if (canComment) {
+        const { index, camera } = s
+        const id = hitTest(nearby(world), world, camera.zoom, index.byId)
+        const element = id ? index.byId.get(id) : undefined
+        if (element) {
+          const box = elementBox(element, index.byId)
+          const fraction = (v: number, size: number) => (size > 0 ? v / size : 0.5)
+          useComments.getState().startDraft({
+            elementId: element.id,
+            fx: fraction(world.x - box.position.x, box.size.w),
+            fy: fraction(world.y - box.position.y, box.size.h),
+          })
+        } else {
+          useComments.getState().startDraft({ x: world.x, y: world.y })
+        }
+      }
+      return
+    }
     if (ui.tool === "pen" && canEdit) {
       undoManager.stopCapturing()
       s.gesture = { kind: "stroke", pointerId: e.pointerId, points: [strokePoint(e, s.camera)] }
@@ -1340,11 +1383,13 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
   }
 
   const cursor =
-    tool === "text" && canEdit
-      ? "text"
-      : (isDragTool(tool) || tool === "pen" || tool === "connector") && canEdit
-        ? "crosshair"
-        : "default"
+    tool === "comment" && canComment
+      ? "crosshair"
+      : tool === "text" && canEdit
+        ? "text"
+        : (isDragTool(tool) || tool === "pen" || tool === "connector") && canEdit
+          ? "crosshair"
+          : "default"
 
   function onDoubleClick(e: React.MouseEvent<HTMLCanvasElement>) {
     if (!canEdit) return

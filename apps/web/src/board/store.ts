@@ -2,7 +2,17 @@ import type { ConnectorStyle, PaletteColor, PenWidth, StickyColor } from "@synca
 import { create } from "zustand"
 
 /** Local, per-tab UI state for the Board screen (TECH_STACK §3: Zustand for UI state). */
-export type Tool = "select" | "pen" | "rect" | "ellipse" | "arrow" | "connector" | "text" | "sticky"
+export type Tool =
+  | "select"
+  | "pen"
+  | "rect"
+  | "ellipse"
+  | "arrow"
+  | "connector"
+  | "text"
+  | "sticky"
+  /** Places a comment pin (M4): for Commenters and above, while connected. */
+  | "comment"
 
 /**
  * Tools that place an Element when the pointer is released: dragged out from one corner (or

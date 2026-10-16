@@ -95,7 +95,7 @@ const TOOLS: {
   { id: "text", label: "Text", shortcut: "T", icon: Type },
   { id: "sticky", label: "Sticky note", shortcut: "S", icon: StickyNote },
   { id: null, label: "Image", icon: Image },
-  { id: null, label: "Comment", icon: MessageCircle },
+  { id: "comment", label: "Comment", shortcut: "M", icon: MessageCircle },
 ]
 
 /** Which colors the tray offers: Palette colors, or sticky note backgrounds. */
@@ -240,11 +240,16 @@ export function Dock({
   origin,
   undoManager,
   canEdit,
+  canComment = false,
+  online = true,
 }: {
   doc: Y.Doc
   origin: object
   undoManager: Y.UndoManager
   canEdit: boolean
+  /** Commenter and above, while connected (M4). */
+  canComment?: boolean
+  online?: boolean
 }) {
   const tool = useBoardUi((s) => s.tool)
   const setTool = useBoardUi((s) => s.setTool)
@@ -268,7 +273,8 @@ export function Dock({
         className="flex items-center justify-center gap-0.5 p-1"
       >
         {TOOLS.map((t) => {
-          const available = t.id === "select" || (t.id !== null && canEdit)
+          const available =
+            t.id === "select" || (t.id === "comment" ? canComment : t.id !== null && canEdit)
           return (
             <Hint
               key={t.label}
@@ -277,7 +283,9 @@ export function Dock({
                   ? t.label
                   : t.id === null
                     ? `${t.label} (coming soon)`
-                    : `${t.label} (view only)`
+                    : t.id === "comment" && !online
+                      ? "Comments need a connection"
+                      : `${t.label} (view only)`
               }
               shortcut={t.shortcut}
             >

@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers"
 import { checkUpdate } from "@syncanvas/board-model"
-import { type AccessNotice, canEdit, type Role } from "@syncanvas/shared"
+import { type AccessNotice, type ControlMessage, canEdit, type Role } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
 import * as syncProtocol from "y-protocols/sync"
@@ -23,6 +23,8 @@ import {
 export const MESSAGE_SYNC = 0
 /** Access changes (M3 ticket 02): a JSON AccessNotice, after y-protocols' 0–3. */
 export const MESSAGE_ACCESS = 4
+/** Comment changes relayed from the API (M4): a JSON ControlMessage. */
+export const MESSAGE_CONTROL = 5
 export const HEARTBEAT_PING = "ping"
 export const HEARTBEAT_PONG = "pong"
 
@@ -275,6 +277,27 @@ export class BoardRoom extends DurableObject<Env> {
     // Tests set a small cap through the environment; production uses the PRD's 100.
     const configured = Number((this.env as { CONNECTION_CAP?: string }).CONNECTION_CAP)
     return Number.isFinite(configured) && configured > 0 ? configured : CONNECTION_CAP
+  }
+
+  // ---------- Comments (M4) ----------
+
+  /**
+   * Called by the API (Durable Object RPC) after it saved a comment change: everyone on the
+   * Board sees it at once, except Embed viewers, who never see comments (FLOWS §4).
+   */
+  async control(message: ControlMessage) {
+    const encoder = encoding.createEncoder()
+    encoding.writeVarUint(encoder, MESSAGE_CONTROL)
+    encoding.writeVarString(encoder, JSON.stringify(message))
+    const frame = encoding.toUint8Array(encoder)
+    for (const ws of this.ctx.getWebSockets()) {
+      if ((ws.deserializeAttachment() as SocketInfo).kind === "embed") continue
+      try {
+        ws.send(frame)
+      } catch {
+        // Gone; it reloads Threads when it reconnects.
+      }
+    }
   }
 
   // ---------- Presence ----------

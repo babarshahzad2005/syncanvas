@@ -1,6 +1,7 @@
 import {
   type AccessNotice,
   type BoardTokenResponse,
+  type ControlMessage,
   canEdit,
   type InviteRole,
 } from "@syncanvas/shared"
@@ -38,6 +39,8 @@ const MESSAGE_AWARENESS = 1
 const MESSAGE_QUERY_AWARENESS = 3
 /** Must match MESSAGE_ACCESS in the Worker's board-room.ts. */
 const MESSAGE_ACCESS = 4
+/** Must match MESSAGE_CONTROL in the Worker's board-room.ts. */
+const MESSAGE_CONTROL = 5
 
 /**
  * Heartbeat (M2 ticket 06): a socket can die without the browser noticing (sleep, a flaky
@@ -76,6 +79,8 @@ export class BoardConnection {
   notice: AccessNotice | null = null
   /** Whether this connection was ever online: losing access after that isn't a first visit. */
   wasOnline = false
+  /** The board token of the current connection (Guests read Threads with it, M4). */
+  token: string | null = null
   /** For a Guest: what the Share Link grants once they sign in (M3 ticket 04). */
   linkRole: InviteRole | null = null
 
@@ -86,6 +91,7 @@ export class BoardConnection {
   private listeners = new Set<() => void>()
   private presenceListeners = new Set<() => void>()
   private accessListeners = new Set<(notice: AccessNotice) => void>()
+  private controlListeners = new Set<(message: ControlMessage) => void>()
   private heartbeat: ReturnType<typeof setInterval> | null = null
   private lastHeard = 0
   private lastPing = 0
@@ -124,6 +130,14 @@ export class BoardConnection {
     this.accessListeners.add(listener)
     return () => {
       this.accessListeners.delete(listener)
+    }
+  }
+
+  /** Called with each comment change the board room relays (M4). */
+  subscribeControl = (listener: (message: ControlMessage) => void) => {
+    this.controlListeners.add(listener)
+    return () => {
+      this.controlListeners.delete(listener)
     }
   }
 
@@ -184,6 +198,7 @@ export class BoardConnection {
     }
     if (this.stopped) return
     this.board = pass.board
+    this.token = pass.token
     this.role = pass.role
     this.you = pass.you
 
@@ -313,6 +328,11 @@ export class BoardConnection {
     }
     if (type === MESSAGE_ACCESS) {
       this.onAccess(JSON.parse(decoding.readVarString(decoder)) as AccessNotice)
+      return
+    }
+    if (type === MESSAGE_CONTROL) {
+      const message = JSON.parse(decoding.readVarString(decoder)) as ControlMessage
+      for (const l of this.controlListeners) l(message)
       return
     }
     if (type !== MESSAGE_SYNC) return

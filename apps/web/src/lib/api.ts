@@ -2,14 +2,18 @@ import type {
   BoardTokenResponse,
   ChangeRoleRequest,
   CreateBoardResponse,
+  CreateThreadRequest,
   DashboardResponse,
   GuestTokenResponse,
   InviteRequest,
   InviteResponse,
   JoinResponse,
+  ReplyRequest,
   ShareLinkRequest,
   ShareLinkState,
   SharingResponse,
+  ThreadsResponse,
+  ThreadView,
 } from "@syncanvas/shared"
 
 export class ApiError extends Error {
@@ -90,6 +94,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ token }),
     }),
+  // ---------- Threads (M4) ----------
+  threads: (boardId: string) => request<ThreadsResponse>(`${board(boardId)}/threads`),
+  /** A Guest reads Threads with the board token they connected with. */
+  guestThreads: (boardId: string, token: string) =>
+    request<ThreadsResponse>(`/api/guest/boards/${encodeURIComponent(boardId)}/threads`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  createThread: (boardId: string, input: CreateThreadRequest) =>
+    request<ThreadView>(`${board(boardId)}/threads`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  reply: (boardId: string, threadId: string, input: ReplyRequest) =>
+    request<ThreadView>(`${board(boardId)}/threads/${encodeURIComponent(threadId)}/comments`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
 }
 
 function board(boardId: string) {
@@ -99,4 +120,5 @@ function board(boardId: string) {
 export const queryKeys = {
   dashboard: ["dashboard"] as const,
   sharing: (boardId: string) => ["sharing", boardId] as const,
+  threads: (boardId: string) => ["threads", boardId] as const,
 }

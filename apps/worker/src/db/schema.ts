@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm"
 import {
   boolean,
   check,
+  doublePrecision,
   index,
   pgTable,
   primaryKey,
@@ -196,4 +197,58 @@ export const shareLinks = pgTable(
   (table) => [
     check("share_links_role_check", sql`${table.role} in ('editor', 'commenter', 'viewer')`),
   ],
+)
+
+// ---------- Comments (M4; GLOSSARY: Thread) ----------
+
+/**
+ * A Thread pinned to an Element (its id plus a spot relative to its box, `fx`/`fy` in 0–1) or
+ * to a point on the canvas (`x`/`y`). `last_x`/`last_y` remember where a deleted Element's
+ * pin was (Detached Threads, M4 ticket 02).
+ */
+export const threads = pgTable(
+  "threads",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id")
+      .notNull()
+      .references(() => boards.id, { onDelete: "cascade" }),
+    elementId: text("element_id"),
+    fx: doublePrecision("fx"),
+    fy: doublePrecision("fy"),
+    x: doublePrecision("x"),
+    y: doublePrecision("y"),
+    lastX: doublePrecision("last_x"),
+    lastY: doublePrecision("last_y"),
+    status: text("status", { enum: ["open", "resolved"] })
+      .notNull()
+      .default("open"),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("threads_board_idx").on(table.boardId),
+    check("threads_status_check", sql`${table.status} in ('open', 'resolved')`),
+    check(
+      "threads_anchor_check",
+      sql`(${table.elementId} is not null and ${table.fx} is not null and ${table.fy} is not null) or (${table.x} is not null and ${table.y} is not null)`,
+    ),
+  ],
+)
+
+/** A comment in a Thread. `author_id` null means "Comment deleted" (or a deleted account). */
+export const comments = pgTable(
+  "comments",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    authorId: text("author_id").references(() => user.id, { onDelete: "set null" }),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    editedAt: timestamp("edited_at"),
+  },
+  (table) => [index("comments_thread_idx").on(table.threadId, table.createdAt)],
 )

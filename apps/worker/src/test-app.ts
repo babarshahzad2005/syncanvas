@@ -4,6 +4,7 @@ import { generateKeyPairSync } from "node:crypto"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { PGlite } from "@electric-sql/pglite"
+import type { ControlMessage } from "@syncanvas/shared"
 import { drizzle } from "drizzle-orm/pglite"
 import { migrate } from "drizzle-orm/pglite/migrator"
 import { expect } from "vitest"
@@ -56,6 +57,8 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
   const access: { boardId: string; change: AccessChange }[] = []
   /** Boards whose Guests were disconnected, in order. */
   const guestsClosed: string[] = []
+  /** Control messages relayed to board rooms, in order (M4). */
+  const broadcasts: { boardId: string; message: ControlMessage }[] = []
   const app = createApp(() => ({
     db,
     auth,
@@ -67,6 +70,9 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     },
     closeGuests: async (boardId) => {
       guestsClosed.push(boardId)
+    },
+    broadcast: async (boardId, message) => {
+      broadcasts.push({ boardId, message })
     },
   }))
 
@@ -107,7 +113,18 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     return cookie
   }
 
-  return { request, requestLink, signIn, outbox, invitations, access, guestsClosed, db, pg }
+  return {
+    request,
+    requestLink,
+    signIn,
+    outbox,
+    invitations,
+    access,
+    guestsClosed,
+    broadcasts,
+    db,
+    pg,
+  }
 }
 
 export type TestApp = Awaited<ReturnType<typeof createTestApp>>

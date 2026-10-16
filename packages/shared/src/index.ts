@@ -164,3 +164,53 @@ export function shareLinkPath(boardId: string, token: string) {
  * session (M3 ticket 04). Always view-only; `linkRole` picks the "Sign in to …" button.
  */
 export type GuestTokenResponse = BoardTokenResponse & { linkRole: InviteRole }
+
+// ---------- Comments (M4) ----------
+
+/** Longest comment, in characters (PRD Limits). */
+export const COMMENT_MAX = 2000
+
+/** Whether a Role may write comments: Commenters and above (PRD A5). Guests never. */
+export function canComment(role: Role): boolean {
+  return role !== "viewer"
+}
+
+/**
+ * Where a Thread's pin sits: on an Element, at a spot relative to its box (0–1 of its width
+ * and height, so it moves and scales with it), or at a point on the canvas.
+ */
+export type ThreadAnchor = { elementId: string; fx: number; fy: number } | { x: number; y: number }
+
+export type CommentView = {
+  id: string
+  /** Null once the author's comment is deleted ("Comment deleted"). */
+  author: { id: string; name: string } | null
+  body: string
+  createdAt: string
+  editedAt: string | null
+}
+
+export type ThreadView = {
+  id: string
+  boardId: string
+  anchor: ThreadAnchor
+  /** Where a deleted Element's pin was last (Detached Threads, M4 ticket 02). */
+  last: { x: number; y: number } | null
+  status: "open" | "resolved"
+  createdAt: string
+  comments: CommentView[]
+}
+
+export type ThreadsResponse = { threads: ThreadView[] }
+export type CreateThreadRequest = { anchor: ThreadAnchor; body: string }
+export type ReplyRequest = { body: string }
+
+/** What the board room relays from the API to everyone on the Board (never Embed viewers). */
+export type ControlMessage = { type: "thread-added" | "thread-updated"; thread: ThreadView }
+
+/** A trimmed comment body, or null if it's empty or too long. */
+export function normalizeComment(input: unknown): string | null {
+  if (typeof input !== "string") return null
+  const body = input.replace(/\r\n?/g, "\n").trim()
+  return body.length >= 1 && body.length <= COMMENT_MAX ? body : null
+}
