@@ -74,6 +74,7 @@ async function views(db: Database, rows: (typeof threads.$inferSelect)[]): Promi
       body: comments.body,
       createdAt: comments.createdAt,
       editedAt: comments.editedAt,
+      deletedAt: comments.deletedAt,
       authorId: user.id,
       authorName: user.name,
       authorEmail: user.email,
@@ -90,13 +91,16 @@ async function views(db: Database, rows: (typeof threads.$inferSelect)[]): Promi
   const byThread = new Map<string, CommentView[]>()
   for (const c of all) {
     const list = byThread.get(c.threadId) ?? []
+    const deleted = c.deletedAt !== null
     list.push({
       id: c.id,
       author:
-        c.authorId && c.authorEmail
+        !deleted && c.authorId && c.authorEmail
           ? { id: c.authorId, name: displayNameOf({ name: c.authorName, email: c.authorEmail }) }
           : null,
-      body: c.authorId ? c.body : "",
+      deleted,
+      // A deleted comment's text never leaves the server.
+      body: deleted ? "" : c.body,
       createdAt: c.createdAt.toISOString(),
       editedAt: c.editedAt?.toISOString() ?? null,
     })
@@ -197,4 +201,127 @@ export async function reply(
   const view = await viewOf(db, thread.id)
   await relay(broadcast, input.boardId, { type: "thread-updated", thread: view })
   return view
+}
+
+// ---------- Managing Threads (M4 ticket 02) ----------
+
+async function threadOrRefuse(db: Database, boardId: string, threadId: string) {
+  const [thread] = await db
+    .select()
+    .from(threads)
+    .where(and(eq(threads.id, threadId), eq(threads.boardId, boardId)))
+    .limit(1)
+  if (!thread) throw refuse(404, { error: "That thread doesn't exist anymore." })
+  return thread
+}
+
+async function commentOrRefuse(db: Database, threadId: string, commentId: string) {
+  const [comment] = await db
+    .select()
+    .from(comments)
+    .where(and(eq(comments.id, commentId), eq(comments.threadId, threadId)))
+    .limit(1)
+  if (!comment || comment.deletedAt) {
+    throw refuse(404, { error: "That comment doesn't exist anymore." })
+  }
+  return comment
+}
+
+async function touched(db: Database, broadcast: Broadcast, boardId: string, threadId: string) {
+  await db.update(threads).set({ updatedAt: new Date() }).where(eq(threads.id, threadId))
+  const thread = await viewOf(db, threadId)
+  await relay(broadcast, boardId, { type: "thread-updated", thread })
+  return thread
+}
+
+/** Authors edit their own comments, while they can still comment. */
+export async function editComment(
+  db: Database,
+  broadcast: Broadcast,
+  input: { boardId: string; threadId: string; commentId: string; caller: Caller; body: unknown },
+): Promise<ThreadView> {
+  await commenterOrRefuse(db, input.boardId, input.caller)
+  const body = bodyOrRefuse(input.body)
+  await threadOrRefuse(db, input.boardId, input.threadId)
+  const comment = await commentOrRefuse(db, input.threadId, input.commentId)
+  if (comment.authorId !== input.caller.id) {
+    throw refuse(403, { error: "You can only edit your own comments." })
+  }
+  await db.update(comments).set({ body, editedAt: new Date() }).where(eq(comments.id, comment.id))
+  return touched(db, broadcast, input.boardId, input.threadId)
+}
+
+/**
+ * Deletes a comment: its author (while they can comment) or the Owner. A Thread's first
+ * comment takes the whole Thread with it when nobody replied; with replies it stays as
+ * "Comment deleted" (PRD A5). Returns the Thread, or null when it went too.
+ */
+export async function deleteComment(
+  db: Database,
+  broadcast: Broadcast,
+  input: { boardId: string; threadId: string; commentId: string; caller: Caller },
+): Promise<ThreadView | null> {
+  const membership = await memberOrRefuse(db, input.boardId, input.caller)
+  await threadOrRefuse(db, input.boardId, input.threadId)
+  const comment = await commentOrRefuse(db, input.threadId, input.commentId)
+  const isOwner = membership.role === "owner"
+  const isAuthor = comment.authorId === input.caller.id && canComment(membership.role)
+  if (!isOwner && !isAuthor) {
+    throw refuse(403, { error: "Only the comment's author or the board's owner can delete it." })
+  }
+  const all = await db
+    .select({ id: comments.id, deletedAt: comments.deletedAt })
+    .from(comments)
+    .where(eq(comments.threadId, input.threadId))
+    .orderBy(asc(comments.createdAt), asc(comments.id))
+  const first = all[0]?.id === comment.id
+  const othersLeft = all.some((c) => c.id !== comment.id && !c.deletedAt)
+  if (first && !othersLeft) {
+    await removeThread(db, broadcast, input.boardId, input.threadId)
+    return null
+  }
+  if (first) {
+    await db.update(comments).set({ deletedAt: new Date() }).where(eq(comments.id, comment.id))
+  } else {
+    await db.delete(comments).where(eq(comments.id, comment.id))
+    // The first comment was already deleted and this was the last reply: nothing is left.
+    if (!othersLeft) {
+      await removeThread(db, broadcast, input.boardId, input.threadId)
+      return null
+    }
+  }
+  return touched(db, broadcast, input.boardId, input.threadId)
+}
+
+async function removeThread(db: Database, broadcast: Broadcast, boardId: string, threadId: string) {
+  await db.delete(threads).where(eq(threads.id, threadId))
+  await relay(broadcast, boardId, { type: "thread-removed", threadId })
+}
+
+/** The Owner deletes a whole Thread. */
+export async function deleteThread(
+  db: Database,
+  broadcast: Broadcast,
+  input: { boardId: string; threadId: string; caller: Caller },
+) {
+  const membership = await memberOrRefuse(db, input.boardId, input.caller)
+  if (membership.role !== "owner") {
+    throw refuse(403, { error: "Only the board's owner can delete a thread." })
+  }
+  await threadOrRefuse(db, input.boardId, input.threadId)
+  await removeThread(db, broadcast, input.boardId, input.threadId)
+}
+
+/** Commenters and above resolve or reopen any Thread. */
+export async function setThreadStatus(
+  db: Database,
+  broadcast: Broadcast,
+  input: { boardId: string; threadId: string; caller: Caller; status: "open" | "resolved" },
+): Promise<ThreadView> {
+  await commenterOrRefuse(db, input.boardId, input.caller)
+  const thread = await threadOrRefuse(db, input.boardId, input.threadId)
+  if (thread.status !== input.status) {
+    await db.update(threads).set({ status: input.status }).where(eq(threads.id, thread.id))
+  }
+  return touched(db, broadcast, input.boardId, input.threadId)
 }

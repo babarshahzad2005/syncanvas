@@ -237,7 +237,7 @@ export const threads = pgTable(
   ],
 )
 
-/** A comment in a Thread. `author_id` null means "Comment deleted" (or a deleted account). */
+/** A comment in a Thread. `author_id` is null once its account is deleted (M5). */
 export const comments = pgTable(
   "comments",
   {
@@ -249,6 +249,8 @@ export const comments = pgTable(
     body: text("body").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     editedAt: timestamp("edited_at"),
+    /** A first comment deleted after others replied: kept as "Comment deleted" (PRD A5). */
+    deletedAt: timestamp("deleted_at"),
   },
   (table) => [index("comments_thread_idx").on(table.threadId, table.createdAt)],
 )

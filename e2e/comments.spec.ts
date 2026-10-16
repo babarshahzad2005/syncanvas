@@ -1,29 +1,16 @@
-import { expect, type Page, test } from "@playwright/test"
-import { drag, enableTestHooks, invite, signIn, waitUntilOnline } from "./helpers"
+import { expect, test } from "@playwright/test"
+import {
+  addComment as comment,
+  drag,
+  enableTestHooks,
+  invite,
+  pinOf as pin,
+  signIn,
+  waitUntilOnline,
+} from "./helpers"
 
 // M4 ticket 01: Threads pinned to an Element or a point, live in the other browser, with
 // replies; pins follow their Element; Viewers read without a reply box.
-
-async function click(page: Page, at: { x: number; y: number }) {
-  const box = await page.getByLabel("Board canvas").boundingBox()
-  await page.mouse.click((box?.x ?? 0) + at.x, (box?.y ?? 0) + at.y)
-}
-
-async function comment(page: Page, at: { x: number; y: number }, text: string) {
-  await page.keyboard.press("m")
-  await click(page, at)
-  const card = page.getByRole("region", { name: "New comment" })
-  await card.getByRole("textbox", { name: "Comment" }).fill(text)
-  await card.getByRole("textbox", { name: "Comment" }).press("Enter")
-  await expect(card).toBeHidden()
-  // The new Thread's card opens, ready for a reply; close it.
-  await expect(page.getByRole("region", { name: "Comment thread" })).toContainText(text)
-  await page.keyboard.press("Escape")
-  await expect(page.getByRole("region", { name: "Comment thread" })).toBeHidden()
-}
-
-const pin = (page: Page, text: string) =>
-  page.getByRole("button", { name: new RegExp(`^Comment by .*: ${text}`) })
 
 test("Threads appear live, take replies, and follow their Element", async ({ browser }) => {
   test.setTimeout(180_000)

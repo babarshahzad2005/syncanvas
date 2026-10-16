@@ -1,6 +1,12 @@
 import { DurableObject } from "cloudflare:workers"
-import { checkUpdate } from "@syncanvas/board-model"
-import { type AccessNotice, type ControlMessage, canEdit, type Role } from "@syncanvas/shared"
+import { checkUpdate, elementsOf, readElement } from "@syncanvas/board-model"
+import {
+  type AccessNotice,
+  type ControlMessage,
+  canEdit,
+  type ElementBox,
+  type Role,
+} from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
 import * as syncProtocol from "y-protocols/sync"
@@ -70,6 +76,13 @@ export function accessMessage(notice: AccessNotice) {
   return encoding.toUint8Array(encoder)
 }
 
+function controlFrame(message: ControlMessage) {
+  const encoder = encoding.createEncoder()
+  encoding.writeVarUint(encoder, MESSAGE_CONTROL)
+  encoding.writeVarString(encoder, JSON.stringify(message))
+  return encoding.toUint8Array(encoder)
+}
+
 function syncMessage(write: (encoder: encoding.Encoder) => void) {
   const encoder = encoding.createEncoder()
   encoding.writeVarUint(encoder, MESSAGE_SYNC)
@@ -99,6 +112,11 @@ export class BoardRoom extends DurableObject<Env> {
       // Role, so the change wins over the token until the token expires.
       this.ctx.storage.sql.exec(
         "create table if not exists access (user_id text primary key, role text, changed_at integer not null)",
+      )
+      // Elements with Threads, and where the deleted ones last were (M4, ADR 0012).
+      this.ctx.storage.sql.exec("create table if not exists anchors (element_id text primary key)")
+      this.ctx.storage.sql.exec(
+        "create table if not exists last_boxes (element_id text primary key, x real not null, y real not null, w real not null, h real not null)",
       )
       for (const row of this.ctx.storage.sql.exec<{ data: ArrayBuffer }>(
         "select data from updates order by seq",
@@ -166,6 +184,7 @@ export class BoardRoom extends DurableObject<Env> {
     // Sync step 1: tell the client what we have, so it sends what we're missing.
     server.send(syncMessage((e) => syncProtocol.writeSyncStep1(e, this.doc)))
     this.greetWithPresence(server)
+    if (claims.kind !== "embed") this.greetWithLastBoxes(server)
     return new Response(null, { status: 101, webSocket: client })
   }
 
@@ -206,7 +225,9 @@ export class BoardRoom extends DurableObject<Env> {
 
     // Persist before broadcasting: an update anyone has seen is always in storage.
     this.ctx.storage.sql.exec("insert into updates (data, at) values (?, ?)", update, Date.now())
+    const anchored = this.anchoredBoxes()
     Y.applyUpdate(this.doc, update)
+    this.noteDeletedAnchors(anchored)
 
     const outgoing = syncMessage((e) => syncProtocol.writeUpdate(e, update))
     for (const other of this.ctx.getWebSockets()) {
@@ -281,15 +302,72 @@ export class BoardRoom extends DurableObject<Env> {
 
   // ---------- Comments (M4) ----------
 
+  /** Boxes of the Elements with Threads that exist right now. */
+  private anchoredBoxes(): Map<string, ElementBox> {
+    const boxes = new Map<string, ElementBox>()
+    const elements = elementsOf(this.doc)
+    for (const { element_id } of this.ctx.storage.sql.exec<{ element_id: string }>(
+      "select element_id from anchors",
+    )) {
+      const fields = elements.get(element_id)
+      const e = fields ? readElement(fields) : null
+      if (e && "position" in e && "size" in e) {
+        boxes.set(element_id, { x: e.position.x, y: e.position.y, w: e.size.w, h: e.size.h })
+      }
+    }
+    return boxes
+  }
+
+  /** An update deleted Elements with Threads: remember where they were, and tell everyone. */
+  private noteDeletedAnchors(before: Map<string, ElementBox>) {
+    if (before.size === 0) return
+    const elements = elementsOf(this.doc)
+    for (const [elementId, box] of before) {
+      if (elements.has(elementId)) continue
+      this.ctx.storage.sql.exec(
+        "insert into last_boxes (element_id, x, y, w, h) values (?, ?, ?, ?, ?) on conflict (element_id) do update set x = excluded.x, y = excluded.y, w = excluded.w, h = excluded.h",
+        elementId,
+        box.x,
+        box.y,
+        box.w,
+        box.h,
+      )
+      this.sendControl({ type: "element-gone", elementId, box })
+    }
+  }
+
+  /** Where deleted Elements with Threads last were, for someone joining. */
+  private greetWithLastBoxes(ws: WebSocket) {
+    const boxes: Record<string, ElementBox> = {}
+    for (const row of this.ctx.storage.sql.exec<{
+      element_id: string
+      x: number
+      y: number
+      w: number
+      h: number
+    }>("select element_id, x, y, w, h from last_boxes")) {
+      boxes[row.element_id] = { x: row.x, y: row.y, w: row.w, h: row.h }
+    }
+    if (Object.keys(boxes).length > 0) ws.send(controlFrame({ type: "last-boxes", boxes }))
+  }
+
   /**
    * Called by the API (Durable Object RPC) after it saved a comment change: everyone on the
    * Board sees it at once, except Embed viewers, who never see comments (FLOWS §4).
    */
   async control(message: ControlMessage) {
-    const encoder = encoding.createEncoder()
-    encoding.writeVarUint(encoder, MESSAGE_CONTROL)
-    encoding.writeVarString(encoder, JSON.stringify(message))
-    const frame = encoding.toUint8Array(encoder)
+    // A Thread on an Element: its position is worth keeping if the Element goes (ADR 0012).
+    if (message.type === "thread-added" && "elementId" in message.thread.anchor) {
+      this.ctx.storage.sql.exec(
+        "insert into anchors (element_id) values (?) on conflict do nothing",
+        message.thread.anchor.elementId,
+      )
+    }
+    this.sendControl(message)
+  }
+
+  private sendControl(message: ControlMessage) {
+    const frame = controlFrame(message)
     for (const ws of this.ctx.getWebSockets()) {
       if ((ws.deserializeAttachment() as SocketInfo).kind === "embed") continue
       try {

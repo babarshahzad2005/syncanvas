@@ -1,5 +1,12 @@
 import { createUndoManager, indexById, listElements } from "@syncanvas/board-model"
-import { canComment, canEdit, type InviteRole, normalizeDisplayName } from "@syncanvas/shared"
+import {
+  canComment,
+  canEdit,
+  type ElementBox,
+  type InviteRole,
+  normalizeDisplayName,
+  type ThreadView,
+} from "@syncanvas/shared"
 import { useQueryClient } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { ChevronDown, CloudOff, Download, Eye, Loader2, Lock } from "lucide-react"
@@ -12,8 +19,10 @@ import { pictureOf } from "@/board/clipboard"
 import { errorMessage, ROLE_LABEL, ShareButton } from "@/board/share-dialog"
 import { ShortcutSheet } from "@/board/shortcut-sheet"
 import { useBoardUi } from "@/board/store"
+import { CommentsButton } from "@/comments/comments-button"
 import { PinLayer } from "@/comments/pin-layer"
 import { useComments } from "@/comments/store"
+import { useThreads } from "@/comments/use-threads"
 import { BrandMark } from "@/components/brand"
 import { NameDialog } from "@/components/name-dialog"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -93,6 +102,8 @@ function JoinByLink({ boardId, token }: { boardId: string; token: string }) {
   )
 }
 
+const NO_BOXES = new Map<string, ElementBox>()
+
 function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string }) {
   const { connection, status, board, role, doc, lostWork, discardLocalCopy } = useBoardConnection(
     boardId,
@@ -100,6 +111,8 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
   )
   const navigate = useNavigate()
   const leaving = useRef(false)
+  // Comments (M4): loaded once connected, then kept live by the board room.
+  const threads = useThreads(boardId, connection, status === "online")
 
   // The Owner changed your Role: the Board has already switched; say who did it.
   useEffect(
@@ -168,13 +181,18 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
             connection={connection}
             editable={role ? canEdit(role) : false}
             commenter={role !== null && canComment(role) && !guestLink}
+            isOwner={role === "owner"}
             online={status === "online"}
+            threads={threads}
           />
         )}
         <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
         {/* Top right: the presence pill, then Share (DESIGN.md → Board screen). */}
         <div className="fixed top-3 right-3 flex items-center gap-2">
           <PresencePill connection={connection} />
+          {doc && (
+            <CommentsButton threads={threads} lastBoxes={connection?.lastBoxes ?? NO_BOXES} />
+          )}
           {guestLink ? (
             <GuestSignIn linkRole={connection?.linkRole ?? null} />
           ) : (
@@ -212,7 +230,9 @@ function BoardSurface({
   connection,
   editable,
   commenter,
+  isOwner,
   online,
+  threads,
 }: {
   boardId: string
   doc: Y.Doc
@@ -220,7 +240,9 @@ function BoardSurface({
   editable: boolean
   /** Commenter and above (M4); comments also need a connection. */
   commenter: boolean
+  isOwner: boolean
   online: boolean
+  threads: readonly ThreadView[]
 }) {
   // This tab's transaction origin: the UndoManager only tracks (and undoes) these.
   const origin = useMemo(() => ({ tab: "local" }), [])
@@ -263,7 +285,15 @@ function BoardSurface({
         canComment={canCommentNow}
         connection={connection}
       />
-      <PinLayer boardId={boardId} connection={connection} online={online} canWrite={commenter} />
+      <PinLayer
+        boardId={boardId}
+        threads={threads}
+        lastBoxes={connection?.lastBoxes ?? NO_BOXES}
+        online={online}
+        canWrite={commenter}
+        isOwner={isOwner}
+        youId={connection?.you?.id ?? null}
+      />
       <Dock
         doc={doc}
         origin={origin}

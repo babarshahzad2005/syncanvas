@@ -1,8 +1,9 @@
 import type { ThreadView } from "@syncanvas/shared"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { api, queryKeys } from "@/lib/api"
 import type { BoardConnection } from "@/sync/board-connection"
+import { useComments } from "./store"
 
 /** Adds or replaces a Thread in a list, keeping it in creation order. */
 export function upsertThread(list: readonly ThreadView[], thread: ThreadView): ThreadView[] {
@@ -32,12 +33,23 @@ export function useThreads(boardId: string, connection: BoardConnection | null, 
     staleTime: Number.POSITIVE_INFINITY,
   })
 
+  // Where deleted Elements with Threads were changes too; re-render when it does.
+  const [, setBoxes] = useState(0)
   useEffect(
     () =>
       connection?.subscribeControl((message) => {
-        queryClient.setQueryData<ThreadView[]>(key, (old) =>
-          upsertThread(old ?? [], message.thread),
-        )
+        if (message.type === "thread-added" || message.type === "thread-updated") {
+          queryClient.setQueryData<ThreadView[]>(key, (old) =>
+            upsertThread(old ?? [], message.thread),
+          )
+        } else if (message.type === "thread-removed") {
+          queryClient.setQueryData<ThreadView[]>(key, (old) =>
+            (old ?? []).filter((t) => t.id !== message.threadId),
+          )
+          if (useComments.getState().open === message.threadId) useComments.getState().close()
+        } else {
+          setBoxes((n) => n + 1)
+        }
       }),
     [connection, queryClient, key],
   )

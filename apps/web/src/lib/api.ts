@@ -4,6 +4,7 @@ import type {
   CreateBoardResponse,
   CreateThreadRequest,
   DashboardResponse,
+  EditCommentRequest,
   GuestTokenResponse,
   InviteRequest,
   InviteResponse,
@@ -105,6 +106,25 @@ export const api = {
     request<ThreadView>(`${board(boardId)}/threads`, {
       method: "POST",
       body: JSON.stringify(input),
+    }),
+  editComment: (boardId: string, threadId: string, commentId: string, input: EditCommentRequest) =>
+    request<ThreadView>(
+      `${board(boardId)}/threads/${encodeURIComponent(threadId)}/comments/${encodeURIComponent(commentId)}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+  /** The Thread as it is now, or null when it went with its only comment. */
+  deleteComment: (boardId: string, threadId: string, commentId: string) =>
+    request<{ thread: ThreadView | null }>(
+      `${board(boardId)}/threads/${encodeURIComponent(threadId)}/comments/${encodeURIComponent(commentId)}`,
+      { method: "DELETE" },
+    ),
+  deleteThread: (boardId: string, threadId: string) =>
+    request<{ ok: true }>(`${board(boardId)}/threads/${encodeURIComponent(threadId)}`, {
+      method: "DELETE",
+    }),
+  setThreadStatus: (boardId: string, threadId: string, action: "resolve" | "reopen") =>
+    request<ThreadView>(`${board(boardId)}/threads/${encodeURIComponent(threadId)}/${action}`, {
+      method: "POST",
     }),
   reply: (boardId: string, threadId: string, input: ReplyRequest) =>
     request<ThreadView>(`${board(boardId)}/threads/${encodeURIComponent(threadId)}/comments`, {

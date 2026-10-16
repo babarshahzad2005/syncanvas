@@ -146,3 +146,29 @@ export async function finishSignIn(page: Page, email: string) {
     .not.toBe("")
   await page.goto(link)
 }
+
+// ---------- Comments (M4) ----------
+
+/** Clicks a canvas-relative point. */
+export async function clickCanvas(page: Page, at: { x: number; y: number }) {
+  const box = await page.getByLabel("Board canvas").boundingBox()
+  await page.mouse.click((box?.x ?? 0) + at.x, (box?.y ?? 0) + at.y)
+}
+
+/** Places a comment with the comment tool (M) and closes its card. */
+export async function addComment(page: Page, at: { x: number; y: number }, text: string) {
+  await page.keyboard.press("m")
+  await clickCanvas(page, at)
+  const card = page.getByRole("region", { name: "New comment" })
+  await card.getByRole("textbox", { name: "Comment" }).fill(text)
+  await card.getByRole("textbox", { name: "Comment" }).press("Enter")
+  await expect(card).toBeHidden()
+  // The new Thread's card opens, ready for a reply; close it.
+  await expect(page.getByRole("region", { name: "Comment thread" })).toContainText(text)
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("region", { name: "Comment thread" })).toBeHidden()
+}
+
+/** A comment pin, found by its first comment's text (a regular expression source). */
+export const pinOf = (page: Page, text: string) =>
+  page.getByRole("button", { name: new RegExp(`^Comment by .*: ${text}`) })

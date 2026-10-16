@@ -426,6 +426,23 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     return useBoardUi.subscribe(render)
   })
 
+  // A Thread picked from the comments list: center its pin, keeping the zoom (M4).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setCamera only reads refs
+  useEffect(
+    () =>
+      useComments.subscribe((next, prev) => {
+        const at = next.panTo
+        if (!at || at === prev.panTo) return
+        const { size, camera } = state.current
+        setCamera({
+          ...camera,
+          x: size.w / 2 - at.x * camera.zoom,
+          y: size.h / 2 - at.y * camera.zoom,
+        })
+      }),
+    [],
+  )
+
   // Comment pins (M4) read Element boxes as drawn, from the live index.
   useEffect(() => {
     useCanvasView.setState({

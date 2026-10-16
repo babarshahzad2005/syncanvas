@@ -1,4 +1,5 @@
 import type {
+  ControlMessage,
   CreateBoardResponse,
   GuestTokenResponse,
   Role,
@@ -14,6 +15,11 @@ import { createTestApp, type TestApp } from "./test-app"
 let t: TestApp
 let ada: string
 let board: string
+
+/** The Thread a relayed message is about. */
+function threadIdOf(message: ControlMessage) {
+  return "thread" in message ? message.thread.id : "threadId" in message ? message.threadId : null
+}
 
 async function json<T>(res: Response) {
   return (await res.json()) as T
@@ -77,7 +83,7 @@ describe("Threads", () => {
     expect(onPoint.anchor).toEqual({ x: -40.5, y: 300 })
 
     expect((await list(ada)).map((th) => th.id)).toEqual([thread.id, onPoint.id])
-    expect(t.broadcasts.map((b) => [b.boardId, b.message.type, b.message.thread.id])).toEqual([
+    expect(t.broadcasts.map((b) => [b.boardId, b.message.type, threadIdOf(b.message)])).toEqual([
       [board, "thread-added", thread.id],
       [board, "thread-added", onPoint.id],
     ])
@@ -177,5 +183,122 @@ describe("Threads", () => {
     ])
     expect((await read("forged")).status).toBe(403)
     expect((await read(guest.token, "another-board")).status).toBe(403)
+  })
+})
+
+describe("Managing Threads", () => {
+  const commentUrl = (threadId: string, commentId: string) =>
+    `/api/boards/${board}/threads/${threadId}/comments/${commentId}`
+  const edit = (cookie: string, threadId: string, commentId: string, body: unknown) =>
+    t.request(commentUrl(threadId, commentId), {
+      method: "PATCH",
+      body: JSON.stringify({ body }),
+      cookie,
+    })
+  const remove = (cookie: string, threadId: string, commentId: string) =>
+    t.request(commentUrl(threadId, commentId), { method: "DELETE", cookie })
+  const status = (cookie: string, threadId: string, action: "resolve" | "reopen") =>
+    t.request(`/api/boards/${board}/threads/${threadId}/${action}`, { method: "POST", cookie })
+  const removeThread = (cookie: string, threadId: string) =>
+    t.request(`/api/boards/${board}/threads/${threadId}`, { method: "DELETE", cookie })
+
+  async function threadWithReply(first: string, second: string) {
+    const thread = await json<ThreadView>(await create(first, "First"))
+    const replied = await json<ThreadView>(await reply(second, thread.id, "Second"))
+    return replied
+  }
+
+  it("lets authors edit their own comments, marked as edited", async () => {
+    const grace = await member("grace@example.com", "commenter")
+    const thread = await threadWithReply(ada, grace)
+    const [first, second] = thread.comments
+    if (!first || !second) throw new Error("expected two comments")
+
+    const res = await edit(grace, thread.id, second.id, "Second, edited")
+    expect(res.status).toBe(200)
+    const edited = (await json<ThreadView>(res)).comments[1]
+    expect(edited?.body).toBe("Second, edited")
+    expect(edited?.editedAt).not.toBeNull()
+    expect(t.broadcasts.at(-1)?.message.type).toBe("thread-updated")
+
+    // Not someone else's, not even the Owner's; and the text rules still apply.
+    expect((await edit(ada, thread.id, second.id, "Mine now")).status).toBe(403)
+    expect((await edit(grace, thread.id, first.id, "Mine now")).status).toBe(403)
+    expect((await edit(grace, thread.id, second.id, "  ")).status).toBe(400)
+  })
+
+  it("deletes a lone first comment with its Thread", async () => {
+    const thread = await json<ThreadView>(await create(ada, "Alone"))
+    const res = await remove(ada, thread.id, thread.comments[0]?.id ?? "")
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ thread: null })
+    expect(await list(ada)).toEqual([])
+    expect(t.broadcasts.at(-1)?.message).toEqual({ type: "thread-removed", threadId: thread.id })
+  })
+
+  it("keeps a replied-to first comment as 'Comment deleted', and drops replies", async () => {
+    const grace = await member("grace@example.com", "commenter")
+    const thread = await threadWithReply(ada, grace)
+    const [first, second] = thread.comments
+    if (!first || !second) throw new Error("expected two comments")
+
+    const after = (await json<{ thread: ThreadView }>(await remove(ada, thread.id, first.id)))
+      .thread
+    expect(after.comments.map((c) => [c.deleted, c.author, c.body])).toEqual([
+      [true, null, ""],
+      [false, expect.objectContaining({ name: "Grace" }), "Second"],
+    ])
+    // The deleted one can't be edited or deleted again.
+    expect((await edit(ada, thread.id, first.id, "Back")).status).toBe(404)
+    expect((await remove(ada, thread.id, first.id)).status).toBe(404)
+
+    // Once the last reply goes too, nothing is left, so the Thread goes.
+    const res = await remove(grace, thread.id, second.id)
+    expect(await res.json()).toEqual({ thread: null })
+    expect(await list(ada)).toEqual([])
+  })
+
+  it("lets the author or the Owner delete a comment, and only the Owner a Thread", async () => {
+    const grace = await member("grace@example.com", "commenter")
+    const editor = await member("ed@example.com", "editor")
+    const thread = await threadWithReply(editor, grace)
+    const [, second] = thread.comments
+    if (!second) throw new Error("expected a reply")
+
+    expect((await remove(editor, thread.id, second.id)).status).toBe(403)
+    expect((await removeThread(editor, thread.id)).status).toBe(403)
+    expect((await removeThread(grace, thread.id)).status).toBe(403)
+    expect((await remove(ada, thread.id, second.id)).status).toBe(200)
+
+    expect((await removeThread(ada, thread.id)).status).toBe(200)
+    expect(await list(ada)).toEqual([])
+    expect(t.broadcasts.at(-1)?.message).toEqual({ type: "thread-removed", threadId: thread.id })
+    expect((await removeThread(ada, thread.id)).status).toBe(404)
+  })
+
+  it("lets Commenters and above resolve and reopen; Viewers can't", async () => {
+    const commenter = await member("co@example.com", "commenter")
+    const viewer = await member("vi@example.com", "viewer")
+    const thread = await json<ThreadView>(await create(ada, "Done?"))
+
+    expect((await status(viewer, thread.id, "resolve")).status).toBe(403)
+    const resolved = await status(commenter, thread.id, "resolve")
+    expect((await json<ThreadView>(resolved)).status).toBe("resolved")
+    expect((await list(viewer))[0]?.status).toBe("resolved")
+    expect((await json<ThreadView>(await status(ada, thread.id, "reopen"))).status).toBe("open")
+    expect((await status(ada, "no-such-thread", "resolve")).status).toBe(404)
+  })
+
+  it("stops a downgraded author from editing", async () => {
+    const grace = await member("grace@example.com", "commenter")
+    const thread = await threadWithReply(ada, grace)
+    const graceId = thread.comments[1]?.author?.id ?? ""
+    await t.request(`/api/boards/${board}/members/${graceId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role: "viewer" }),
+      cookie: ada,
+    })
+    expect((await edit(grace, thread.id, thread.comments[1]?.id ?? "", "Late")).status).toBe(403)
+    expect((await remove(grace, thread.id, thread.comments[1]?.id ?? "")).status).toBe(403)
   })
 })

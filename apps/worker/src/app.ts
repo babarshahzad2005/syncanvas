@@ -6,6 +6,7 @@ import {
   type CreateThreadRequest,
   type DashboardResponse,
   displayNameOf,
+  type EditCommentRequest,
   type GuestTokenResponse,
   type InviteRequest,
   type InviteResponse,
@@ -52,7 +53,17 @@ import {
   setShareLink,
   sharingState,
 } from "./sharing"
-import { type Broadcast, createThread, listThreads, listThreadsFor, reply } from "./threads"
+import {
+  type Broadcast,
+  createThread,
+  deleteComment,
+  deleteThread,
+  editComment,
+  listThreads,
+  listThreadsFor,
+  reply,
+  setThreadStatus,
+} from "./threads"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
 export type Services = {
@@ -312,6 +323,53 @@ export function createApp(services: ServicesFactory = productionServices) {
     })
     return c.json(body, 201)
   })
+
+  app.patch("/boards/:id/threads/:threadId/comments/:commentId", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as Partial<EditCommentRequest>
+    const body: ThreadView = await editComment(c.var.services.db, c.var.services.broadcast, {
+      boardId: c.req.param("id"),
+      threadId: c.req.param("threadId"),
+      commentId: c.req.param("commentId"),
+      caller: c.var.user,
+      body: input.body,
+    })
+    return c.json(body)
+  })
+
+  // Answers the Thread as it is now, or { thread: null } when it went with the comment.
+  app.delete("/boards/:id/threads/:threadId/comments/:commentId", async (c) => {
+    const thread = await deleteComment(c.var.services.db, c.var.services.broadcast, {
+      boardId: c.req.param("id"),
+      threadId: c.req.param("threadId"),
+      commentId: c.req.param("commentId"),
+      caller: c.var.user,
+    })
+    return c.json({ thread })
+  })
+
+  app.delete("/boards/:id/threads/:threadId", async (c) => {
+    await deleteThread(c.var.services.db, c.var.services.broadcast, {
+      boardId: c.req.param("id"),
+      threadId: c.req.param("threadId"),
+      caller: c.var.user,
+    })
+    return c.json({ ok: true })
+  })
+
+  for (const [action, status] of [
+    ["resolve", "resolved"],
+    ["reopen", "open"],
+  ] as const) {
+    app.post(`/boards/:id/threads/:threadId/${action}`, async (c) => {
+      const body: ThreadView = await setThreadStatus(c.var.services.db, c.var.services.broadcast, {
+        boardId: c.req.param("id"),
+        threadId: c.req.param("threadId"),
+        caller: c.var.user,
+        status,
+      })
+      return c.json(body)
+    })
+  }
 
   // A Guest reads Threads with the board token they connected with (M4).
   app.get("/guest/boards/:id/threads", async (c) => {

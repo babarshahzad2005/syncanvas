@@ -822,3 +822,76 @@ describe("BoardRoom comment events", () => {
     for (const c of [owner, viewer, guest, embed]) c.close()
   })
 })
+
+describe("BoardRoom Detached Threads (ADR 0012)", () => {
+  const threadOn = (board: string, elementId: string): ControlMessage => ({
+    type: "thread-added",
+    thread: {
+      id: `t-${elementId}`,
+      boardId: board,
+      anchor: { elementId, fx: 0.5, fy: 0.5 },
+      last: null,
+      status: "open",
+      createdAt: new Date(0).toISOString(),
+      comments: [],
+    },
+  })
+
+  it("remembers where a deleted Element with a Thread was, and tells everyone", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const editor = await joinAs(board, "editor", "grace")
+    editor.addRect("pinned", { position: { x: 40, y: 50 }, size: { w: 100, h: 60 } })
+    editor.addRect("plain")
+    await until(() => owner.rect("plain") !== undefined, "both rectangles")
+    await room(board).control(threadOn(board, "pinned"))
+
+    editor.doc.transact(() => {
+      elementsOf(editor.doc).delete("plain")
+      elementsOf(editor.doc).delete("pinned")
+    })
+    const gone = () => owner.control.filter((m) => m.type === "element-gone")
+    await until(() => gone().length > 0, "the room to report the deletion")
+    await new Promise((r) => setTimeout(r, 200))
+    // Only the Element with a Thread is reported.
+    expect(gone()).toEqual([
+      { type: "element-gone", elementId: "pinned", box: { x: 40, y: 50, w: 100, h: 60 } },
+    ])
+
+    // Someone joining later learns it too; an Embed viewer never does.
+    const late = await joinAs(board, "viewer", "linus")
+    await until(() => late.control.length > 0, "the joiner to hear the last boxes")
+    expect(late.control).toEqual([
+      { type: "last-boxes", boxes: { pinned: { x: 40, y: 50, w: 100, h: 60 } } },
+    ])
+    const embed = await TestClient.connect(
+      board,
+      await token(board, "viewer", { kind: "embed", userId: "embed-1" }),
+    )
+    await until(() => embed.synced, "the embed to sync")
+    await new Promise((r) => setTimeout(r, 200))
+    expect(embed.control).toEqual([])
+    for (const c of [owner, editor, late, embed]) c.close()
+  })
+
+  it("keeps what it knows across an eviction", async () => {
+    const board = newBoardId()
+    const editor = await joinAs(board, "editor", "grace")
+    editor.addRect("pinned", { position: { x: 1, y: 2 }, size: { w: 3, h: 4 } })
+    await room(board).control(threadOn(board, "pinned"))
+    editor.close()
+    await evictDurableObject(room(board))
+
+    const again = await joinAs(board, "editor", "grace")
+    expect(again.rect("pinned")).toBeDefined()
+    elementsOf(again.doc).delete("pinned")
+    const watcher = await joinAs(board, "viewer", "linus")
+    await until(() => watcher.control.length > 0, "the last boxes after eviction")
+    expect(watcher.control[0]).toEqual({
+      type: "last-boxes",
+      boxes: { pinned: { x: 1, y: 2, w: 3, h: 4 } },
+    })
+    again.close()
+    watcher.close()
+  })
+})

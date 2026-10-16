@@ -3,6 +3,7 @@ import {
   type BoardTokenResponse,
   type ControlMessage,
   canEdit,
+  type ElementBox,
   type InviteRole,
 } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
@@ -79,6 +80,11 @@ export class BoardConnection {
   notice: AccessNotice | null = null
   /** Whether this connection was ever online: losing access after that isn't a first visit. */
   wasOnline = false
+  /**
+   * Where deleted Elements with Threads last were, from the board room (M4, ADR 0012). Kept
+   * here because the room sends them as soon as the socket opens.
+   */
+  lastBoxes = new Map<string, ElementBox>()
   /** The board token of the current connection (Guests read Threads with it, M4). */
   token: string | null = null
   /** For a Guest: what the Share Link grants once they sign in (M3 ticket 04). */
@@ -332,6 +338,8 @@ export class BoardConnection {
     }
     if (type === MESSAGE_CONTROL) {
       const message = JSON.parse(decoding.readVarString(decoder)) as ControlMessage
+      if (message.type === "last-boxes") this.lastBoxes = new Map(Object.entries(message.boxes))
+      if (message.type === "element-gone") this.lastBoxes.set(message.elementId, message.box)
       for (const l of this.controlListeners) l(message)
       return
     }

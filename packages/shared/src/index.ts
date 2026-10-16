@@ -183,8 +183,10 @@ export type ThreadAnchor = { elementId: string; fx: number; fy: number } | { x: 
 
 export type CommentView = {
   id: string
-  /** Null once the author's comment is deleted ("Comment deleted"). */
+  /** Null for a deleted comment, or an account that's gone. */
   author: { id: string; name: string } | null
+  /** A first comment deleted after others replied: it reads "Comment deleted" (PRD A5). */
+  deleted: boolean
   body: string
   createdAt: string
   editedAt: string | null
@@ -205,8 +207,21 @@ export type ThreadsResponse = { threads: ThreadView[] }
 export type CreateThreadRequest = { anchor: ThreadAnchor; body: string }
 export type ReplyRequest = { body: string }
 
-/** What the board room relays from the API to everyone on the Board (never Embed viewers). */
-export type ControlMessage = { type: "thread-added" | "thread-updated"; thread: ThreadView }
+/** A box in world units. */
+export type ElementBox = { x: number; y: number; w: number; h: number }
+
+/**
+ * What the board room sends everyone on the Board about comments (never Embed viewers). The
+ * Thread changes come from the API; `element-gone` and `last-boxes` are the room's own: where
+ * deleted Elements with Threads were, so their pins can stay there (ADR 0012).
+ */
+export type ControlMessage =
+  | { type: "thread-added" | "thread-updated"; thread: ThreadView }
+  | { type: "thread-removed"; threadId: string }
+  | { type: "element-gone"; elementId: string; box: ElementBox }
+  | { type: "last-boxes"; boxes: Record<string, ElementBox> }
+
+export type EditCommentRequest = { body: string }
 
 /** A trimmed comment body, or null if it's empty or too long. */
 export function normalizeComment(input: unknown): string | null {
