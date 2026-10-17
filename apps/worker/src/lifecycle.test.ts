@@ -131,3 +131,95 @@ describe("Favorites", () => {
     expect((await star(outsider, board, true)).status).toBe(403)
   })
 })
+
+describe("Folders", () => {
+  const folderReq = (cookie: string, method: string, path = "", body?: object) =>
+    t.request(`/api/folders${path}`, {
+      method,
+      body: body ? JSON.stringify(body) : undefined,
+      cookie,
+    })
+  async function newFolder(cookie: string, name: string) {
+    const res = await folderReq(cookie, "POST", "", { name })
+    expect(res.status).toBe(201)
+    return json<{ id: string; name: string }>(res)
+  }
+  const move = (cookie: string, boardId: string, folderId: unknown) =>
+    t.request(`/api/boards/${boardId}/folder`, {
+      method: "PUT",
+      body: JSON.stringify({ folderId }),
+      cookie,
+    })
+  async function folders(cookie: string) {
+    return (await json<DashboardResponse>(await t.request("/api/dashboard", { cookie }))).folders
+  }
+
+  it("files Boards into one of your Folders and counts them", async () => {
+    const board = await create(ada, "Plan")
+    const other = await create(ada, "Notes")
+    const product = await newFolder(ada, "  Product  ")
+    expect(product.name).toBe("Product")
+    const ideas = await newFolder(ada, "Ideas")
+
+    expect((await move(ada, board, product.id)).status).toBe(200)
+    expect((await move(ada, other, product.id)).status).toBe(200)
+    expect((await folders(ada)).map((f) => [f.name, f.boardCount])).toEqual([
+      ["Ideas", 0],
+      ["Product", 2],
+    ])
+    // A Board sits in at most one of your Folders: moving it moves it.
+    await move(ada, board, ideas.id)
+    const boards = await dashboard(ada)
+    expect(boards.find((b) => b.id === board)?.folderId).toBe(ideas.id)
+    await move(ada, board, null)
+    expect((await dashboard(ada)).find((b) => b.id === board)?.folderId).toBeNull()
+  })
+
+  it("keeps Folders private, and someone else's Folder refused", async () => {
+    const board = await create(ada, "Shared")
+    const grace = await share(board, "grace@example.com", "viewer")
+    const mine = await newFolder(ada, "Ada's")
+    const hers = await newFolder(grace, "Grace's")
+
+    await move(grace, board, hers.id)
+    expect((await dashboard(grace))[0]?.folderId).toBe(hers.id)
+    expect((await dashboard(ada))[0]?.folderId).toBeNull() // her filing is hers alone
+    expect((await folders(ada)).map((f) => f.name)).toEqual(["Ada's"])
+
+    expect((await move(grace, board, mine.id)).status).toBe(404)
+    expect((await folderReq(grace, "PATCH", `/${mine.id}`, { name: "Mine now" })).status).toBe(404)
+    expect((await folderReq(grace, "DELETE", `/${mine.id}`)).status).toBe(404)
+    const outsider = await t.signIn("out@example.com")
+    expect((await move(outsider, board, mine.id)).status).toBe(403)
+  })
+
+  it("renames, and deleting a Folder keeps its Boards", async () => {
+    const board = await create(ada, "Keep me")
+    const folder = await newFolder(ada, "Old")
+    await move(ada, board, folder.id)
+    expect((await folderReq(ada, "PATCH", `/${folder.id}`, { name: "New" })).status).toBe(200)
+    expect((await folders(ada))[0]?.name).toBe("New")
+    expect((await folderReq(ada, "PATCH", `/${folder.id}`, { name: " " })).status).toBe(400)
+    expect((await folderReq(ada, "POST", "", { name: "x".repeat(61) })).status).toBe(400)
+
+    expect((await folderReq(ada, "DELETE", `/${folder.id}`)).status).toBe(200)
+    expect(await folders(ada)).toEqual([])
+    const [kept] = await dashboard(ada)
+    expect(kept).toMatchObject({ title: "Keep me", folderId: null })
+  })
+
+  it("drops a Board from your Folders when you leave it", async () => {
+    const board = await create(ada, "Shared")
+    const grace = await share(board, "grace@example.com", "commenter")
+    const folder = await newFolder(grace, "Work")
+    await move(grace, board, folder.id)
+    const session = await json<{ user: { id: string } }>(
+      await t.request("/api/auth/get-session", { cookie: grace }),
+    )
+    await t.request(`/api/boards/${board}/members/${session.user.id}`, {
+      method: "DELETE",
+      cookie: grace,
+    })
+    expect((await folders(grace)).map((f) => f.boardCount)).toEqual([0])
+  })
+})

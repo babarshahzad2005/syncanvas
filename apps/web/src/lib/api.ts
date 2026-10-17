@@ -5,6 +5,7 @@ import type {
   CreateThreadRequest,
   DashboardResponse,
   EditCommentRequest,
+  FolderSummary,
   GuestTokenResponse,
   InviteRequest,
   InviteResponse,
@@ -155,6 +156,21 @@ export const api = {
     request<{ favorite: boolean }>(`${board(boardId)}/favorite`, {
       method: "PUT",
       body: JSON.stringify({ favorite }),
+    }),
+  // ---------- Folders (M5a ticket 02) ----------
+  createFolder: (name: string) =>
+    request<FolderSummary>("/api/folders", { method: "POST", body: JSON.stringify({ name }) }),
+  renameFolder: (id: string, name: string) =>
+    request<{ id: string; name: string }>(`/api/folders/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+  deleteFolder: (id: string) =>
+    request<{ ok: true }>(`/api/folders/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  moveToFolder: (boardId: string, folderId: string | null) =>
+    request<{ folderId: string | null }>(`${board(boardId)}/folder`, {
+      method: "PUT",
+      body: JSON.stringify({ folderId }),
     }),
 }
 

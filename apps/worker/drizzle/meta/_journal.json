@@ -64,6 +64,13 @@
       "when": 1792224638778,
       "tag": "0008_last_opened_favorite",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792233208089,
+      "tag": "0009_folders",
+      "breakpoints": true
     }
   ]
 }

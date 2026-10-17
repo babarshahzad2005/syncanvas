@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-router"
 import { authClient, safeRedirect } from "@/lib/auth-client"
 import { BoardScreen } from "@/routes/board"
-import { Dashboard } from "@/routes/dashboard"
+import { Dashboard, FolderPage } from "@/routes/dashboard"
 import { RootLayout } from "@/routes/root"
 import { SignIn } from "@/routes/sign-in"
 
@@ -34,6 +34,13 @@ const dashboardRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/",
   component: Dashboard,
+})
+
+/** A Folder's page: the dashboard's Board grid, filtered to that Folder (M5a ticket 02). */
+const folderRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/folders/$folderId",
+  component: FolderPage,
 })
 
 const boardRoute = createRoute({
@@ -77,7 +84,7 @@ const devOnlyRoutes = import.meta.env.DEV
 
 export const router = createRouter({
   routeTree: rootRoute.addChildren([
-    authedRoute.addChildren([dashboardRoute, boardRoute]),
+    authedRoute.addChildren([dashboardRoute, folderRoute, boardRoute]),
     signInRoute,
     ...devOnlyRoutes,
   ]),

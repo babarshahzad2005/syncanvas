@@ -19,9 +19,14 @@ export type BoardSummary = {
   lastOpenedAt: string | null
   /** Starred by you (favorites are private), M5a. */
   favorite: boolean
+  /** Which of your Folders it's in, if any (M5a ticket 02). */
+  folderId: string | null
 }
 
-export type DashboardResponse = { boards: BoardSummary[] }
+/** One of your Folders (private, one level), with how many of your Boards are in it. */
+export type FolderSummary = { id: string; name: string; boardCount: number }
+
+export type DashboardResponse = { boards: BoardSummary[]; folders: FolderSummary[] }
 export type CreateBoardResponse = { id: string; title: string }
 
 export const BOARD_TITLE_MAX = 200
@@ -301,3 +306,13 @@ export function normalizeBoardTitle(input: unknown): string | null {
 
 /** Whether a Role may rename a Board: the Owner and Editors (M5 planning). */
 export const canRename = canEdit
+
+/** Longest Folder name, in characters. */
+export const FOLDER_NAME_MAX = 60
+
+/** A Folder name as stored: trimmed, inner spaces collapsed, 1–60 characters; else null. */
+export function normalizeFolderName(input: unknown): string | null {
+  if (typeof input !== "string") return null
+  const name = input.trim().replace(/\s+/g, " ")
+  return name.length >= 1 && name.length <= FOLDER_NAME_MAX ? name : null
+}

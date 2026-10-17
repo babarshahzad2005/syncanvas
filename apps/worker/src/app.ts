@@ -33,7 +33,7 @@ import {
   logMagicLink,
 } from "./auth"
 import { signBoardToken, verifyBoardToken } from "./board-token"
-import { createBoard, findMembership, listBoards, markOpened } from "./boards"
+import { createBoard, findMembership, listBoards, listFolders, markOpened } from "./boards"
 import { createDb, type Database } from "./db/client"
 import { user } from "./db/schema"
 import { setDigestEnabled, settingsOf, unsubscribeUrl, verifyUnsubscribe } from "./digest"
@@ -46,7 +46,14 @@ import {
   type SendDigest,
   type SendInvitation,
 } from "./email"
-import { renameBoard, setFavorite } from "./lifecycle"
+import {
+  createFolder,
+  deleteFolder,
+  moveToFolder,
+  renameBoard,
+  renameFolder,
+  setFavorite,
+} from "./lifecycle"
 import { listNotifications, markAllRead, markRead, unreadFor } from "./notifications"
 import {
   type ApplyAccess,
@@ -152,6 +159,8 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/notifications",
     "/notifications/*",
     "/me/*",
+    "/folders",
+    "/folders/*",
     "/unsubscribe",
     "/dev/unsubscribe-link",
   ]) {
@@ -172,6 +181,8 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/notifications",
     "/notifications/*",
     "/me/*",
+    "/folders",
+    "/folders/*",
   ]) {
     app.use(path, requireUser)
   }
@@ -187,7 +198,10 @@ export function createApp(services: ServicesFactory = productionServices) {
   app.on(["GET", "POST"], "/auth/*", (c) => c.var.services.auth.handler(c.req.raw))
 
   app.get("/dashboard", async (c) => {
-    const body: DashboardResponse = { boards: await listBoards(c.var.services.db, c.var.user.id) }
+    const body: DashboardResponse = {
+      boards: await listBoards(c.var.services.db, c.var.user.id),
+      folders: await listFolders(c.var.services.db, c.var.user.id),
+    }
     return c.json(body)
   })
 
@@ -249,6 +263,34 @@ export function createApp(services: ServicesFactory = productionServices) {
         boardId: c.req.param("id"),
         caller: c.var.user,
         favorite: input.favorite,
+      }),
+    )
+  })
+
+  // ---------- Folders (M5a ticket 02) ----------
+
+  app.post("/folders", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as { name?: unknown }
+    return c.json(await createFolder(c.var.services.db, c.var.user, input.name), 201)
+  })
+
+  app.patch("/folders/:id", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as { name?: unknown }
+    return c.json(await renameFolder(c.var.services.db, c.var.user, c.req.param("id"), input.name))
+  })
+
+  app.delete("/folders/:id", async (c) => {
+    await deleteFolder(c.var.services.db, c.var.user, c.req.param("id"))
+    return c.json({ ok: true })
+  })
+
+  app.put("/boards/:id/folder", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as { folderId?: unknown }
+    return c.json(
+      await moveToFolder(c.var.services.db, {
+        boardId: c.req.param("id"),
+        caller: c.var.user,
+        folderId: input.folderId ?? null,
       }),
     )
   })

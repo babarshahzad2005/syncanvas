@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   doublePrecision,
+  foreignKey,
   index,
   pgTable,
   primaryKey,
@@ -325,4 +326,43 @@ export const digestEmails = pgTable(
     sentAt: timestamp("sent_at").defaultNow().notNull(),
   },
   (table) => [index("digest_emails_sent_idx").on(table.sentAt)],
+)
+
+// ---------- Folders (M5a ticket 02; GLOSSARY: Folder) ----------
+
+/** A User's private Folder: one level, never shared. */
+export const folders = pgTable(
+  "folders",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("folders_user_idx").on(table.userId)],
+)
+
+/**
+ * Which of a User's Folders a Board sits in: at most one per User and Board. It hangs off the
+ * Membership, so leaving or losing a Board takes it out of your Folders too.
+ */
+export const folderBoards = pgTable(
+  "folder_boards",
+  {
+    folderId: text("folder_id")
+      .notNull()
+      .references(() => folders.id, { onDelete: "cascade" }),
+    boardId: text("board_id").notNull(),
+    userId: text("user_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.boardId, table.userId] }),
+    index("folder_boards_folder_idx").on(table.folderId),
+    foreignKey({
+      columns: [table.boardId, table.userId],
+      foreignColumns: [memberships.boardId, memberships.userId],
+    }).onDelete("cascade"),
+  ],
 )

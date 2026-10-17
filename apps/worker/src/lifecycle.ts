@@ -1,7 +1,7 @@
-import { canRename, normalizeBoardTitle } from "@syncanvas/shared"
+import { canRename, normalizeBoardTitle, normalizeFolderName } from "@syncanvas/shared"
 import { and, eq } from "drizzle-orm"
 import type { Database } from "./db/client"
-import { boards, memberships } from "./db/schema"
+import { boards, folderBoards, folders, memberships } from "./db/schema"
 import { type Caller, memberOrRefuse, refuse } from "./sharing"
 import type { Broadcast } from "./threads"
 
@@ -44,4 +44,71 @@ export async function setFavorite(
     .set({ favorite: input.favorite })
     .where(and(eq(memberships.boardId, input.boardId), eq(memberships.userId, input.caller.id)))
   return { favorite: input.favorite }
+}
+
+// ---------- Folders (M5a ticket 02) ----------
+
+function folderNameOrRefuse(input: unknown) {
+  const name = normalizeFolderName(input)
+  if (!name) throw refuse(400, { error: "Folder names are 1–60 characters." })
+  return name
+}
+
+async function ownFolderOrRefuse(db: Database, folderId: string, caller: Caller) {
+  const [folder] = await db
+    .select()
+    .from(folders)
+    .where(and(eq(folders.id, folderId), eq(folders.userId, caller.id)))
+    .limit(1)
+  // Someone else's Folder looks the same as none at all.
+  if (!folder) throw refuse(404, { error: "That folder doesn't exist." })
+  return folder
+}
+
+export async function createFolder(db: Database, caller: Caller, name: unknown) {
+  const [folder] = await db
+    .insert(folders)
+    .values({ id: crypto.randomUUID(), userId: caller.id, name: folderNameOrRefuse(name) })
+    .returning({ id: folders.id, name: folders.name })
+  if (!folder) throw new Error("Folder insert returned no row")
+  return { ...folder, boardCount: 0 }
+}
+
+export async function renameFolder(db: Database, caller: Caller, folderId: string, name: unknown) {
+  const next = folderNameOrRefuse(name)
+  await ownFolderOrRefuse(db, folderId, caller)
+  await db.update(folders).set({ name: next }).where(eq(folders.id, folderId))
+  return { id: folderId, name: next }
+}
+
+/** Deletes a Folder; its Boards stay, back in "Your boards" only. */
+export async function deleteFolder(db: Database, caller: Caller, folderId: string) {
+  await ownFolderOrRefuse(db, folderId, caller)
+  await db.delete(folders).where(eq(folders.id, folderId))
+}
+
+/** Puts a Board you can open into one of your Folders, or takes it out (null). */
+export async function moveToFolder(
+  db: Database,
+  input: { boardId: string; caller: Caller; folderId: unknown },
+) {
+  await memberOrRefuse(db, input.boardId, input.caller)
+  const mine = and(
+    eq(folderBoards.boardId, input.boardId),
+    eq(folderBoards.userId, input.caller.id),
+  )
+  if (input.folderId === null) {
+    await db.delete(folderBoards).where(mine)
+    return { folderId: null }
+  }
+  if (typeof input.folderId !== "string") throw refuse(400, { error: "Pick a folder." })
+  await ownFolderOrRefuse(db, input.folderId, input.caller)
+  await db
+    .insert(folderBoards)
+    .values({ folderId: input.folderId, boardId: input.boardId, userId: input.caller.id })
+    .onConflictDoUpdate({
+      target: [folderBoards.boardId, folderBoards.userId],
+      set: { folderId: input.folderId },
+    })
+  return { folderId: input.folderId }
 }

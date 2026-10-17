@@ -1,7 +1,7 @@
-import type { BoardSummary } from "@syncanvas/shared"
-import { and, desc, eq, isNull, sql } from "drizzle-orm"
+import type { BoardSummary, FolderSummary } from "@syncanvas/shared"
+import { and, asc, count, desc, eq, isNull, sql } from "drizzle-orm"
 import type { Database } from "./db/client"
-import { boards, memberships, user } from "./db/schema"
+import { boards, folderBoards, folders, memberships, user } from "./db/schema"
 
 /** Creates a Board and its Owner Membership together: either both rows exist or neither does. */
 export async function createBoard(db: Database, input: { ownerId: string; title?: string }) {
@@ -33,6 +33,7 @@ export async function listBoards(db: Database, userId: string): Promise<BoardSum
       thumbnailKey: boards.thumbnailKey,
       lastOpenedAt: memberships.lastOpenedAt,
       favorite: memberships.favorite,
+      folderId: folderBoards.folderId,
       ownerId: user.id,
       ownerName: user.name,
       ownerEmail: user.email,
@@ -40,6 +41,10 @@ export async function listBoards(db: Database, userId: string): Promise<BoardSum
     .from(memberships)
     .innerJoin(boards, eq(boards.id, memberships.boardId))
     .innerJoin(user, eq(user.id, boards.ownerId))
+    .leftJoin(
+      folderBoards,
+      and(eq(folderBoards.boardId, boards.id), eq(folderBoards.userId, userId)),
+    )
     .where(and(eq(memberships.userId, userId), isNull(boards.deletedAt)))
     .orderBy(sql`${memberships.lastOpenedAt} desc nulls last`, desc(boards.updatedAt))
 
@@ -52,7 +57,21 @@ export async function listBoards(db: Database, userId: string): Promise<BoardSum
     thumbnailKey: r.thumbnailKey,
     lastOpenedAt: r.lastOpenedAt?.toISOString() ?? null,
     favorite: r.favorite,
+    folderId: r.folderId,
   }))
+}
+
+/** The User's Folders, by name, each with how many of their open Boards it holds. */
+export async function listFolders(db: Database, userId: string): Promise<FolderSummary[]> {
+  const rows = await db
+    .select({ id: folders.id, name: folders.name, boardCount: count(boards.id) })
+    .from(folders)
+    .leftJoin(folderBoards, eq(folderBoards.folderId, folders.id))
+    .leftJoin(boards, and(eq(boards.id, folderBoards.boardId), isNull(boards.deletedAt)))
+    .where(eq(folders.userId, userId))
+    .groupBy(folders.id, folders.name)
+    .orderBy(asc(folders.name))
+  return rows
 }
 
 /** Notes that the User opened the Board just now (for the dashboard's order). */
