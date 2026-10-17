@@ -145,6 +145,17 @@ export const api = {
   settings: () => request<UserSettings>("/api/me/settings"),
   saveSettings: (input: UserSettings) =>
     request<UserSettings>("/api/me/settings", { method: "PUT", body: JSON.stringify(input) }),
+  // ---------- Board lifecycle (M5a) ----------
+  renameBoard: (boardId: string, title: string) =>
+    request<{ title: string }>(board(boardId), {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+  setFavorite: (boardId: string, favorite: boolean) =>
+    request<{ favorite: boolean }>(`${board(boardId)}/favorite`, {
+      method: "PUT",
+      body: JSON.stringify({ favorite }),
+    }),
 }
 
 function board(boardId: string) {

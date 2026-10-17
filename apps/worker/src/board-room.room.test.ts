@@ -916,3 +916,22 @@ describe("BoardRoom notification signals (M4 ticket 03)", () => {
     for (const c of [ada, grace, graceTab2, linus, guest]) c.close()
   })
 })
+
+describe("BoardRoom renames (M5a ticket 01)", () => {
+  it("tells Members and Guests the new title, never Embed viewers", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const guest = await joinGuest(board, "guest-a")
+    const embed = await TestClient.connect(
+      board,
+      await token(board, "viewer", { kind: "embed", userId: "embed-1" }),
+    )
+    await until(() => embed.synced, "the embed to sync")
+    await room(board).control({ type: "board-renamed", title: "Q4 retro" })
+    await until(() => owner.control.length > 0 && guest.control.length > 0, "the rename")
+    expect(guest.control).toEqual([{ type: "board-renamed", title: "Q4 retro" }])
+    await new Promise((r) => setTimeout(r, 200))
+    expect(embed.control).toEqual([])
+    for (const c of [owner, guest, embed]) c.close()
+  })
+})

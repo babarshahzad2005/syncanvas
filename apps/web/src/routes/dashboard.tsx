@@ -1,4 +1,4 @@
-import type { BoardSummary } from "@syncanvas/shared"
+import { type BoardSummary, canRename } from "@syncanvas/shared"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import {
@@ -24,6 +24,7 @@ import { AccountMenu } from "@/components/account-menu"
 import { BrandMark, Wordmark } from "@/components/brand"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { NotificationBell } from "@/components/notification-bell"
+import { RenameDialog } from "@/components/rename-dialog"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -77,7 +78,13 @@ export function Dashboard() {
   const isNewUser = dashboard.isSuccess && boards.length === 0
   const me = session?.user.id
   const shown = boards.filter((b) =>
-    filter === "Mine" ? b.owner.id === me : filter === "Shared with me" ? b.owner.id !== me : true,
+    filter === "Mine"
+      ? b.owner.id === me
+      : filter === "Shared with me"
+        ? b.owner.id !== me
+        : filter === "Favorites"
+          ? b.favorite
+          : true,
   )
 
   return (
@@ -162,8 +169,6 @@ export function Dashboard() {
                     type="button"
                     role="tab"
                     aria-selected={filter === f}
-                    disabled={f === "Favorites"}
-                    title={f === "Favorites" ? "Favorites arrive in a later update" : undefined}
                     onClick={() => setFilter(f)}
                     className={cn(
                       "type-label h-7 rounded-md px-3 disabled:opacity-40 pointer-coarse:h-11",
@@ -230,6 +235,12 @@ function BoardTile({ board, me }: { board: BoardSummary; me?: string }) {
   const isOwner = board.owner.id === me
   const queryClient = useQueryClient()
   const [confirming, setConfirming] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const star = useMutation({
+    mutationFn: (favorite: boolean) => api.setFavorite(board.id, favorite),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+    onError: (e) => toast(errorMessage(e)),
+  })
   const leave = useMutation({
     mutationFn: () => api.removeMember(board.id, me ?? ""),
     onSuccess: async () => {
@@ -248,7 +259,12 @@ function BoardTile({ board, me }: { board: BoardSummary; me?: string }) {
           <BrandMark className="size-6 opacity-30 grayscale" />
         </div>
         <div className="flex flex-col p-3 pr-12">
-          <span className="type-body-strong truncate">{board.title}</span>
+          <span className="flex items-center gap-1">
+            <span className="type-body-strong truncate">{board.title}</span>
+            {board.favorite && (
+              <Star aria-label="Favorite" className="size-3.5 shrink-0 fill-warning text-warning" />
+            )}
+          </span>
           <span className="type-caption truncate text-muted-foreground">
             {isOwner ? "" : `${board.owner.name || board.owner.email} · `}
             Edited {timeAgo(board.updatedAt)}
@@ -272,12 +288,11 @@ function BoardTile({ board, me }: { board: BoardSummary; me?: string }) {
           <DropdownMenuItem render={<Link to="/b/$boardId" params={{ boardId: board.id }} />}>
             <ExternalLink /> Open
           </DropdownMenuItem>
-          {/* Rename, favorites, Folders, and delete arrive in M5. */}
-          <DropdownMenuItem disabled>
-            <Pencil /> Rename
+          <DropdownMenuItem disabled={!canRename(board.role)} onClick={() => setRenaming(true)}>
+            <Pencil /> Rename…
           </DropdownMenuItem>
-          <DropdownMenuItem disabled>
-            <Star /> Favorite
+          <DropdownMenuItem onClick={() => star.mutate(!board.favorite)}>
+            <Star /> {board.favorite ? "Remove from favorites" : "Add to favorites"}
           </DropdownMenuItem>
           <DropdownMenuItem disabled>
             <FolderInput /> Move to folder
@@ -294,6 +309,12 @@ function BoardTile({ board, me }: { board: BoardSummary; me?: string }) {
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      <RenameDialog
+        boardId={board.id}
+        title={board.title}
+        open={renaming}
+        onOpenChange={setRenaming}
+      />
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}

@@ -117,6 +117,10 @@ export const memberships = pgTable(
     role: text("role", { enum: ["owner", "editor", "commenter", "viewer"] }).notNull(),
     via: text("via", { enum: ["owner", "invitation", "share_link"] }).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    /** When this Member last opened the Board (a board token was issued), M5a. */
+    lastOpenedAt: timestamp("last_opened_at"),
+    /** Starred by this Member: favorites are private (M5a). */
+    favorite: boolean("favorite").notNull().default(false),
   },
   (table) => [
     primaryKey({ columns: [table.boardId, table.userId] }),

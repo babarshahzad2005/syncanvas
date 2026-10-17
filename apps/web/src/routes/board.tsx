@@ -2,6 +2,7 @@ import { createUndoManager, indexById, listElements } from "@syncanvas/board-mod
 import {
   canComment,
   canEdit,
+  canRename,
   type ElementBox,
   type InviteRole,
   normalizeDisplayName,
@@ -9,7 +10,16 @@ import {
 } from "@syncanvas/shared"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
-import { ChevronDown, CloudOff, Download, Eye, Loader2, Lock } from "lucide-react"
+import {
+  ChevronDown,
+  CloudOff,
+  Download,
+  Eye,
+  LayoutGrid,
+  Loader2,
+  Lock,
+  Pencil,
+} from "lucide-react"
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import type * as Y from "yjs"
@@ -26,8 +36,15 @@ import { useThreads } from "@/comments/use-threads"
 import { BrandMark } from "@/components/brand"
 import { NameDialog } from "@/components/name-dialog"
 import { NotificationBell } from "@/components/notification-bell"
+import { RenameDialog } from "@/components/rename-dialog"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ApiError, api, queryKeys } from "@/lib/api"
@@ -214,7 +231,14 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
             threads={threads}
           />
         )}
-        <TitlePill title={board?.title} status={status} readOnly={role ? !canEdit(role) : false} />
+        <TitlePill
+          boardId={boardId}
+          title={board?.title}
+          status={status}
+          readOnly={role ? !canEdit(role) : false}
+          canRename={!guestLink && status === "online" && role !== null && canRename(role)}
+          onRenamed={(title) => connection?.renamed(title)}
+        />
         {/* Top right: the presence pill, then Share (DESIGN.md → Board screen). */}
         <div className="fixed top-3 right-3 flex items-center gap-2">
           {!guestLink && <NotificationBell placement="board" />}
@@ -349,27 +373,78 @@ function BoardSurface({
 
 /** Top-left title pill. The Board menu (rename, theme, export…) arrives in M1. */
 function TitlePill({
+  boardId,
   title,
   status,
   readOnly,
+  canRename,
+  onRenamed,
 }: {
+  boardId: string
   title?: string
   status: ConnectionStatus
   readOnly: boolean
+  /** The Owner and Editors, while connected (M5a ticket 01). */
+  canRename: boolean
+  onRenamed: (title: string) => void
 }) {
+  const [renaming, setRenaming] = useState(false)
   return (
-    <Link
-      to="/"
-      aria-label="Back to your boards"
-      title={status === "offline" ? "You're offline. Changes are saved on this device." : undefined}
+    <div
       className={cn(
-        "fixed top-3 left-3 flex h-10 items-center gap-2 rounded-full bg-surface pr-4 pl-3 shadow-panel",
+        "fixed top-3 left-3 flex h-10 items-center rounded-full bg-surface shadow-panel",
         status === "offline" && "ring-1 ring-warning",
       )}
     >
-      <BrandMark className="size-5" />
-      <span className="type-body-strong max-w-64 truncate">{title ?? "Loading…"}</span>
-      <ChevronDown className="size-4 text-muted-foreground" />
+      <Link
+        to="/"
+        aria-label="Back to your boards"
+        title={
+          status === "offline" ? "You're offline. Changes are saved on this device." : undefined
+        }
+        className="flex h-full min-w-0 items-center gap-2 rounded-l-full pl-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <BrandMark className="size-5" />
+        <span className="type-body-strong max-w-64 truncate">{title ?? "Loading…"}</span>
+        <TitleStatus status={status} readOnly={readOnly} />
+      </Link>
+      {/* The Board menu (DESIGN.md → title pill): rename now; theme and export come later. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <button
+              type="button"
+              aria-label="Board menu"
+              className="ml-1 flex h-full items-center rounded-r-full pr-3 pl-1 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          }
+        >
+          <ChevronDown className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-48">
+          <DropdownMenuItem disabled={!canRename} onClick={() => setRenaming(true)}>
+            <Pencil /> Rename…
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link to="/" />}>
+            <LayoutGrid /> Back to your boards
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <RenameDialog
+        boardId={boardId}
+        title={title ?? ""}
+        open={renaming}
+        onOpenChange={setRenaming}
+        onRenamed={onRenamed}
+      />
+    </div>
+  )
+}
+
+/** Connecting, Offline, or View only, after the title. */
+function TitleStatus({ status, readOnly }: { status: ConnectionStatus; readOnly: boolean }) {
+  return (
+    <>
       {status === "connecting" && (
         <span className="type-label flex items-center gap-1 text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" /> Connecting…
@@ -385,7 +460,7 @@ function TitlePill({
           <Eye className="size-3.5" /> View only
         </span>
       )}
-    </Link>
+    </>
   )
 }
 

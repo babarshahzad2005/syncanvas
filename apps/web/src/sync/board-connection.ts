@@ -139,6 +139,13 @@ export class BoardConnection {
     }
   }
 
+  /** This tab renamed the Board: show it now, without waiting for the room's message. */
+  renamed(title: string) {
+    if (!this.board) return
+    this.board = { ...this.board, title }
+    for (const l of this.listeners) l()
+  }
+
   /** Called with each comment change the board room relays (M4). */
   subscribeControl = (listener: (message: ControlMessage) => void) => {
     this.controlListeners.add(listener)
@@ -339,6 +346,10 @@ export class BoardConnection {
     if (type === MESSAGE_CONTROL) {
       const message = JSON.parse(decoding.readVarString(decoder)) as ControlMessage
       if (message.type === "last-boxes") this.lastBoxes = new Map(Object.entries(message.boxes))
+      if (message.type === "board-renamed" && this.board) {
+        this.board = { ...this.board, title: message.title }
+        for (const l of this.listeners) l()
+      }
       if (message.type === "element-gone") this.lastBoxes.set(message.elementId, message.box)
       for (const l of this.controlListeners) l(message)
       return

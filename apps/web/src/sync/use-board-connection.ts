@@ -78,6 +78,11 @@ export function useBoardConnection(boardId: string, guestLink?: string) {
     (listener: () => void) => connection?.subscribe(listener) ?? (() => {}),
     [connection],
   )
+  // The title can change while connected (M5a: renames), so it's read as a snapshot too.
+  const title = useSyncExternalStore(subscribe, () => connection?.board?.title ?? null)
+  const board = connection?.board
+    ? { ...connection.board, title: title ?? connection.board.title }
+    : null
   const status: ConnectionStatus = useSyncExternalStore(
     subscribe,
     () => connection?.status ?? "connecting",
@@ -88,7 +93,7 @@ export function useBoardConnection(boardId: string, guestLink?: string) {
     connection,
     doc: connection?.doc ?? null,
     status,
-    board: connection?.board ?? null,
+    board,
     role,
     lostWork,
     discardLocalCopy,

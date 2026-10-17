@@ -1,5 +1,5 @@
 import type { BoardSummary } from "@syncanvas/shared"
-import { and, desc, eq, isNull } from "drizzle-orm"
+import { and, desc, eq, isNull, sql } from "drizzle-orm"
 import type { Database } from "./db/client"
 import { boards, memberships, user } from "./db/schema"
 
@@ -19,7 +19,10 @@ export async function createBoard(db: Database, input: { ownerId: string; title?
   })
 }
 
-/** Every Board the User is a Member of (owned or shared), most recently updated first. */
+/**
+ * Every Board the User is a Member of (owned or shared), most recently opened first. Boards
+ * they've never opened (newly shared ones) come after, newest edit first (M5 planning).
+ */
 export async function listBoards(db: Database, userId: string): Promise<BoardSummary[]> {
   const rows = await db
     .select({
@@ -28,6 +31,8 @@ export async function listBoards(db: Database, userId: string): Promise<BoardSum
       role: memberships.role,
       updatedAt: boards.updatedAt,
       thumbnailKey: boards.thumbnailKey,
+      lastOpenedAt: memberships.lastOpenedAt,
+      favorite: memberships.favorite,
       ownerId: user.id,
       ownerName: user.name,
       ownerEmail: user.email,
@@ -36,7 +41,7 @@ export async function listBoards(db: Database, userId: string): Promise<BoardSum
     .innerJoin(boards, eq(boards.id, memberships.boardId))
     .innerJoin(user, eq(user.id, boards.ownerId))
     .where(and(eq(memberships.userId, userId), isNull(boards.deletedAt)))
-    .orderBy(desc(boards.updatedAt))
+    .orderBy(sql`${memberships.lastOpenedAt} desc nulls last`, desc(boards.updatedAt))
 
   return rows.map((r) => ({
     id: r.id,
@@ -45,7 +50,17 @@ export async function listBoards(db: Database, userId: string): Promise<BoardSum
     owner: { id: r.ownerId, name: r.ownerName, email: r.ownerEmail },
     updatedAt: r.updatedAt.toISOString(),
     thumbnailKey: r.thumbnailKey,
+    lastOpenedAt: r.lastOpenedAt?.toISOString() ?? null,
+    favorite: r.favorite,
   }))
+}
+
+/** Notes that the User opened the Board just now (for the dashboard's order). */
+export async function markOpened(db: Database, boardId: string, userId: string) {
+  await db
+    .update(memberships)
+    .set({ lastOpenedAt: new Date() })
+    .where(and(eq(memberships.boardId, boardId), eq(memberships.userId, userId)))
 }
 
 /** The User's Role on a Board and its title, or null if they aren't a Member (or it's in Trash). */

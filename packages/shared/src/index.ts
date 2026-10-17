@@ -15,6 +15,10 @@ export type BoardSummary = {
   owner: { id: string; name: string; email: string }
   updatedAt: string
   thumbnailKey: string | null
+  /** When you last opened it (null: never; those come last), M5a. */
+  lastOpenedAt: string | null
+  /** Starred by you (favorites are private), M5a. */
+  favorite: boolean
 }
 
 export type DashboardResponse = { boards: BoardSummary[] }
@@ -227,6 +231,8 @@ export type ControlMessage =
   | { type: "last-boxes"; boxes: Record<string, ElementBox> }
   /** These Users have new Notifications (only their own sockets hear it, M4 ticket 03). */
   | { type: "notify"; userIds: string[] }
+  /** The Board was renamed (M5a ticket 01). */
+  | { type: "board-renamed"; title: string }
 
 export type EditCommentRequest = { body: string }
 
@@ -283,3 +289,15 @@ export const DIGEST_GAP_HOURS = 3
 
 /** GET/PUT /api/me/settings. */
 export type UserSettings = { digestEnabled: boolean }
+
+// ---------- Dashboard and Board lifecycle (M5a) ----------
+
+/** A Board title as stored: trimmed, inner spaces collapsed, 1–200 characters; else null. */
+export function normalizeBoardTitle(input: unknown): string | null {
+  if (typeof input !== "string") return null
+  const title = input.trim().replace(/\s+/g, " ")
+  return title.length >= 1 && title.length <= BOARD_TITLE_MAX ? title : null
+}
+
+/** Whether a Role may rename a Board: the Owner and Editors (M5 planning). */
+export const canRename = canEdit

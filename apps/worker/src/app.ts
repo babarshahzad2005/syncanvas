@@ -33,7 +33,7 @@ import {
   logMagicLink,
 } from "./auth"
 import { signBoardToken, verifyBoardToken } from "./board-token"
-import { createBoard, findMembership, listBoards } from "./boards"
+import { createBoard, findMembership, listBoards, markOpened } from "./boards"
 import { createDb, type Database } from "./db/client"
 import { user } from "./db/schema"
 import { setDigestEnabled, settingsOf, unsubscribeUrl, verifyUnsubscribe } from "./digest"
@@ -46,6 +46,7 @@ import {
   type SendDigest,
   type SendInvitation,
 } from "./email"
+import { renameBoard, setFavorite } from "./lifecycle"
 import { listNotifications, markAllRead, markRead, unreadFor } from "./notifications"
 import {
   type ApplyAccess,
@@ -206,6 +207,8 @@ export function createApp(services: ServicesFactory = productionServices) {
     const membership = await findMembership(c.var.services.db, boardId, c.var.user.id)
     // Same answer for "no such Board" and "not a Member", so Board ids can't be probed.
     if (!membership) return c.json({ error: "You don't have access to this board." }, 403)
+    // Opening a Board orders the dashboard (M5a).
+    await markOpened(c.var.services.db, boardId, c.var.user.id)
     const { token, expiresAt } = await signBoardToken(
       {
         userId: c.var.user.id,
@@ -224,6 +227,30 @@ export function createApp(services: ServicesFactory = productionServices) {
       you: { id: c.var.user.id, name: displayNameOf(c.var.user) },
     }
     return c.json(body)
+  })
+
+  // ---------- Rename and favorites (M5a ticket 01) ----------
+
+  app.patch("/boards/:id", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as { title?: unknown }
+    return c.json(
+      await renameBoard(c.var.services.db, c.var.services.broadcast, {
+        boardId: c.req.param("id"),
+        caller: c.var.user,
+        title: input.title,
+      }),
+    )
+  })
+
+  app.put("/boards/:id/favorite", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as { favorite?: unknown }
+    return c.json(
+      await setFavorite(c.var.services.db, {
+        boardId: c.req.param("id"),
+        caller: c.var.user,
+        favorite: input.favorite,
+      }),
+    )
   })
 
   // ---------- Sharing (M3) ----------
