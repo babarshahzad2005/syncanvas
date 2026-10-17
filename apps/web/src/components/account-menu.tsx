@@ -1,8 +1,9 @@
 import { displayNameOf } from "@syncanvas/shared"
 import { useNavigate } from "@tanstack/react-router"
-import { LogOut, Monitor, Moon, Settings, Sun, Trash2, UserPen } from "lucide-react"
+import { Bell, LogOut, Monitor, Moon, Settings, Sun, Trash2, UserPen } from "lucide-react"
 import { useState } from "react"
 import { NameDialog } from "@/components/name-dialog"
+import { NotificationSettings } from "@/components/notification-settings"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,6 +41,7 @@ export function AccountMenu({ user: initialUser }: { user: Session["user"] }) {
   const user = authClient.useSession().data?.user ?? initialUser
   const name = displayNameOf(user)
   const [renaming, setRenaming] = useState(false)
+  const [notifying, setNotifying] = useState(false)
 
   async function signOut() {
     await authClient.signOut()
@@ -72,6 +74,9 @@ export function AccountMenu({ user: initialUser }: { user: Session["user"] }) {
           <DropdownMenuItem onClick={() => setRenaming(true)}>
             <UserPen /> Display name…
           </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setNotifying(true)}>
+            <Bell /> Notifications…
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           {/* Trash and Settings arrive in M5. */}
           <DropdownMenuItem disabled>
@@ -101,6 +106,7 @@ export function AccountMenu({ user: initialUser }: { user: Session["user"] }) {
         </DropdownMenuContent>
       </DropdownMenu>
       <NameDialog user={user} mode="edit" open={renaming} onOpenChange={setRenaming} />
+      <NotificationSettings open={notifying} onOpenChange={setNotifying} />
     </>
   )
 }

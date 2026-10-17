@@ -18,5 +18,7 @@
   // One BoardRoom per Board, with SQLite storage (ADR 0006).
   "durable_objects": { "bindings": [{ "name": "BOARD_ROOM", "class_name": "BoardRoom" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BoardRoom"] }],
+  // The hourly digest and the daily cleanup (M4 ticket 04; src/index.ts scheduled()).
+  "triggers": { "crons": ["0 * * * *", "0 3 * * *"] },
   "observability": { "enabled": true }
 }

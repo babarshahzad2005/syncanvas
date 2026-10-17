@@ -297,3 +297,28 @@ export const notifications = pgTable(
     check("notifications_kind_check", sql`${table.kind} in ('mention', 'reply')`),
   ],
 )
+
+// ---------- Digest emails (M4 ticket 04) ----------
+
+/** A User's preferences. No row means the defaults (digests on). */
+export const userSettings = pgTable("user_settings", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  digestEnabled: boolean("digest_enabled").notNull().default(true),
+  /** When this User's last digest went out: at most one every 3 hours. */
+  lastDigestAt: timestamp("last_digest_at"),
+})
+
+/** One row per digest email sent, for the daily total (50). */
+export const digestEmails = pgTable(
+  "digest_emails",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    sentAt: timestamp("sent_at").defaultNow().notNull(),
+  },
+  (table) => [index("digest_emails_sent_idx").on(table.sentAt)],
+)

@@ -19,7 +19,9 @@ import {
   type SharingResponse,
   type ThreadsResponse,
   type ThreadView,
+  type UserSettings,
 } from "@syncanvas/shared"
+import { eq } from "drizzle-orm"
 import { Hono } from "hono"
 import { createMiddleware } from "hono/factory"
 import {
@@ -33,10 +35,15 @@ import {
 import { signBoardToken, verifyBoardToken } from "./board-token"
 import { createBoard, findMembership, listBoards } from "./boards"
 import { createDb, type Database } from "./db/client"
+import { user } from "./db/schema"
+import { setDigestEnabled, settingsOf, unsubscribeUrl, verifyUnsubscribe } from "./digest"
 import {
+  brevoDigestSender,
   brevoInvitationSender,
   brevoMagicLinkSender,
+  logDigest,
   logInvitation,
+  type SendDigest,
   type SendInvitation,
 } from "./email"
 import { listNotifications, markAllRead, markRead, unreadFor } from "./notifications"
@@ -78,6 +85,8 @@ export type Services = {
   closeGuests: CloseGuests
   /** Relays a comment change to everyone on the Board (M4). */
   broadcast: Broadcast
+  /** Sends a digest email (M4 ticket 04). */
+  sendDigest: SendDigest
   dispose?: () => Promise<void>
 }
 export type ServicesFactory = (env: Env) => Services
@@ -98,13 +107,23 @@ export const productionServices: ServicesFactory = (env) => {
         : logMagicLink,
   })
   const sendInvitation = brevo ? brevoInvitationSender(brevo) : logInvitation
+  const sendDigest = brevo ? brevoDigestSender(brevo) : logDigest
   const applyAccess: ApplyAccess = (boardId, change) =>
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).applyAccess(change)
   const closeGuests: CloseGuests = (boardId) =>
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).closeGuests()
   const broadcast: Broadcast = (boardId, message) =>
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).control(message)
-  return { db, auth, sendInvitation, applyAccess, closeGuests, broadcast, dispose: close }
+  return {
+    db,
+    auth,
+    sendInvitation,
+    applyAccess,
+    closeGuests,
+    broadcast,
+    sendDigest,
+    dispose: close,
+  }
 }
 
 type SessionUser = { id: string; email: string; name: string }
@@ -131,6 +150,9 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/guest/*",
     "/notifications",
     "/notifications/*",
+    "/me/*",
+    "/unsubscribe",
+    "/dev/unsubscribe-link",
   ]) {
     app.use(path, withServices)
   }
@@ -142,7 +164,14 @@ export function createApp(services: ServicesFactory = productionServices) {
     c.set("user", { id: session.user.id, email: session.user.email, name: session.user.name })
     await next()
   })
-  for (const path of ["/boards", "/boards/*", "/dashboard", "/notifications", "/notifications/*"]) {
+  for (const path of [
+    "/boards",
+    "/boards/*",
+    "/dashboard",
+    "/notifications",
+    "/notifications/*",
+    "/me/*",
+  ]) {
     app.use(path, requireUser)
   }
 
@@ -383,6 +412,74 @@ export function createApp(services: ServicesFactory = productionServices) {
     })
   }
 
+  // ---------- Digest settings and unsubscribe (M4 ticket 04) ----------
+
+  app.get("/me/settings", async (c) => {
+    const body: UserSettings = await settingsOf(c.var.services.db, c.var.user.id)
+    return c.json(body)
+  })
+
+  app.put("/me/settings", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as Partial<UserSettings>
+    if (typeof input.digestEnabled !== "boolean") {
+      return c.json({ error: "Say whether digest emails are on." }, 400)
+    }
+    await setDigestEnabled(c.var.services.db, c.var.user.id, input.digestEnabled)
+    const body: UserSettings = await settingsOf(c.var.services.db, c.var.user.id)
+    return c.json(body)
+  })
+
+  // The link in every digest: GET asks first (link scanners mustn't unsubscribe anyone);
+  // POST does it, from that page's button or a mail app's one-click (RFC 8058).
+  app.get("/unsubscribe", async (c) => {
+    const { u = "", t = "" } = c.req.query()
+    if (!(await verifyUnsubscribe(c.env.BETTER_AUTH_SECRET, u, t))) {
+      return c.html(
+        unsubscribePage(
+          "This link doesn't work",
+          "It may be incomplete. You can turn digest emails off from Notifications… in the account menu.",
+        ),
+        400,
+      )
+    }
+    return c.html(
+      unsubscribePage(
+        "Stop digest emails?",
+        "You won't get emails about unread notifications. You'll still see them in Syncanvas.",
+        c.req.url,
+      ),
+    )
+  })
+
+  app.post("/unsubscribe", async (c) => {
+    const { u = "", t = "" } = c.req.query()
+    if (!(await verifyUnsubscribe(c.env.BETTER_AUTH_SECRET, u, t))) {
+      return c.html(unsubscribePage("This link doesn't work", "It may be incomplete."), 400)
+    }
+    await setDigestEnabled(c.var.services.db, u, false)
+    return c.html(
+      unsubscribePage(
+        "You're unsubscribed",
+        "No more digest emails. Turn them back on any time from Notifications… in the account menu.",
+      ),
+    )
+  })
+
+  // End-to-end tests read a User's unsubscribe link here (like the magic-link inbox).
+  app.get("/dev/unsubscribe-link", async (c) => {
+    if (!devInboxEnabled(c.env)) return c.notFound()
+    const email = (c.req.query("email") ?? "").toLowerCase()
+    const [row] = await c.var.services.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, email))
+      .limit(1)
+    if (!row) return c.json({ error: "No such User." }, 404)
+    return c.json({
+      url: await unsubscribeUrl(c.env.BETTER_AUTH_URL, c.env.BETTER_AUTH_SECRET, row.id),
+    })
+  })
+
   // ---------- Notifications (M4 ticket 03) ----------
 
   app.get("/notifications", async (c) => {
@@ -440,6 +537,18 @@ export function createApp(services: ServicesFactory = productionServices) {
   })
 
   return app
+}
+
+/** The small page an unsubscribe link shows; `action` adds the confirm button. */
+function unsubscribePage(title: string, body: string, action?: string) {
+  const esc = (v: string) => v.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)
+  const button = action
+    ? `<form method="post" action="${esc(action)}"><button style="background:#5145CD;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:14px;cursor:pointer">Stop digest emails</button></form>`
+    : ""
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} · Syncanvas</title></head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#F8F7F4;font-family:-apple-system,Segoe UI,sans-serif;color:#1C1B19">
+<main style="max-width:400px;padding:16px;text-align:center"><h1 style="font-size:20px;font-weight:600;margin:0 0 8px">${esc(title)}</h1>
+<p style="font-size:14px;line-height:20px;color:#6B6760;margin:0 0 20px">${esc(body)}</p>${button}</main></body></html>`
 }
 
 export type AppType = ReturnType<typeof createApp>

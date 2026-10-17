@@ -12,7 +12,7 @@ import { createApp } from "./app"
 import { createAuth } from "./auth"
 import type { AccessChange } from "./board-room"
 import * as schema from "./db/schema"
-import type { InvitationMessage } from "./email"
+import type { DigestMessage, InvitationMessage } from "./email"
 
 export const ORIGIN = "http://localhost:5173"
 /** A fresh Ed25519 pair in the same encoding as scripts/gen-keys.mjs. */
@@ -59,6 +59,8 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
   const guestsClosed: string[] = []
   /** Control messages relayed to board rooms, in order (M4). */
   const broadcasts: { boardId: string; message: ControlMessage }[] = []
+  /** Digest emails sent (M4 ticket 04). */
+  const digests: DigestMessage[] = []
   const app = createApp(() => ({
     db,
     auth,
@@ -73,6 +75,9 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     },
     broadcast: async (boardId, message) => {
       broadcasts.push({ boardId, message })
+    },
+    sendDigest: async (m) => {
+      digests.push(m)
     },
   }))
 
@@ -122,6 +127,7 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     access,
     guestsClosed,
     broadcasts,
+    digests,
     db,
     pg,
   }

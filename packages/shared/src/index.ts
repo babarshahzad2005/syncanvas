@@ -82,9 +82,12 @@ export function invitableRoles(role: Role): InviteRole[] {
 }
 
 export const INVITATION_DAYS = 30
-/** Invitation emails per User per day, and in total (Brevo sends 300 a day, ADR 0007). */
+/**
+ * Invitation emails per User per day, and in total. Brevo sends 300 a day (ADR 0007): 100
+ * stay free for sign-in links, 150 go to invitations, 50 to digests (M4 planning).
+ */
 export const INVITES_PER_USER_PER_DAY = 20
-export const INVITES_PER_DAY = 200
+export const INVITES_PER_DAY = 150
 export const EMAIL_MAX = 254
 
 /** A trimmed, lowercased email address, or null if it doesn't look like one. */
@@ -271,3 +274,12 @@ export type NotificationView = {
 
 /** GET /api/notifications: newest first (Boards you can't open are left out), and the unread count. */
 export type NotificationsResponse = { notifications: NotificationView[]; unread: number }
+
+// ---------- Digest emails (M4 ticket 04) ----------
+
+/** Digest emails a day, in total, and the shortest gap between two for one User. */
+export const DIGESTS_PER_DAY = 50
+export const DIGEST_GAP_HOURS = 3
+
+/** GET/PUT /api/me/settings. */
+export type UserSettings = { digestEnabled: boolean }

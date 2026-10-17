@@ -16,6 +16,7 @@ import type {
   SharingResponse,
   ThreadsResponse,
   ThreadView,
+  UserSettings,
 } from "@syncanvas/shared"
 
 export class ApiError extends Error {
@@ -140,6 +141,10 @@ export const api = {
     }),
   markAllNotificationsRead: () =>
     request<{ ok: true }>("/api/notifications/read-all", { method: "POST" }),
+  // ---------- Settings (M4 ticket 04) ----------
+  settings: () => request<UserSettings>("/api/me/settings"),
+  saveSettings: (input: UserSettings) =>
+    request<UserSettings>("/api/me/settings", { method: "PUT", body: JSON.stringify(input) }),
 }
 
 function board(boardId: string) {
@@ -151,4 +156,5 @@ export const queryKeys = {
   sharing: (boardId: string) => ["sharing", boardId] as const,
   threads: (boardId: string) => ["threads", boardId] as const,
   notifications: ["notifications"] as const,
+  settings: ["settings"] as const,
 }

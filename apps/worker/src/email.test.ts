@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { brevoMagicLinkSender, invitationEmail, magicLinkEmail } from "./email"
+import {
+  brevoDigestSender,
+  brevoMagicLinkSender,
+  digestEmail,
+  invitationEmail,
+  magicLinkEmail,
+} from "./email"
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -69,5 +75,52 @@ describe("invitation emails", () => {
     expect(htmlContent).not.toContain("<script>")
     expect(htmlContent).not.toContain("<Lovelace>")
     expect(htmlContent).toContain("&#60;script&#62;")
+  })
+})
+
+describe("digest emails", () => {
+  const message = {
+    email: "grace@example.com",
+    items: [
+      {
+        headline: "Ada <Lovelace> mentioned you",
+        boardTitle: 'Q4 "retro"',
+        excerpt: "<b>check</b> this",
+        url: "https://x.test/b/1?thread=2",
+      },
+    ],
+    more: 0,
+    unsubscribeUrl: "https://x.test/api/unsubscribe?u=g&t=sig",
+  }
+
+  it("lists each Notification and links to unsubscribe, in one click from mail apps", () => {
+    const email = digestEmail(message)
+    expect(email.subject).toBe("You have a new notification on Syncanvas")
+    expect(email.textContent).toContain("https://x.test/b/1?thread=2")
+    expect(email.textContent).toContain("https://x.test/api/unsubscribe?u=g&t=sig")
+    expect(email.headers).toEqual({
+      "List-Unsubscribe": "<https://x.test/api/unsubscribe?u=g&t=sig>",
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    })
+    expect(digestEmail({ ...message, more: 4 }).subject).toBe(
+      "You have 5 new notifications on Syncanvas",
+    )
+  })
+
+  it("escapes names, titles, and comments inside the HTML", () => {
+    const { htmlContent } = digestEmail(message)
+    expect(htmlContent).not.toContain("<b>check</b>")
+    expect(htmlContent).not.toContain("<Lovelace>")
+    expect(htmlContent).toContain("&#60;b&#62;check")
+  })
+
+  it("passes the headers to Brevo", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 201 }))
+    vi.stubGlobal("fetch", fetchMock)
+    await brevoDigestSender({ apiKey: "k", senderEmail: "me@gmail.com" })(message)
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(String(init.body)).headers).toMatchObject({
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    })
   })
 })
