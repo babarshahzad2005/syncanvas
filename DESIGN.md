@@ -243,14 +243,15 @@ Twelve saturated colors, separate from the palette and the accent, so a cursor n
 └──────────────────────────────────────────────────────────────┘
 ```
 
-- **Header:** wordmark at left, a wide centered search (`/` focuses it), account avatar at right. The **account menu** holds Trash, Settings, and Sign out. Trash is deliberately one level down.
+- **Header:** wordmark at left, a wide centered search (`/` focuses it), account avatar at right. The **account menu** holds Trash, Settings, and Sign out. Trash is deliberately one level down. **Settings** opens a dialog with two sections: Notifications (the digest switch, which replaces the M4 "Notifications…" item) and Account, whose "Delete account…" confirmation names what goes ("3 boards you own will be deleted for everyone") and asks you to type DELETE before the destructive button works.
 - **Start something new:** template tiles with Blank first (dashed `primary` outline, solid `primary` icon).
   - **New users** (no Boards) get big hero tiles titled "Let's make your first board", and "Your boards" shows "Boards you open will show up here."
   - **Returning users** get a compact single row about half the height. On a phone it scrolls sideways.
-- **Folders:** tiles showing the Folder icon, name, and Board count, plus "New folder". Clicking a tile opens the **Folder page**: a "Home › Folder name" breadcrumb and the same Board grid, filtered to that Folder. An empty Folder says "This folder is empty. Move boards here from their menu."
-- **Your boards:** every Board the User can open, sorted by last opened. Boards never opened (for example, newly shared ones) come after. A segmented filter switches between **All · Mine · Shared with me · Favorites**.
+- **Folders:** tiles showing the Folder icon, name, and Board count, plus "New folder". Each Folder tile has a ⋯ menu: Rename, Delete folder (confirmed: "Its boards go back to Your boards."). Clicking a tile opens the **Folder page**: a "Home › Folder name" breadcrumb and the same Board grid, filtered to that Folder. An empty Folder says "This folder is empty. Move boards here from their menu."
+- **Your boards:** every Board the User can open, sorted by when they last opened it (there's no separate Recent section). Boards never opened (for example, newly shared ones) come after. A segmented filter switches between **All · Mine · Shared with me · Favorites**.
 - **Board tiles:** a thumbnail (light-theme render, placeholder dot grid with the mark when there's none yet), the title on one line truncated, then "Owner · last edited" (owner only when shared), and a star when it's a favorite. A **⋯ menu** appears on hover (always visible on touch): Open, Rename, Favorite, Move to folder, then Delete (Owner) or Leave board (Members). On desktop, dragging a tile onto a Folder moves it.
-- **Trash page:** "Home › Trash", a list of rows reading "Deleted 3 days ago · 27 days left", each with Restore, under the note "Boards in Trash are deleted for good after 30 days."
+- **Trash page:** "Home › Trash", a list of rows reading "Deleted 3 days ago · 27 days left", each with Restore and "Delete forever" (confirmed), under the note "Boards in Trash are deleted for good after 30 days. They don't count toward your 50 boards."
+- **Templates:** each template tile shows a small preview drawn from the template's own Elements (light theme), not an image file.
 - **Grid:** 4 columns on desktop, 2 on tablet, 1 on phone.
 - **Prototype source:** branch `prototype/dashboard` (variants A–C). C won because it makes creating a Board the hero action and gives Folders a simple tile-and-page model.
 

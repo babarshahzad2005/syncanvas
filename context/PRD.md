@@ -129,7 +129,8 @@ If the schedule slips, **cut in this order:** (1) Version history, (2) email dig
 | **M2 Presence and offline** | Cursors, presence list, follow mode, reconnect with backoff and jitter | Offline merge tests green |
 | **M3 Sharing and access** | Invitations, Share Link, Roles, live downgrade and revoke, connection cap | S7 green |
 | **M4 Comments and notifications** | Threads, pins, Mentions, replies, resolve, notification list, digest with unsubscribe | Two browsers: a Commenter pins a Thread to an Element and mentions the Owner, who sees the pin and the Notification live; the pin follows the Element, detaches when it's deleted, and reattaches on undo. Viewers and Guests are refused every comment write |
-| **M5 Dashboard and content** | Dashboard, Folders, favorites, recent, Trash, search, templates, images, thumbnails, Versions, quotas, account deletion | |
+| **M5a Dashboard and Board lifecycle** | Folders, favorites, sort by last opened, rename, Trash (restore, delete forever), owned-Board quota, templates, thumbnails, Settings and account deletion | A new User makes a Board from a template, renames it, files it in a Folder and stars it; the dashboard shows its thumbnail and sorts by last opened. Deleting it closes a Collaborator's open connection at once and moves it to Trash; Restore brings it back with its Members and Threads. Deleting the account removes its owned Boards and leaves its comments as "Deleted user" |
+| **M5b Content** | Images, search, compaction with Versions (Versions last: first to cut) | Set in its planning round |
 | **M6 Export, Embed, hardening** | PNG/SVG/PDF export, Embed, Share Link expiry, load and perf tests, README and portfolio write-up with a live Embed | S3–S6 and S8 green |
 
 ## 9. Open questions
@@ -253,12 +254,15 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 
 - Sign-in uses Google OAuth or an email magic link. Sessions use an HTTP-only cookie.
 - The dashboard shows owned Boards, shared Boards, Folders, favorites, recent Boards, and Trash, loaded in one request.
-- **Folders** are private to each User, one level with no nesting, and can hold any Board you can open. A Board sits in at most one of your Folders.
-- **Thumbnails** come from KV and refresh when an Editor leaves after making changes, at most once per Board every 10 minutes. Templates ship with prebuilt thumbnails.
-- **Templates:** retro, brainstorm, flowchart, user journey, kanban. A template is applied as the Board's first ordinary edit.
+- **Folders** are private to each User, one level with no nesting, and can hold any Board you can open. A Board sits in at most one of your Folders. Folders can be renamed and deleted; deleting a Folder never deletes its Boards, which go back to "Your boards" (M5 planning).
+- **Order:** "Your boards" is sorted by when you last opened each Board; Boards you've never opened come after. There's no separate Recent section (M5 planning).
+- **Rename:** the Owner and Editors rename a Board, from the Board menu or the dashboard tile's ⋯ (M5 planning).
+- **Thumbnails** come from KV and refresh when an Editor leaves after making changes, at most once per Board every 10 minutes.
+- **Templates:** retro, brainstorm, flowchart, user journey, kanban. A template is applied as the Board's first ordinary edit. Template tiles and a new Board's first thumbnail are drawn from the template's own Elements in the browser, so there are no image files to keep in sync (M5 planning).
 - **Search** covers titles (searchable immediately) and text on Boards (searchable within about 5 minutes). It shows snippets and returns only Boards the User is a Member of.
-- **Board deletion** (Owner only) moves the Board to Trash for 30 days. Members lose access immediately and their open connections close. The Owner can restore from Trash.
-- **Account deletion** permanently deletes the User's owned Boards, bypassing Trash. It removes their Memberships and changes the author of their comments to "Deleted user".
+- **Board deletion** (Owner only, after a confirmation) moves the Board to Trash for 30 days. Members lose access immediately and their open connections close. The Owner can restore it from Trash, or delete it forever there. Boards in Trash don't count toward the 50 owned Boards (M5 planning).
+- **Account deletion** permanently deletes the User's owned Boards, bypassing Trash. It removes their Memberships and changes the author of their comments to "Deleted user". It's in Settings → Account, confirmed by typing DELETE after a summary of what goes (M5 planning).
+- **Settings** is a dialog from the account menu with two sections: Notifications (the digest switch) and Account (M5 planning).
 - **Accessibility:** the dashboard, menus, dialogs, and comments are fully keyboard-navigable and meet WCAG AA contrast.
 
 ### A7. Content and history (P0, Versions P1)
