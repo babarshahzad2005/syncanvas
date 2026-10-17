@@ -157,6 +157,13 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ favorite }),
     }),
+  // ---------- Trash (M5a ticket 03) ----------
+  deleteBoard: (boardId: string) => request<{ ok: true }>(board(boardId), { method: "DELETE" }),
+  restoreBoard: (boardId: string) =>
+    request<{ ok: true }>(`${board(boardId)}/restore`, { method: "POST" }),
+  deleteForever: (boardId: string) =>
+    request<{ ok: true }>(`${board(boardId)}/forever`, { method: "DELETE" }),
+
   // ---------- Folders (M5a ticket 02) ----------
   createFolder: (name: string) =>
     request<FolderSummary>("/api/folders", { method: "POST", body: JSON.stringify({ name }) }),

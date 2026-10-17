@@ -26,7 +26,15 @@ export type BoardSummary = {
 /** One of your Folders (private, one level), with how many of your Boards are in it. */
 export type FolderSummary = { id: string; name: string; boardCount: number }
 
-export type DashboardResponse = { boards: BoardSummary[]; folders: FolderSummary[] }
+/** One of your owned Boards in Trash (M5a ticket 03). */
+export type TrashedBoard = { id: string; title: string; deletedAt: string }
+
+export type DashboardResponse = {
+  boards: BoardSummary[]
+  folders: FolderSummary[]
+  /** Your own Boards in Trash, most recently deleted first. */
+  trash: TrashedBoard[]
+}
 export type CreateBoardResponse = { id: string; title: string }
 
 export const BOARD_TITLE_MAX = 200
@@ -315,4 +323,15 @@ export function normalizeFolderName(input: unknown): string | null {
   if (typeof input !== "string") return null
   const name = input.trim().replace(/\s+/g, " ")
   return name.length >= 1 && name.length <= FOLDER_NAME_MAX ? name : null
+}
+
+/** Owned Boards one User may have outside Trash (PRD Limits; M5 planning). */
+export const BOARDS_PER_USER = 50
+/** Days a Board stays in Trash before the daily cleanup deletes it for good. */
+export const TRASH_DAYS = 30
+
+/** Whole days left in Trash for a Board deleted at `deletedAt` (never below 0). */
+export function trashDaysLeft(deletedAt: string | Date, now: Date = new Date()) {
+  const gone = new Date(deletedAt).getTime() + TRASH_DAYS * 24 * 60 * 60 * 1000
+  return Math.max(0, Math.ceil((gone - now.getTime()) / (24 * 60 * 60 * 1000)))
 }

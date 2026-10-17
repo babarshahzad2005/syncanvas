@@ -19,6 +19,7 @@ import {
   Loader2,
   Lock,
   Pencil,
+  Trash2,
 } from "lucide-react"
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
@@ -34,6 +35,7 @@ import { PinLayer } from "@/comments/pin-layer"
 import { anchorPoint, useCanvasView, useComments } from "@/comments/store"
 import { useThreads } from "@/comments/use-threads"
 import { BrandMark } from "@/components/brand"
+import { DeleteBoardDialog } from "@/components/delete-board-dialog"
 import { NameDialog } from "@/components/name-dialog"
 import { NotificationBell } from "@/components/notification-bell"
 import { RenameDialog } from "@/components/rename-dialog"
@@ -43,6 +45,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Toaster } from "@/components/ui/toaster"
@@ -171,16 +174,34 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
   // Removed while here (not left yourself): back to the dashboard, which says why.
   // Removed while here, or refused on reconnecting after being here (FLOWS §2). A first visit
   // without access gets the no-access page instead; unsaved work gets the picture dialog.
+  const deleted = status === "revoked" && connection?.deleted === true
   const removedLive =
     status === "revoked" &&
     !guestLink &&
-    !lostWork &&
-    (connection?.notice?.role === null || connection?.wasOnline === true)
+    (deleted ||
+      (!lostWork && (connection?.notice?.role === null || connection?.wasOnline === true)))
   useEffect(() => {
     if (!removedLive || leaving.current) return
-    toastOnNextPage(`You no longer have access to “${board?.title ?? "this board"}”`)
+    const title = board?.title ?? "this board"
+    // The Owner deleted it (M5a ticket 03), or you lost access.
+    toastOnNextPage(deleted ? `“${title}” was deleted` : `You no longer have access to “${title}”`)
     void navigate({ to: "/" })
-  }, [removedLive, board?.title, navigate])
+  }, [removedLive, deleted, board?.title, navigate])
+
+  /** The Owner sends the Board to Trash from the Board menu (M5a ticket 03). */
+  async function deleteBoard() {
+    leaving.current = true
+    try {
+      await api.deleteBoard(boardId)
+    } catch (error) {
+      leaving.current = false
+      toast(errorMessage(error))
+      return
+    }
+    await discardLocalCopy()
+    toastOnNextPage(`“${board?.title ?? "The board"}” moved to Trash`)
+    await navigate({ to: "/" })
+  }
 
   async function leave() {
     const you = connection?.you
@@ -199,6 +220,7 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
 
   if (removedLive || leaving.current) return null
   if (status === "busy") return <Busy />
+  if (deleted && guestLink) return <BoardDeleted title={board?.title} />
   if (status === "revoked" && guestLink) return <LinkGone />
   if (status === "revoked" && lostWork && doc) {
     return (
@@ -238,6 +260,7 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
           readOnly={role ? !canEdit(role) : false}
           canRename={!guestLink && status === "online" && role !== null && canRename(role)}
           onRenamed={(title) => connection?.renamed(title)}
+          onDelete={!guestLink && role === "owner" ? deleteBoard : undefined}
         />
         {/* Top right: the presence pill, then Share (DESIGN.md → Board screen). */}
         <div className="fixed top-3 right-3 flex items-center gap-2">
@@ -379,6 +402,7 @@ function TitlePill({
   readOnly,
   canRename,
   onRenamed,
+  onDelete,
 }: {
   boardId: string
   title?: string
@@ -387,8 +411,12 @@ function TitlePill({
   /** The Owner and Editors, while connected (M5a ticket 01). */
   canRename: boolean
   onRenamed: (title: string) => void
+  /** The Owner only: sends the Board to Trash (M5a ticket 03). */
+  onDelete?: () => Promise<void>
 }) {
   const [renaming, setRenaming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [pending, setPending] = useState(false)
   return (
     <div
       className={cn(
@@ -428,8 +456,29 @@ function TitlePill({
           <DropdownMenuItem render={<Link to="/" />}>
             <LayoutGrid /> Back to your boards
           </DropdownMenuItem>
+          {onDelete && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={() => setDeleting(true)}>
+                <Trash2 /> Delete board…
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {onDelete && (
+        <DeleteBoardDialog
+          title={title ?? "this board"}
+          open={deleting}
+          onOpenChange={setDeleting}
+          pending={pending}
+          onConfirm={async () => {
+            setPending(true)
+            await onDelete()
+            setPending(false)
+          }}
+        />
+      )}
       <RenameDialog
         boardId={boardId}
         title={title ?? ""}
@@ -498,6 +547,21 @@ function GuestSignIn({ linkRole }: { linkRole: InviteRole | null }) {
     >
       {label}
     </a>
+  )
+}
+
+/** The Owner deleted the Board while a Guest had it open (M5a ticket 03). */
+function BoardDeleted({ title }: { title?: string }) {
+  return (
+    <Notice
+      title={title ? `“${title}” was deleted` : "This board was deleted"}
+      body="Its owner deleted it, so it isn't available anymore."
+      action={
+        <Button nativeButton={false} render={<Link to="/sign-in" />}>
+          Sign in
+        </Button>
+      }
+    />
   )
 }
 

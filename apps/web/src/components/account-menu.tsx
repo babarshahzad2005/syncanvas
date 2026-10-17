@@ -1,5 +1,5 @@
 import { displayNameOf } from "@syncanvas/shared"
-import { useNavigate } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { Bell, LogOut, Monitor, Moon, Settings, Sun, Trash2, UserPen } from "lucide-react"
 import { useState } from "react"
 import { NameDialog } from "@/components/name-dialog"
@@ -78,10 +78,10 @@ export function AccountMenu({ user: initialUser }: { user: Session["user"] }) {
             <Bell /> Notifications…
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          {/* Trash and Settings arrive in M5. */}
-          <DropdownMenuItem disabled>
+          <DropdownMenuItem render={<Link to="/trash" />}>
             <Trash2 /> Trash
           </DropdownMenuItem>
+          {/* Settings arrives in M5a ticket 06. */}
           <DropdownMenuItem disabled>
             <Settings /> Settings
           </DropdownMenuItem>

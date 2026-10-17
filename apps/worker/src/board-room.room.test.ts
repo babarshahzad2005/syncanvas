@@ -935,3 +935,53 @@ describe("BoardRoom renames (M5a ticket 01)", () => {
     for (const c of [owner, guest, embed]) c.close()
   })
 })
+
+describe("BoardRoom deleting (M5a ticket 03)", () => {
+  it("closeAll closes Members and Guests with deleted, and refuses tokens from before", async () => {
+    const board = newBoardId()
+    const before = Date.now() - 2_000
+    const owner = await joinAs(board, "owner", "ada")
+    owner.addRect("kept")
+    const editor = await joinAs(board, "editor", "grace")
+    await until(() => editor.rect("kept") !== undefined, "the edit to arrive")
+    const guest = await joinGuest(board, "guest-a")
+    await room(board).closeAll()
+    await until(
+      () => [owner, editor, guest].every((c) => c.closed !== null),
+      "everyone to be closed",
+    )
+    for (const c of [owner, editor, guest]) {
+      expect(c.closed).toEqual({ code: CLOSE.forbidden, reason: "deleted" })
+    }
+
+    const stale = await joinAs(board, "editor", "grace", before)
+    expect(stale.closed).toEqual({ code: CLOSE.forbidden, reason: "deleted" })
+    // Restored: new tokens get in, and the content never went anywhere.
+    const fresh = await joinAs(board, "editor", "grace", Date.now() + 2_000)
+    expect(fresh.closed).toBeNull()
+    expect(fresh.rect("kept")).toBeDefined()
+    fresh.close()
+  })
+
+  it("destroy closes everyone and leaves an empty room", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    owner.addRect("gone")
+    const editor = await joinAs(board, "editor", "grace")
+    await until(() => editor.rect("gone") !== undefined, "the edit to arrive")
+    await room(board).destroy()
+    await until(() => owner.closed !== null && editor.closed !== null, "everyone to be closed")
+    expect(editor.closed).toEqual({ code: CLOSE.forbidden, reason: "deleted" })
+
+    const next = await joinAs(board, "owner", "ada", Date.now() + 2_000)
+    expect(next.closed).toBeNull()
+    expect(next.rect("gone")).toBeUndefined()
+    next.close()
+
+    // Nothing comes back from storage either.
+    await evictDurableObject(room(board))
+    const afterEviction = await joinAs(board, "owner", "ada", Date.now() + 2_000)
+    expect(afterEviction.rect("gone")).toBeUndefined()
+    afterEviction.close()
+  })
+})

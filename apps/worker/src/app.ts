@@ -33,7 +33,14 @@ import {
   logMagicLink,
 } from "./auth"
 import { signBoardToken, verifyBoardToken } from "./board-token"
-import { createBoard, findMembership, listBoards, listFolders, markOpened } from "./boards"
+import {
+  createBoard,
+  findMembership,
+  listBoards,
+  listFolders,
+  listTrash,
+  markOpened,
+} from "./boards"
 import { createDb, type Database } from "./db/client"
 import { user } from "./db/schema"
 import { setDigestEnabled, settingsOf, unsubscribeUrl, verifyUnsubscribe } from "./digest"
@@ -47,11 +54,17 @@ import {
   type SendInvitation,
 } from "./email"
 import {
+  type CloseAll,
+  checkQuota,
   createFolder,
+  type DestroyRoom,
+  deleteBoard,
   deleteFolder,
+  deleteForever,
   moveToFolder,
   renameBoard,
   renameFolder,
+  restoreBoard,
   setFavorite,
 } from "./lifecycle"
 import { listNotifications, markAllRead, markRead, unreadFor } from "./notifications"
@@ -95,6 +108,10 @@ export type Services = {
   broadcast: Broadcast
   /** Sends a digest email (M4 ticket 04). */
   sendDigest: SendDigest
+  /** Closes every connection to a Board that went to Trash (M5a ticket 03). */
+  closeAll: CloseAll
+  /** Closes everything and deletes a Board's room storage, before deleting it for good. */
+  destroyRoom: DestroyRoom
   dispose?: () => Promise<void>
 }
 export type ServicesFactory = (env: Env) => Services
@@ -122,6 +139,10 @@ export const productionServices: ServicesFactory = (env) => {
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).closeGuests()
   const broadcast: Broadcast = (boardId, message) =>
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).control(message)
+  const closeAll: CloseAll = (boardId) =>
+    env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).closeAll()
+  const destroyRoom: DestroyRoom = (boardId) =>
+    env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).destroy()
   return {
     db,
     auth,
@@ -130,6 +151,8 @@ export const productionServices: ServicesFactory = (env) => {
     closeGuests,
     broadcast,
     sendDigest,
+    closeAll,
+    destroyRoom,
     dispose: close,
   }
 }
@@ -201,6 +224,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     const body: DashboardResponse = {
       boards: await listBoards(c.var.services.db, c.var.user.id),
       folders: await listFolders(c.var.services.db, c.var.user.id),
+      trash: await listTrash(c.var.services.db, c.var.user.id),
     }
     return c.json(body)
   })
@@ -209,6 +233,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     const input = (await c.req.json().catch(() => ({}))) as { title?: unknown }
     const title =
       typeof input.title === "string" ? input.title.trim().slice(0, BOARD_TITLE_MAX) : undefined
+    await checkQuota(c.var.services.db, c.var.user.id)
     const board: CreateBoardResponse = await createBoard(c.var.services.db, {
       ownerId: c.var.user.id,
       title: title || undefined,
@@ -265,6 +290,29 @@ export function createApp(services: ServicesFactory = productionServices) {
         favorite: input.favorite,
       }),
     )
+  })
+
+  // ---------- Trash (M5a ticket 03) ----------
+
+  app.delete("/boards/:id", async (c) => {
+    await deleteBoard(c.var.services.db, c.var.services.closeAll, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+    })
+    return c.json({ ok: true })
+  })
+
+  app.post("/boards/:id/restore", async (c) => {
+    await restoreBoard(c.var.services.db, { boardId: c.req.param("id"), caller: c.var.user })
+    return c.json({ ok: true })
+  })
+
+  app.delete("/boards/:id/forever", async (c) => {
+    await deleteForever(c.var.services.db, c.var.services.destroyRoom, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+    })
+    return c.json({ ok: true })
   })
 
   // ---------- Folders (M5a ticket 02) ----------

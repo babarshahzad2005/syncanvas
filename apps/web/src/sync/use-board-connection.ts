@@ -41,7 +41,9 @@ export function useBoardConnection(boardId: string, guestLink?: string) {
       // Access is gone: the local copy must not outlive it (FLOWS §2 "Go offline and reconnect"),
       // unless it holds work the room never received; then it waits for `discardLocalCopy`.
       if (c.status === "revoked" && local) {
-        const unsynced = unsyncedOf(boardId)
+        // A deleted Board has nowhere to save to, and nobody to ask (M5a ticket 03).
+        const unsynced = c.deleted ? null : unsyncedOf(boardId)
+        if (c.deleted) clearUnsynced(boardId)
         if (unsynced) setLostWork({ title: unsynced.title ?? c.board?.title ?? null })
         else void local.clearData()
       }

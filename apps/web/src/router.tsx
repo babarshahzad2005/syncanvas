@@ -10,6 +10,7 @@ import { BoardScreen } from "@/routes/board"
 import { Dashboard, FolderPage } from "@/routes/dashboard"
 import { RootLayout } from "@/routes/root"
 import { SignIn } from "@/routes/sign-in"
+import { TrashPage } from "@/routes/trash"
 
 const rootRoute = createRootRoute({ component: RootLayout })
 
@@ -41,6 +42,13 @@ const folderRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/folders/$folderId",
   component: FolderPage,
+})
+
+/** The Owner's Trash (M5a ticket 03). */
+const trashRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/trash",
+  component: TrashPage,
 })
 
 const boardRoute = createRoute({
@@ -84,7 +92,7 @@ const devOnlyRoutes = import.meta.env.DEV
 
 export const router = createRouter({
   routeTree: rootRoute.addChildren([
-    authedRoute.addChildren([dashboardRoute, folderRoute, boardRoute]),
+    authedRoute.addChildren([dashboardRoute, folderRoute, trashRoute, boardRoute]),
     signInRoute,
     ...devOnlyRoutes,
   ]),

@@ -61,6 +61,9 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
   const broadcasts: { boardId: string; message: ControlMessage }[] = []
   /** Digest emails sent (M4 ticket 04). */
   const digests: DigestMessage[] = []
+  /** Boards whose rooms were closed (to Trash) or destroyed (for good), in order (M5a). */
+  const closedAll: string[] = []
+  const destroyed: string[] = []
   const app = createApp(() => ({
     db,
     auth,
@@ -78,6 +81,12 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     },
     sendDigest: async (m) => {
       digests.push(m)
+    },
+    closeAll: async (boardId) => {
+      closedAll.push(boardId)
+    },
+    destroyRoom: async (boardId) => {
+      destroyed.push(boardId)
     },
   }))
 
@@ -128,6 +137,8 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     guestsClosed,
     broadcasts,
     digests,
+    closedAll,
+    destroyed,
     db,
     pg,
   }

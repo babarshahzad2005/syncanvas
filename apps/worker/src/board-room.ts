@@ -54,6 +54,8 @@ export const CONNECTION_CAP = 100
 
 /** The `access` row that stands for every Guest: their link was turned off or replaced. */
 const GUESTS = "*guests*"
+/** The `access` row that stands for everyone: the Board went to Trash (M5a ticket 03). */
+const EVERYONE = "*board*"
 
 type SocketInfo = {
   userId: string
@@ -105,25 +107,29 @@ export class BoardRoom extends DurableObject<Env> {
     // Answered by the runtime itself, so it never wakes the room or costs anything.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(HEARTBEAT_PING, HEARTBEAT_PONG))
     ctx.blockConcurrencyWhile(async () => {
-      this.ctx.storage.sql.exec(
-        "create table if not exists updates (seq integer primary key autoincrement, data blob not null, at integer not null)",
-      )
-      // The last access change per User (M3): a board token issued before it carries a stale
-      // Role, so the change wins over the token until the token expires.
-      this.ctx.storage.sql.exec(
-        "create table if not exists access (user_id text primary key, role text, changed_at integer not null)",
-      )
-      // Elements with Threads, and where the deleted ones last were (M4, ADR 0012).
-      this.ctx.storage.sql.exec("create table if not exists anchors (element_id text primary key)")
-      this.ctx.storage.sql.exec(
-        "create table if not exists last_boxes (element_id text primary key, x real not null, y real not null, w real not null, h real not null)",
-      )
+      this.createTables()
       for (const row of this.ctx.storage.sql.exec<{ data: ArrayBuffer }>(
         "select data from updates order by seq",
       )) {
         Y.applyUpdate(this.doc, new Uint8Array(row.data))
       }
     })
+  }
+
+  private createTables() {
+    this.ctx.storage.sql.exec(
+      "create table if not exists updates (seq integer primary key autoincrement, data blob not null, at integer not null)",
+    )
+    // The last access change per User (M3): a board token issued before it carries a stale
+    // Role, so the change wins over the token until the token expires.
+    this.ctx.storage.sql.exec(
+      "create table if not exists access (user_id text primary key, role text, changed_at integer not null)",
+    )
+    // Elements with Threads, and where the deleted ones last were (M4, ADR 0012).
+    this.ctx.storage.sql.exec("create table if not exists anchors (element_id text primary key)")
+    this.ctx.storage.sql.exec(
+      "create table if not exists last_boxes (element_id text primary key, x real not null, y real not null, w real not null, h real not null)",
+    )
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -148,6 +154,8 @@ export class BoardRoom extends DurableObject<Env> {
     if (!claims) return refuse(CLOSE.invalidToken, "invalid or expired token")
     if (claims.boardId !== boardId) return refuse(CLOSE.forbidden, "token is for another board")
     let role: Role = claims.role
+    // Sent to Trash after this token was issued (M5a ticket 03): a restore issues new ones.
+    if (this.changedSince(EVERYONE, claims.issuedAt)) return refuse(CLOSE.forbidden, "deleted")
     if (claims.kind !== "embed") {
       // An access change after this token was issued wins over it (M3 ticket 02). For Guests,
       // it's their link going off or being replaced (ticket 04).
@@ -292,6 +300,54 @@ export class BoardRoom extends DurableObject<Env> {
         // Already gone.
       }
     }
+  }
+
+  // ---------- Deleting (M5a ticket 03) ----------
+
+  /**
+   * Called by the API (Durable Object RPC) once the Board went to Trash: every connection
+   * closes at once, and tokens issued until now stop working. Storage stays for a restore.
+   */
+  async closeAll() {
+    this.ctx.storage.sql.exec(
+      "insert into access (user_id, role, changed_at) values (?, null, ?) on conflict (user_id) do update set role = null, changed_at = excluded.changed_at",
+      EVERYONE,
+      Date.now(),
+    )
+    this.closeEveryone()
+  }
+
+  /**
+   * Called by the API before it deletes the Board for good (Delete forever, the 30-day
+   * cleanup, account deletion): closes everything and deletes all storage. The room starts
+   * over empty if anyone reaches it again.
+   */
+  async destroy() {
+    this.closeEveryone()
+    await this.ctx.storage.deleteAll()
+    this.doc.destroy()
+    this.doc = new Y.Doc()
+    this.presence.clear()
+    this.presenceWarm = false
+    this.createTables()
+  }
+
+  private closeEveryone() {
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(CLOSE.forbidden, "deleted")
+      } catch {
+        // Already gone.
+      }
+    }
+  }
+
+  /** Whether an access change for `userId` happened at or after `issuedAt`. */
+  private changedSince(userId: string, issuedAt: number) {
+    const [row] = this.ctx.storage.sql
+      .exec<{ changed_at: number }>("select changed_at from access where user_id = ?", userId)
+      .toArray()
+    return row !== undefined && issuedAt <= row.changed_at
   }
 
   private connectionCap() {

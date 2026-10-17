@@ -89,6 +89,8 @@ export class BoardConnection {
   token: string | null = null
   /** For a Guest: what the Share Link grants once they sign in (M3 ticket 04). */
   linkRole: InviteRole | null = null
+  /** The Owner deleted the Board while this was connected (M5a ticket 03). */
+  deleted = false
 
   private ws: WebSocket | null = null
   private attempt = 0
@@ -247,6 +249,7 @@ export class BoardConnection {
         return
       }
       if (event.code === CLOSE_FORBIDDEN) {
+        if (event.reason === "deleted") this.deleted = true
         return this.setStatus(event.reason === "read-only" ? "resync" : "revoked")
       }
       if (event.code === CLOSE_INVALID_TOKEN) {

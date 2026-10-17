@@ -1,4 +1,4 @@
-import { type BoardSummary, canRename, type FolderSummary } from "@syncanvas/shared"
+import { type BoardSummary, canRename, type FolderSummary, TRASH_DAYS } from "@syncanvas/shared"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import {
@@ -26,6 +26,7 @@ import { errorMessage } from "@/board/share-dialog"
 import { AccountMenu } from "@/components/account-menu"
 import { BrandMark, Wordmark } from "@/components/brand"
 import { ConfirmDialog } from "@/components/confirm-dialog"
+import { DeleteBoardDialog } from "@/components/delete-board-dialog"
 import { FolderDialog } from "@/components/folder-dialog"
 import { NotificationBell } from "@/components/notification-bell"
 import { RenameDialog } from "@/components/rename-dialog"
@@ -43,7 +44,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Toaster } from "@/components/ui/toaster"
-import { api, queryKeys } from "@/lib/api"
+import { ApiError, api, queryKeys } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { showPendingToast } from "@/lib/next-page-toast"
 import { timeAgo } from "@/lib/time"
@@ -108,24 +109,7 @@ export function Dashboard({ folderId }: { folderId?: string } = {}) {
 
   return (
     <div className="flex min-h-svh flex-col">
-      <header className="flex h-16 items-center gap-4 px-4 md:px-8">
-        <Wordmark />
-        <label
-          className="mx-auto hidden h-11 w-full max-w-xl items-center gap-2 rounded-lg border border-input bg-surface px-3 text-muted-foreground opacity-60 md:flex"
-          title="Search arrives in a later update"
-        >
-          <Search className="size-4" />
-          <input
-            disabled
-            placeholder="Search boards and their text"
-            className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-          />
-        </label>
-        <div className="ml-auto flex items-center gap-1 md:ml-0">
-          {session && <NotificationBell placement="page" />}
-          {session && <AccountMenu user={session.user} />}
-        </div>
-      </header>
+      <DashboardHeader />
 
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pt-4 pb-16 md:px-8">
         {folderId && (
@@ -185,8 +169,10 @@ export function Dashboard({ folderId }: { folderId?: string } = {}) {
               })}
             </div>
             {create.isError && (
-              <p className="text-destructive">
-                We couldn't create the board. Check your connection and try again.
+              <p role="alert" className="text-destructive">
+                {create.error instanceof ApiError
+                  ? create.error.message
+                  : "We couldn't create the board. Check your connection and try again."}
               </p>
             )}
           </section>
@@ -285,6 +271,31 @@ export function Dashboard({ folderId }: { folderId?: string } = {}) {
       <Toaster placement="page" />
       <FolderDialog open={creatingFolder} onOpenChange={setCreatingFolder} />
     </div>
+  )
+}
+
+/** The dashboard's header, shared with the Trash page: wordmark, search, bell, account. */
+export function DashboardHeader() {
+  const { data: session } = authClient.useSession()
+  return (
+    <header className="flex h-16 items-center gap-4 px-4 md:px-8">
+      <Wordmark />
+      <label
+        className="mx-auto hidden h-11 w-full max-w-xl items-center gap-2 rounded-lg border border-input bg-surface px-3 text-muted-foreground opacity-60 md:flex"
+        title="Search arrives in a later update"
+      >
+        <Search className="size-4" />
+        <input
+          disabled
+          placeholder="Search boards and their text"
+          className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+        />
+      </label>
+      <div className="ml-auto flex items-center gap-1 md:ml-0">
+        {session && <NotificationBell placement="page" />}
+        {session && <AccountMenu user={session.user} />}
+      </div>
+    </header>
   )
 }
 
@@ -406,7 +417,20 @@ function BoardTile({
   const isOwner = board.owner.id === me
   const queryClient = useQueryClient()
   const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [renaming, setRenaming] = useState(false)
+  const remove = useMutation({
+    mutationFn: () => api.deleteBoard(board.id),
+    onSuccess: async () => {
+      clearLocalCopy(board.id)
+      setDeleting(false)
+      toast(`“${board.title}” moved to Trash`, {
+        description: `Restore it from Trash within ${TRASH_DAYS} days.`,
+      })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
+    onError: (e) => toast(errorMessage(e)),
+  })
   const star = useMutation({
     mutationFn: (favorite: boolean) => api.setFavorite(board.id, favorite),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
@@ -504,8 +528,8 @@ function BoardTile({
           </DropdownMenuSub>
           <DropdownMenuSeparator />
           {isOwner ? (
-            <DropdownMenuItem disabled variant="destructive">
-              <Trash2 /> Delete board
+            <DropdownMenuItem variant="destructive" onClick={() => setDeleting(true)}>
+              <Trash2 /> Delete board…
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem variant="destructive" onClick={() => setConfirming(true)}>
@@ -528,6 +552,13 @@ function BoardTile({
         confirmLabel="Leave board"
         pending={leave.isPending}
         onConfirm={() => leave.mutate()}
+      />
+      <DeleteBoardDialog
+        title={board.title}
+        open={deleting}
+        onOpenChange={setDeleting}
+        pending={remove.isPending}
+        onConfirm={() => remove.mutate()}
       />
     </div>
   )

@@ -1,5 +1,6 @@
 import { createApp, productionServices } from "./app"
 import { runCleanup, runDigest } from "./digest"
+import { purgeTrash } from "./lifecycle"
 
 export { BoardRoom } from "./board-room"
 
@@ -34,6 +35,7 @@ export default {
         })
       } else if (controller.cron === CLEANUP_CRON) {
         await runCleanup(services.db)
+        await purgeTrash(services.db, services.destroyRoom)
       }
     } finally {
       if (services.dispose) ctx.waitUntil(services.dispose())

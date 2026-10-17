@@ -1,5 +1,5 @@
-import type { BoardSummary, FolderSummary } from "@syncanvas/shared"
-import { and, asc, count, desc, eq, isNull, sql } from "drizzle-orm"
+import type { BoardSummary, FolderSummary, TrashedBoard } from "@syncanvas/shared"
+import { and, asc, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm"
 import type { Database } from "./db/client"
 import { boards, folderBoards, folders, memberships, user } from "./db/schema"
 
@@ -59,6 +59,29 @@ export async function listBoards(db: Database, userId: string): Promise<BoardSum
     favorite: r.favorite,
     folderId: r.folderId,
   }))
+}
+
+/** The User's own Boards in Trash, most recently deleted first. */
+export async function listTrash(db: Database, userId: string): Promise<TrashedBoard[]> {
+  const rows = await db
+    .select({ id: boards.id, title: boards.title, deletedAt: boards.deletedAt })
+    .from(boards)
+    .where(and(eq(boards.ownerId, userId), isNotNull(boards.deletedAt)))
+    .orderBy(desc(boards.deletedAt))
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    deletedAt: r.deletedAt?.toISOString() ?? "",
+  }))
+}
+
+/** How many Boards the User owns outside Trash (the quota counts these). */
+export async function countOwned(db: Database, userId: string) {
+  const [row] = await db
+    .select({ n: count() })
+    .from(boards)
+    .where(and(eq(boards.ownerId, userId), isNull(boards.deletedAt)))
+  return row?.n ?? 0
 }
 
 /** The User's Folders, by name, each with how many of their open Boards it holds. */

@@ -1,8 +1,18 @@
-import type { CreateBoardResponse, DashboardResponse, Role } from "@syncanvas/shared"
+import {
+  BOARDS_PER_USER,
+  type CreateBoardResponse,
+  type DashboardResponse,
+  type Role,
+  type ThreadsResponse,
+} from "@syncanvas/shared"
+import { eq } from "drizzle-orm"
 import { beforeEach, describe, expect, it } from "vitest"
+import { boards } from "./db/schema"
+import { purgeTrash } from "./lifecycle"
 import { createTestApp, type TestApp } from "./test-app"
 
-// Board lifecycle from the dashboard (M5a): last-opened order, rename, favorites.
+// Board lifecycle from the dashboard (M5a): last-opened order, rename, favorites, Folders,
+// Trash, and the quota.
 
 let t: TestApp
 let ada: string
@@ -221,5 +231,132 @@ describe("Folders", () => {
       cookie: grace,
     })
     expect((await folders(grace)).map((f) => f.boardCount)).toEqual([0])
+  })
+})
+
+describe("Trash and the quota", () => {
+  const trashOf = async (cookie: string) =>
+    (await json<DashboardResponse>(await t.request("/api/dashboard", { cookie }))).trash
+  const del = (cookie: string, boardId: string) =>
+    t.request(`/api/boards/${boardId}`, { method: "DELETE", cookie })
+  const restore = (cookie: string, boardId: string) =>
+    t.request(`/api/boards/${boardId}/restore`, { method: "POST", cookie })
+  const forever = (cookie: string, boardId: string) =>
+    t.request(`/api/boards/${boardId}/forever`, { method: "DELETE", cookie })
+  const threadsOf = async (cookie: string, boardId: string) => {
+    const res = await t.request(`/api/boards/${boardId}/threads`, { cookie })
+    return res.status === 200 ? (await json<ThreadsResponse>(res)).threads : null
+  }
+
+  it("lets only the Owner delete, and closes the room", async () => {
+    const board = await create(ada, "Plan")
+    const editor = await share(board, "ed@example.com", "editor")
+    const outsider = await t.signIn("out@example.com")
+
+    const byEditor = await del(editor, board)
+    expect(byEditor.status).toBe(403)
+    expect(await byEditor.json()).toEqual({ error: "Only the owner can delete this board." })
+    expect((await del(outsider, board)).status).toBe(403)
+    expect(t.closedAll).toEqual([])
+
+    expect((await del(ada, board)).status).toBe(200)
+    expect(t.closedAll).toEqual([board])
+    expect(await dashboard(ada)).toEqual([])
+    expect(await dashboard(editor)).toEqual([])
+    expect((await trashOf(ada)).map((b) => b.title)).toEqual(["Plan"])
+    expect(await trashOf(editor)).toEqual([]) // Trash is the Owner's
+    expect((await open(editor, board)).status).toBe(403)
+    expect((await open(ada, board)).status).toBe(403)
+    expect((await del(ada, board)).status).toBe(403) // already in Trash
+  })
+
+  it("restores with Members and Threads", async () => {
+    const board = await create(ada, "Retro")
+    const grace = await share(board, "grace@example.com", "commenter")
+    await t.request(`/api/boards/${board}/threads`, {
+      method: "POST",
+      body: JSON.stringify({ anchor: { x: 1, y: 2 }, body: "Keep this" }),
+      cookie: grace,
+    })
+    await del(ada, board)
+    expect(await threadsOf(grace, board)).toBeNull()
+
+    expect((await restore(grace, board)).status).toBe(403)
+    expect((await restore(ada, board)).status).toBe(200)
+    expect((await dashboard(grace)).map((b) => b.title)).toEqual(["Retro"])
+    expect((await threadsOf(grace, board))?.length).toBe(1)
+    expect(await trashOf(ada)).toEqual([])
+    expect((await restore(ada, board)).status).toBe(409) // not in Trash
+  })
+
+  it("deletes forever only from Trash, and only the Owner", async () => {
+    const board = await create(ada, "Gone")
+    const grace = await share(board, "grace@example.com", "editor")
+    expect((await forever(ada, board)).status).toBe(409)
+    await del(ada, board)
+    expect((await forever(grace, board)).status).toBe(403)
+    expect(t.destroyed).toEqual([])
+    expect((await forever(ada, board)).status).toBe(200)
+    expect(t.destroyed).toEqual([board])
+    expect(await trashOf(ada)).toEqual([])
+    expect((await restore(ada, board)).status).toBe(403)
+  })
+
+  it("refuses a 51st owned Board, but Trash doesn't count", async () => {
+    const session = await json<{ user: { id: string } }>(
+      await t.request("/api/auth/get-session", { cookie: ada }),
+    )
+    await t.db.insert(boards).values(
+      Array.from({ length: BOARDS_PER_USER - 1 }, (_, i) => ({
+        id: `seed-${i}`,
+        ownerId: session.user.id,
+      })),
+    )
+    const last = await create(ada, "Fiftieth")
+    const refused = await t.request("/api/boards", { method: "POST", body: "{}", cookie: ada })
+    expect(refused.status).toBe(403)
+    expect((await json<{ error: string }>(refused)).error).toBe(
+      "You own 50 boards, the most for one account. Delete one or empty Trash to make room.",
+    )
+    await del(ada, last)
+    const again = await create(ada, "Room again")
+    expect(again).toBeTruthy()
+    // Restoring past the quota is refused the same way.
+    expect((await restore(ada, last)).status).toBe(403)
+  })
+
+  it("cleanup deletes only Boards in Trash for over 30 days", async () => {
+    const old = await create(ada, "Old")
+    const recent = await create(ada, "Recent")
+    const kept = await create(ada, "Kept")
+    await del(ada, old)
+    await del(ada, recent)
+    const day = 24 * 60 * 60 * 1000
+    await t.db
+      .update(boards)
+      .set({ deletedAt: new Date(Date.now() - 31 * day) })
+      .where(eq(boards.id, old))
+    await t.db
+      .update(boards)
+      .set({ deletedAt: new Date(Date.now() - 29 * day) })
+      .where(eq(boards.id, recent))
+
+    const destroyed: string[] = []
+    expect(await purgeTrash(t.db, async (id) => void destroyed.push(id))).toEqual({ purged: 1 })
+    expect(destroyed).toEqual([old])
+    expect((await trashOf(ada)).map((b) => b.title)).toEqual(["Recent"])
+    expect((await dashboard(ada)).map((b) => b.id)).toEqual([kept])
+
+    // A room that can't be reached keeps the row for the next run.
+    await t.db
+      .update(boards)
+      .set({ deletedAt: new Date(Date.now() - 40 * day) })
+      .where(eq(boards.id, recent))
+    expect(
+      await purgeTrash(t.db, async () => {
+        throw new Error("unreachable")
+      }),
+    ).toEqual({ purged: 0 })
+    expect((await trashOf(ada)).length).toBe(1)
   })
 })
