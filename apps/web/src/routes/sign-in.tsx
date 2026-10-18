@@ -16,7 +16,11 @@ const LINK_ERROR =
   "That sign-in link has expired or was already used. Enter your email to get a new one."
 
 export function SignIn() {
-  const search = useSearch({ strict: false }) as { redirect?: string; error?: string }
+  const search = useSearch({ strict: false }) as {
+    redirect?: string
+    error?: string
+    deleted?: unknown
+  }
   const redirect = safeRedirect(search.redirect)
   const [email, setEmail] = useState("")
   const [state, setState] = useState<State>({
@@ -54,6 +58,13 @@ export function SignIn() {
             {state.step === "sent" ? "Check your email" : "Sign in to Syncanvas"}
           </h1>
         </div>
+
+        {/* After Settings → Delete account (M5a ticket 06). */}
+        {search.deleted !== undefined && state.step !== "sent" && (
+          <p role="status" className="rounded-md bg-muted px-3 py-2 text-center">
+            Your account was deleted.
+          </p>
+        )}
 
         {state.step === "sent" ? (
           <div className="flex flex-col gap-4 rounded-xl bg-surface p-6 text-center shadow-panel">

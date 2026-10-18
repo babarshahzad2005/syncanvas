@@ -1,9 +1,9 @@
 import { displayNameOf } from "@syncanvas/shared"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { Bell, LogOut, Monitor, Moon, Settings, Sun, Trash2, UserPen } from "lucide-react"
+import { LogOut, Monitor, Moon, Settings, Sun, Trash2, UserPen } from "lucide-react"
 import { useState } from "react"
 import { NameDialog } from "@/components/name-dialog"
-import { NotificationSettings } from "@/components/notification-settings"
+import { SettingsDialog } from "@/components/settings-dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,7 +41,7 @@ export function AccountMenu({ user: initialUser }: { user: Session["user"] }) {
   const user = authClient.useSession().data?.user ?? initialUser
   const name = displayNameOf(user)
   const [renaming, setRenaming] = useState(false)
-  const [notifying, setNotifying] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   async function signOut() {
     await authClient.signOut()
@@ -74,15 +74,11 @@ export function AccountMenu({ user: initialUser }: { user: Session["user"] }) {
           <DropdownMenuItem onClick={() => setRenaming(true)}>
             <UserPen /> Display name…
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setNotifying(true)}>
-            <Bell /> Notifications…
-          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem render={<Link to="/trash" />}>
             <Trash2 /> Trash
           </DropdownMenuItem>
-          {/* Settings arrives in M5a ticket 06. */}
-          <DropdownMenuItem disabled>
+          <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
             <Settings /> Settings
           </DropdownMenuItem>
           <DropdownMenuSeparator />
@@ -106,7 +102,7 @@ export function AccountMenu({ user: initialUser }: { user: Session["user"] }) {
         </DropdownMenuContent>
       </DropdownMenu>
       <NameDialog user={user} mode="edit" open={renaming} onOpenChange={setRenaming} />
-      <NotificationSettings open={notifying} onOpenChange={setNotifying} />
+      <SettingsDialog userId={user.id} open={settingsOpen} onOpenChange={setSettingsOpen} />
     </>
   )
 }

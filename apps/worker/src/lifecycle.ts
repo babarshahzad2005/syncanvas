@@ -189,7 +189,12 @@ export async function restoreBoard(db: Database, input: { boardId: string; calle
  * Deletes a Board for good: its room's storage first, then its thumbnail, then the row (the
  * rest cascades).
  */
-async function purge(db: Database, destroy: DestroyRoom, thumbs: ThumbStore, boardId: string) {
+export async function purge(
+  db: Database,
+  destroy: DestroyRoom,
+  thumbs: ThumbStore,
+  boardId: string,
+) {
   // If the room or KV can't be reached, keep the row so the next cleanup tries again.
   await destroy(boardId)
   const [board] = await db

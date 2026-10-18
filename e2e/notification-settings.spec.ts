@@ -6,8 +6,8 @@ import { signIn } from "./helpers"
 
 async function openSettings(page: Page) {
   await page.getByRole("button", { name: "Account" }).click()
-  await page.getByRole("menuitem", { name: "Notifications…" }).click()
-  const dialog = page.getByRole("dialog", { name: "Notifications" })
+  await page.getByRole("menuitem", { name: "Settings" }).click()
+  const dialog = page.getByRole("dialog", { name: "Settings" })
   const toggle = dialog.getByRole("switch", { name: "Email me about unread notifications" })
   await expect(toggle).toBeEnabled()
   return { dialog, toggle }

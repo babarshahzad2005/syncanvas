@@ -27,6 +27,7 @@ import {
 import { eq } from "drizzle-orm"
 import { Hono } from "hono"
 import { createMiddleware } from "hono/factory"
+import { deleteAccount } from "./account"
 import {
   type Auth,
   createAuth,
@@ -188,6 +189,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/guest/*",
     "/notifications",
     "/notifications/*",
+    "/me",
     "/me/*",
     "/folders",
     "/folders/*",
@@ -211,6 +213,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/dashboard",
     "/notifications",
     "/notifications/*",
+    "/me",
     "/me/*",
     "/folders",
     "/folders/*",
@@ -585,6 +588,20 @@ export function createApp(services: ServicesFactory = productionServices) {
       return c.json(body)
     })
   }
+
+  // ---------- Deleting an account (M5a ticket 06) ----------
+
+  app.delete("/me", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as { confirm?: unknown }
+    const { destroyRoom, applyAccess, thumbs } = c.var.services
+    return c.json(
+      await deleteAccount(
+        c.var.services.db,
+        { destroy: destroyRoom, applyAccess, thumbs },
+        { caller: c.var.user, confirm: input.confirm },
+      ),
+    )
+  })
 
   // ---------- Digest settings and unsubscribe (M4 ticket 04) ----------
 

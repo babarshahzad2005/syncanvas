@@ -148,6 +148,12 @@ export const api = {
   settings: () => request<UserSettings>("/api/me/settings"),
   saveSettings: (input: UserSettings) =>
     request<UserSettings>("/api/me/settings", { method: "PUT", body: JSON.stringify(input) }),
+  /** M5a ticket 06: deletes the account and everything it owns. */
+  deleteAccount: () =>
+    request<{ deletedBoards: number }>("/api/me", {
+      method: "DELETE",
+      body: JSON.stringify({ confirm: "DELETE" }),
+    }),
   // ---------- Board lifecycle (M5a) ----------
   renameBoard: (boardId: string, title: string) =>
     request<{ title: string }>(board(boardId), {

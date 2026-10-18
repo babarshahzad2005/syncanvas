@@ -73,7 +73,8 @@ export function PinLayer({ boardId, threads, lastBoxes, online, canWrite, isOwne
         const at = screenOf(thread.anchor)
         if (!at) return null
         const first = thread.comments[0]
-        const author = first?.author?.name ?? "Comment"
+        // No author: a deleted first comment, or an account that's gone (M5a ticket 06).
+        const author = first?.author?.name ?? (first?.deleted ? "Comment" : "Deleted user")
         const resolved = thread.status === "resolved"
         return (
           <button
