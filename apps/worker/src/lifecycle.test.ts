@@ -342,7 +342,9 @@ describe("Trash and the quota", () => {
       .where(eq(boards.id, recent))
 
     const destroyed: string[] = []
-    expect(await purgeTrash(t.db, async (id) => void destroyed.push(id))).toEqual({ purged: 1 })
+    expect(await purgeTrash(t.db, async (id) => void destroyed.push(id), t.thumbStore)).toEqual({
+      purged: 1,
+    })
     expect(destroyed).toEqual([old])
     expect((await trashOf(ada)).map((b) => b.title)).toEqual(["Recent"])
     expect((await dashboard(ada)).map((b) => b.id)).toEqual([kept])
@@ -353,9 +355,13 @@ describe("Trash and the quota", () => {
       .set({ deletedAt: new Date(Date.now() - 40 * day) })
       .where(eq(boards.id, recent))
     expect(
-      await purgeTrash(t.db, async () => {
-        throw new Error("unreachable")
-      }),
+      await purgeTrash(
+        t.db,
+        async () => {
+          throw new Error("unreachable")
+        },
+        t.thumbStore,
+      ),
     ).toEqual({ purged: 0 })
     expect((await trashOf(ada)).length).toBe(1)
   })

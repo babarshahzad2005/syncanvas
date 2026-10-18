@@ -16,6 +16,8 @@
   // Production values. Local development overrides BETTER_AUTH_URL in .dev.vars.
   "vars": { "BETTER_AUTH_URL": "https://syncanvas.babarshahzad2005.workers.dev" },
   // One BoardRoom per Board, with SQLite storage (ADR 0006).
+  // Thumbnails now, images in M5b (ADR 0007). Locally, Wrangler keeps a local copy instead.
+  "kv_namespaces": [{ "binding": "ASSETS", "id": "20093e3a52c74c8fba38e14b344b8f7b" }],
   "durable_objects": { "bindings": [{ "name": "BOARD_ROOM", "class_name": "BoardRoom" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BoardRoom"] }],
   // The hourly digest and the daily cleanup (M4 ticket 04; src/index.ts scheduled()).

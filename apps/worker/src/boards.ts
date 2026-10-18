@@ -2,14 +2,23 @@ import type { BoardSummary, FolderSummary, TrashedBoard } from "@syncanvas/share
 import { and, asc, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm"
 import type { Database } from "./db/client"
 import { boards, folderBoards, folders, memberships, user } from "./db/schema"
+import { thumbnailUrl } from "./thumbnails"
 
 /** Creates a Board and its Owner Membership together: either both rows exist or neither does. */
-export async function createBoard(db: Database, input: { ownerId: string; title?: string }) {
+export async function createBoard(
+  db: Database,
+  input: { ownerId: string; title?: string; template?: string },
+) {
   const id = crypto.randomUUID()
   return db.transaction(async (tx) => {
     const [board] = await tx
       .insert(boards)
-      .values({ id, ownerId: input.ownerId, ...(input.title ? { title: input.title } : {}) })
+      .values({
+        id,
+        ownerId: input.ownerId,
+        template: input.template ?? null,
+        ...(input.title ? { title: input.title } : {}),
+      })
       .returning({ id: boards.id, title: boards.title })
     await tx
       .insert(memberships)
@@ -31,6 +40,7 @@ export async function listBoards(db: Database, userId: string): Promise<BoardSum
       role: memberships.role,
       updatedAt: boards.updatedAt,
       thumbnailKey: boards.thumbnailKey,
+      template: boards.template,
       lastOpenedAt: memberships.lastOpenedAt,
       favorite: memberships.favorite,
       folderId: folderBoards.folderId,
@@ -54,7 +64,8 @@ export async function listBoards(db: Database, userId: string): Promise<BoardSum
     role: r.role,
     owner: { id: r.ownerId, name: r.ownerName, email: r.ownerEmail },
     updatedAt: r.updatedAt.toISOString(),
-    thumbnailKey: r.thumbnailKey,
+    thumbnailUrl: thumbnailUrl(r.id, r.thumbnailKey),
+    template: r.template,
     lastOpenedAt: r.lastOpenedAt?.toISOString() ?? null,
     favorite: r.favorite,
     folderId: r.folderId,

@@ -5,6 +5,7 @@ import {
   doublePrecision,
   foreignKey,
   index,
+  integer,
   pgTable,
   primaryKey,
   text,
@@ -97,7 +98,10 @@ export const boards = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     title: text("title").notNull().default("Untitled board"),
+    /** `thumbs/{boardId}/{version}` in KV, null until the first upload (M5a ticket 05). */
     thumbnailKey: text("thumbnail_key"),
+    /** The template it was made from (M5a ticket 04), for the dashboard's first picture. */
+    template: text("template"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
     deletedAt: timestamp("deleted_at"),
@@ -366,3 +370,14 @@ export const folderBoards = pgTable(
     }).onDelete("cascade"),
   ],
 )
+
+// ---------- KV writes (M5a ticket 05; ADR 0007) ----------
+
+/**
+ * Workers KV writes per UTC day, so thumbnails stop before the free tier's 1,000. One row a
+ * day; old rows are a few bytes and harmless.
+ */
+export const kvWrites = pgTable("kv_writes", {
+  day: text("day").primaryKey(),
+  count: integer("count").notNull().default(0),
+})

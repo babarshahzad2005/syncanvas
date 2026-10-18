@@ -18,6 +18,7 @@ import type {
   SharingResponse,
   ThreadsResponse,
   ThreadView,
+  ThumbnailResponse,
   UserSettings,
 } from "@syncanvas/shared"
 
@@ -164,6 +165,14 @@ export const api = {
     request<{ ok: true }>(`${board(boardId)}/restore`, { method: "POST" }),
   deleteForever: (boardId: string) =>
     request<{ ok: true }>(`${board(boardId)}/forever`, { method: "DELETE" }),
+  /** M5a ticket 05. `keepalive` lets it finish after the tab closes. */
+  uploadThumbnail: (boardId: string, image: Blob, keepalive = false) =>
+    request<ThumbnailResponse>(`${board(boardId)}/thumbnail`, {
+      method: "PUT",
+      body: image,
+      headers: { "content-type": image.type },
+      keepalive,
+    }),
 
   // ---------- Folders (M5a ticket 02) ----------
   createFolder: (name: string) =>

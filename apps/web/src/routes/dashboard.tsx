@@ -1,4 +1,4 @@
-import { TEMPLATE_IDS, TEMPLATES, type TemplateId } from "@syncanvas/board-model"
+import { isTemplateId, TEMPLATE_IDS, TEMPLATES, type TemplateId } from "@syncanvas/board-model"
 import { type BoardSummary, canRename, type FolderSummary, TRASH_DAYS } from "@syncanvas/shared"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
@@ -399,6 +399,36 @@ function BoardGrid({ children }: { children: React.ReactNode }) {
   return <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">{children}</div>
 }
 
+/**
+ * A tile's picture (DESIGN.md → Board tiles): the latest thumbnail; before the first one, the
+ * template's preview or the placeholder. A thumbnail that hasn't reached this region of KV
+ * yet (or fails) falls back the same way.
+ */
+function TilePicture({ board }: { board: BoardSummary }) {
+  const [failed, setFailed] = useState<string | null>(null)
+  const frame = "aspect-[16/10] overflow-hidden border-b"
+  if (board.thumbnailUrl && failed !== board.thumbnailUrl) {
+    return (
+      <div className={cn(frame, "bg-white")}>
+        <img
+          src={board.thumbnailUrl}
+          alt=""
+          className="size-full object-cover"
+          onError={() => setFailed(board.thumbnailUrl)}
+        />
+      </div>
+    )
+  }
+  if (isTemplateId(board.template)) {
+    return <TemplatePreview id={board.template} className={frame} />
+  }
+  return (
+    <div className={cn(frame, "dot-grid flex items-center justify-center")}>
+      <BrandMark className="size-6 opacity-30 grayscale" />
+    </div>
+  )
+}
+
 function BoardTile({
   board,
   me,
@@ -457,10 +487,7 @@ function BoardTile({
       }}
     >
       <Link to="/b/$boardId" params={{ boardId: board.id }} className="flex flex-col outline-none">
-        {/* Thumbnails arrive in M5; until then every Board shows the placeholder. */}
-        <div className="dot-grid flex aspect-[16/10] items-center justify-center border-b">
-          <BrandMark className="size-6 opacity-30 grayscale" />
-        </div>
+        <TilePicture board={board} />
         <div className="flex flex-col p-3 pr-12">
           <span className="flex items-center gap-1">
             <span className="type-body-strong truncate">{board.title}</span>

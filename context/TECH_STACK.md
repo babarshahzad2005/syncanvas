@@ -195,7 +195,9 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | `/api/boards/:id/threads` | List, create, reply, edit, delete, resolve, reopen |
 | `/api/notifications` | List, mark read, mark all read, unread count |
 | `/api/folders`, `/api/favorites` | Personal organization |
-| `/api/uploads` | Presigned PUT for an image or thumbnail (Editor + quota check) |
+| `/api/uploads` | Image upload through the Worker (Editor + quota check; M5b) |
+| `/api/boards/:id/thumbnail` | PUT a thumbnail (Editor; WebP or PNG ≤ 200 KB; once per 10 minutes per Board) |
+| `/api/assets/thumbs/:boardId?v=` | A Board's thumbnail, for its Members (`private`, immutable at the current version) |
 | `/api/search` | Full-text search over the user's Boards |
 | `/api/internal/*` | Called only by BoardRoom (search text, Element deleted → Thread last position). Authenticated with a shared secret |
 | `/api/unsubscribe/:token` | One-click unsubscribe (also served as an RFC 8058 `List-Unsubscribe-Post` target) |
@@ -212,7 +214,8 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 |---|---|
 | `user`, `session`, `account`, `verification` | Better Auth schema (via its Drizzle adapter) |
 | `user_settings` | `user_id`, `digest_enabled` |
-| `boards` | `id`, `owner_id`, `title`, `thumbnail_key`, `created_at`, `updated_at`, `deleted_at` |
+| `boards` | `id`, `owner_id`, `title`, `thumbnail_key`, `template`, `created_at`, `updated_at`, `deleted_at` |
+| `kv_writes` | `day` (UTC), `count`: KV writes so far, so thumbnails stop at 900 a day |
 | `memberships` | `board_id`, `user_id`, `role`, `via: owner\|invitation\|share_link`, PK (`board_id`, `user_id`) |
 | `invitations` | `id`, `board_id`, `email`, `role`, `invited_by`, `expires_at`, `accepted_at` |
 | `share_links` | `board_id` (unique), `token_hash`, `role`, `expires_at` |
@@ -233,7 +236,8 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
 ## 7. Storage, email, crons
 
 **Workers KV** (namespace `ASSETS`, ADR 0007)
-- Keys: `images/{boardId}/{uuid}`, `thumbs/{boardId}.webp`, `static/{boardId}.png` (the capped fallback image).
+- Keys: `images/{boardId}/{uuid}` and `thumbs/{boardId}/{version}` (the upload time in base 36; a new key per upload, so a cached copy is never stale, and the old key is deleted). The capped fallback image lives in the board room, not KV.
+- Local development uses Wrangler's local KV, so there's no preview namespace.
 - Uploads: `POST /api/uploads` (Editor, type and size checked, quota 5 MB per image and 50 MB per User), then `KV.put`. Serving: `GET /api/assets/:key` with `Cache-Control: immutable`, so most reads come from the edge cache and not from KV.
 - Free-tier limits: 1 GB storage, 1,000 writes per day. Thumbnails are written at most once per Board every 10 minutes. New keys can take about 60 s to appear in other regions, so the client retries missing images with a placeholder.
 

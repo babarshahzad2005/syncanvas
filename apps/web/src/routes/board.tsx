@@ -53,6 +53,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { ApiError, api, queryKeys } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { toastOnNextPage } from "@/lib/next-page-toast"
+import { thumbnailDue, uploadThumbnail } from "@/lib/thumbnail"
 import { cn } from "@/lib/utils"
 import { FollowFrame } from "@/presence/follow-frame"
 import { PresencePill } from "@/presence/presence-pill"
@@ -149,6 +150,43 @@ function useTemplateFromLink(
     }
     void navigate({ to: ".", search: (prev) => ({ ...prev, template: undefined }), replace: true })
   }, [template, ready, doc, origin, canvas, navigate])
+}
+
+/**
+ * Leaving a Board you changed (M5a ticket 05): going elsewhere in the app, or hiding the tab,
+ * renders the whole Board and uploads it as its dashboard thumbnail, at most once per Board
+ * every 10 minutes. Only this tab's own edits count, not ones synced from others.
+ */
+function useThumbnailOnLeave(boardId: string, doc: Y.Doc, editable: boolean) {
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    if (!editable) return
+    let changed = false
+    const onTransaction = (tr: Y.Transaction) => {
+      if (tr.local && tr.changed.size > 0) changed = true
+    }
+    const leave = (closing: boolean) => {
+      if (!changed || !thumbnailDue(boardId)) return
+      changed = false
+      // Read now: the doc may be gone by the time the picture is made.
+      const elements = listElements(doc)
+      void uploadThumbnail(boardId, elements, indexById(elements), closing).then((stored) => {
+        if (stored) void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })
+        // Try again on the next leave.
+        else changed = true
+      })
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") leave(true)
+    }
+    doc.on("afterTransaction", onTransaction)
+    document.addEventListener("visibilitychange", onVisibility)
+    return () => {
+      doc.off("afterTransaction", onTransaction)
+      document.removeEventListener("visibilitychange", onVisibility)
+      leave(false)
+    }
+  }, [boardId, doc, editable, queryClient])
 }
 
 /**
@@ -387,6 +425,7 @@ function BoardSurface({
 
   const canvas = useRef<CanvasHandle>(null)
   useTemplateFromLink(doc, origin, editable && online && undoManager !== null, canvas)
+  useThumbnailOnLeave(boardId, doc, editable)
   if (!undoManager) return null
   return (
     <>

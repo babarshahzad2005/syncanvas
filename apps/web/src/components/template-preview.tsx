@@ -1,6 +1,7 @@
 import { indexById, TEMPLATES, type TemplateId } from "@syncanvas/board-model"
-import { boundsOf, type Camera, drawScene } from "@syncanvas/renderer"
+import { boundsOf, drawScene } from "@syncanvas/renderer"
 import { useEffect, useRef } from "react"
+import { fitAll } from "@/lib/thumbnail"
 import { cn } from "@/lib/utils"
 
 /**
@@ -55,19 +56,4 @@ export function TemplatePreview({ id, className }: { id: TemplateId; className?:
       <canvas ref={canvasRef} aria-hidden className="absolute inset-0 size-full" />
     </div>
   )
-}
-
-/** Fits the whole template in the box, however small (the canvas's fit stops at 10%). */
-function fitAll(
-  bounds: { x: number; y: number; w: number; h: number } | null,
-  box: { w: number; h: number },
-  padding = 8,
-): Camera {
-  if (!bounds) return { x: 0, y: 0, zoom: 1 }
-  const zoom = Math.min((box.w - padding * 2) / bounds.w, (box.h - padding * 2) / bounds.h)
-  return {
-    zoom,
-    x: box.w / 2 - (bounds.x + bounds.w / 2) * zoom,
-    y: box.h / 2 - (bounds.y + bounds.h / 2) * zoom,
-  }
 }

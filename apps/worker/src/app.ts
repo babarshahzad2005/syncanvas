@@ -18,8 +18,10 @@ import {
   type ShareLinkRequest,
   type ShareLinkState,
   type SharingResponse,
+  THUMBNAIL_MAX_BYTES,
   type ThreadsResponse,
   type ThreadView,
+  type ThumbnailResponse,
   type UserSettings,
 } from "@syncanvas/shared"
 import { eq } from "drizzle-orm"
@@ -95,6 +97,7 @@ import {
   reply,
   setThreadStatus,
 } from "./threads"
+import { kvThumbStore, readThumbnail, type ThumbStore, uploadThumbnail } from "./thumbnails"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
 export type Services = {
@@ -113,6 +116,8 @@ export type Services = {
   closeAll: CloseAll
   /** Closes everything and deletes a Board's room storage, before deleting it for good. */
   destroyRoom: DestroyRoom
+  /** Board thumbnails in Workers KV (M5a ticket 05). */
+  thumbs: ThumbStore
   dispose?: () => Promise<void>
 }
 export type ServicesFactory = (env: Env) => Services
@@ -154,6 +159,7 @@ export const productionServices: ServicesFactory = (env) => {
     sendDigest,
     closeAll,
     destroyRoom,
+    thumbs: kvThumbStore(env.ASSETS),
     dispose: close,
   }
 }
@@ -185,6 +191,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/me/*",
     "/folders",
     "/folders/*",
+    "/assets/*",
     "/unsubscribe",
     "/dev/unsubscribe-link",
   ]) {
@@ -207,6 +214,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/me/*",
     "/folders",
     "/folders/*",
+    "/assets/*",
   ]) {
     app.use(path, requireUser)
   }
@@ -249,6 +257,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     const board: CreateBoardResponse = await createBoard(c.var.services.db, {
       ownerId: c.var.user.id,
       title: title || undefined,
+      template: input.template,
     })
     return c.json(board, 201)
   })
@@ -320,11 +329,47 @@ export function createApp(services: ServicesFactory = productionServices) {
   })
 
   app.delete("/boards/:id/forever", async (c) => {
-    await deleteForever(c.var.services.db, c.var.services.destroyRoom, {
+    await deleteForever(c.var.services.db, c.var.services.destroyRoom, c.var.services.thumbs, {
       boardId: c.req.param("id"),
       caller: c.var.user,
     })
     return c.json({ ok: true })
+  })
+
+  // ---------- Thumbnails (M5a ticket 05) ----------
+
+  app.put("/boards/:id/thumbnail", async (c) => {
+    // Refused before reading a body that's plainly too big.
+    if (Number(c.req.header("content-length") ?? 0) > THUMBNAIL_MAX_BYTES) {
+      return c.json({ error: "Thumbnails are at most 200 KB." }, 413)
+    }
+    const body: ThumbnailResponse = await uploadThumbnail(
+      c.var.services.db,
+      c.var.services.thumbs,
+      {
+        boardId: c.req.param("id"),
+        caller: c.var.user,
+        contentType: c.req.header("content-type") ?? "",
+        bytes: await c.req.arrayBuffer(),
+      },
+    )
+    return c.json(body)
+  })
+
+  app.get("/assets/thumbs/:boardId", async (c) => {
+    const thumb = await readThumbnail(c.var.services.db, c.var.services.thumbs, {
+      boardId: c.req.param("boardId"),
+      caller: c.var.user,
+      version: c.req.query("v"),
+    })
+    return new Response(thumb.bytes, {
+      headers: {
+        "content-type": thumb.contentType,
+        "x-content-type-options": "nosniff",
+        // Private: only Members may see it. A new upload gets a new ?v=, so this never goes stale.
+        "cache-control": thumb.fresh ? "private, max-age=31536000, immutable" : "private, no-cache",
+      },
+    })
   })
 
   // ---------- Folders (M5a ticket 02) ----------

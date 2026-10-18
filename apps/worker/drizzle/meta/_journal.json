@@ -71,6 +71,13 @@
       "when": 1792233208089,
       "tag": "0009_folders",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792320211789,
+      "tag": "0010_thumbnails",
+      "breakpoints": true
     }
   ]
 }

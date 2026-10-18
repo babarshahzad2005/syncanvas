@@ -14,7 +14,10 @@ export type BoardSummary = {
   role: Role
   owner: { id: string; name: string; email: string }
   updatedAt: string
-  thumbnailKey: string | null
+  /** Its thumbnail, served from our origin with a version in the URL (M5a ticket 05). */
+  thumbnailUrl: string | null
+  /** The template it was made from: its picture until the first thumbnail arrives. */
+  template: string | null
   /** When you last opened it (null: never; those come last), M5a. */
   lastOpenedAt: string | null
   /** Starred by you (favorites are private), M5a. */
@@ -335,3 +338,10 @@ export function trashDaysLeft(deletedAt: string | Date, now: Date = new Date()) 
   const gone = new Date(deletedAt).getTime() + TRASH_DAYS * 24 * 60 * 60 * 1000
   return Math.max(0, Math.ceil((gone - now.getTime()) / (24 * 60 * 60 * 1000)))
 }
+
+/** A Board's thumbnail is uploaded at most this often (ADR 0007: KV's 1,000 writes a day). */
+export const THUMBNAIL_EVERY_MS = 10 * 60 * 1000
+/** Largest thumbnail upload, in bytes. */
+export const THUMBNAIL_MAX_BYTES = 200 * 1024
+/** PUT /api/boards/:id/thumbnail. */
+export type ThumbnailResponse = { thumbnailUrl: string }

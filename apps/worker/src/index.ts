@@ -35,7 +35,7 @@ export default {
         })
       } else if (controller.cron === CLEANUP_CRON) {
         await runCleanup(services.db)
-        await purgeTrash(services.db, services.destroyRoom)
+        await purgeTrash(services.db, services.destroyRoom, services.thumbs)
       }
     } finally {
       if (services.dispose) ctx.waitUntil(services.dispose())
