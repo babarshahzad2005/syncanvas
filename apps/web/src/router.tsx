@@ -1,3 +1,4 @@
+import { isTemplateId, type TemplateId } from "@syncanvas/board-model"
 import {
   createRootRoute,
   createRoute,
@@ -54,10 +55,14 @@ const trashRoute = createRoute({
 const boardRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/b/$boardId",
-  // ?s= carries a Share Link token (M3 ticket 03); ?thread= opens a Thread's card (M4 ticket 03).
-  validateSearch: (search: Record<string, unknown>): { s?: string; thread?: string } => ({
+  // ?s= carries a Share Link token (M3 ticket 03); ?thread= opens a Thread's card (M4 ticket 03);
+  // ?template= fills a new Board once it's connected (M5a ticket 04).
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { s?: string; thread?: string; template?: TemplateId } => ({
     s: typeof search.s === "string" ? search.s : undefined,
     thread: typeof search.thread === "string" ? search.thread : undefined,
+    template: isTemplateId(search.template) ? search.template : undefined,
   }),
   component: BoardScreen,
 })

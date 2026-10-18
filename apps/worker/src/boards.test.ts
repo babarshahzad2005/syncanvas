@@ -25,6 +25,22 @@ describe("Boards", () => {
     expect((await t.request("/api/boards", { method: "POST", body: "{}" })).status).toBe(401)
   })
 
+  it("names a Board after its template, and refuses unknown templates", async () => {
+    const ada = await t.signIn("ada@example.com")
+    const kanban = await create(t, ada, { template: "kanban" })
+    expect(kanban.res.status).toBe(201)
+    expect(kanban.board?.title).toBe("Kanban")
+    expect((await create(t, ada, { template: "journey" })).board?.title).toBe("User journey")
+    // A title given alongside wins.
+    expect((await create(t, ada, { template: "retro", title: "Q4 retro" })).board?.title).toBe(
+      "Q4 retro",
+    )
+    const unknown = await create(t, ada, { template: "gantt" })
+    expect(unknown.res.status).toBe(400)
+    expect((await create(t, ada, { template: 7 })).res.status).toBe(400)
+    expect(await dashboard(t, ada)).toHaveLength(3)
+  })
+
   it("creates an untitled Board owned by its creator", async () => {
     const ada = await t.signIn("ada@example.com")
     const { res, board } = await create(t, ada)

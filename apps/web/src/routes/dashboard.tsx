@@ -1,24 +1,20 @@
+import { TEMPLATE_IDS, TEMPLATES, type TemplateId } from "@syncanvas/board-model"
 import { type BoardSummary, canRename, type FolderSummary, TRASH_DAYS } from "@syncanvas/shared"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import {
   ChevronRight,
-  Columns3,
   Ellipsis,
   ExternalLink,
   Folder as FolderIcon,
   FolderInput,
   FolderPlus,
-  Lightbulb,
   LogOut,
   Pencil,
   Plus,
-  RotateCcw,
-  Route,
   Search,
   Star,
   Trash2,
-  Workflow,
 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
@@ -30,6 +26,7 @@ import { DeleteBoardDialog } from "@/components/delete-board-dialog"
 import { FolderDialog } from "@/components/folder-dialog"
 import { NotificationBell } from "@/components/notification-bell"
 import { RenameDialog } from "@/components/rename-dialog"
+import { TemplatePreview } from "@/components/template-preview"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -51,18 +48,8 @@ import { timeAgo } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { clearLocalCopy } from "@/sync/local-copy"
 
-// Dashboard, "Launcher" layout (DESIGN.md → Layout → Dashboard). Folders, favorites, search,
-// templates, and Trash arrive in later milestones; they're shown disabled only where the layout
-// needs them.
-
-const TEMPLATES = [
-  { id: "blank", name: "Blank board", icon: Plus },
-  { id: "retro", name: "Retro", icon: RotateCcw },
-  { id: "brainstorm", name: "Brainstorm", icon: Lightbulb },
-  { id: "flowchart", name: "Flowchart", icon: Workflow },
-  { id: "journey", name: "User journey", icon: Route },
-  { id: "kanban", name: "Kanban", icon: Columns3 },
-] as const
+// Dashboard, "Launcher" layout (DESIGN.md → Layout → Dashboard). Search arrives in M5b; it's
+// shown disabled because the layout needs it.
 
 const FILTERS = ["All", "Mine", "Shared with me", "Favorites"] as const
 type Filter = (typeof FILTERS)[number]
@@ -83,10 +70,10 @@ export function Dashboard({ folderId }: { folderId?: string } = {}) {
 
   const dashboard = useQuery({ queryKey: queryKeys.dashboard, queryFn: api.dashboard })
   const create = useMutation({
-    mutationFn: () => api.createBoard(),
-    onSuccess: async (board) => {
+    mutationFn: (template?: TemplateId) => api.createBoard({ template }),
+    onSuccess: async (board, template) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })
-      await navigate({ to: "/b/$boardId", params: { boardId: board.id } })
+      await navigate({ to: "/b/$boardId", params: { boardId: board.id }, search: { template } })
     },
   })
 
@@ -135,38 +122,45 @@ export function Dashboard({ folderId }: { folderId?: string } = {}) {
                   : "-mx-4 flex gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:grid md:grid-cols-6 md:overflow-visible md:px-0",
               )}
             >
-              {TEMPLATES.map((t) => {
-                const blank = t.id === "blank"
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    disabled={!blank || create.isPending}
-                    title={blank ? undefined : "Templates arrive in a later update"}
-                    onClick={() => create.mutate()}
-                    className={cn(
-                      "flex shrink-0 flex-col items-center justify-center gap-3 rounded-xl border bg-surface transition-[box-shadow,transform] duration-(--duration-press) ease-out hover:shadow-panel active:scale-[0.98] disabled:pointer-events-none",
-                      isNewUser ? "aspect-[4/3]" : "h-24 w-36 md:w-auto",
-                      blank
-                        ? "border-2 border-dashed border-primary/50 text-primary"
-                        : "opacity-50",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "flex items-center justify-center rounded-full",
-                        isNewUser ? "size-10" : "size-8",
-                        blank ? "bg-primary text-primary-foreground" : "bg-muted text-foreground",
-                      )}
-                    >
-                      <t.icon className={isNewUser ? "size-5" : "size-4"} />
-                    </span>
-                    <span className="type-body-strong">
-                      {blank && create.isPending ? "Creating…" : t.name}
-                    </span>
-                  </button>
-                )
-              })}
+              <button
+                type="button"
+                disabled={create.isPending}
+                onClick={() => create.mutate(undefined)}
+                className={cn(
+                  "flex shrink-0 flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-primary/50 bg-surface text-primary transition-[box-shadow,transform] duration-(--duration-press) ease-out hover:shadow-panel active:scale-[0.98] disabled:pointer-events-none",
+                  isNewUser ? "aspect-[4/3]" : "h-28 w-36 md:w-auto",
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex items-center justify-center rounded-full bg-primary text-primary-foreground",
+                    isNewUser ? "size-10" : "size-8",
+                  )}
+                >
+                  <Plus className={isNewUser ? "size-5" : "size-4"} />
+                </span>
+                <span className="type-body-strong">
+                  {create.isPending && create.variables === undefined ? "Creating…" : "Blank board"}
+                </span>
+              </button>
+              {TEMPLATE_IDS.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  disabled={create.isPending}
+                  onClick={() => create.mutate(id)}
+                  className={cn(
+                    "flex shrink-0 flex-col gap-2 rounded-xl border bg-surface p-2 text-left transition-[box-shadow,transform] duration-(--duration-press) ease-out hover:shadow-panel active:scale-[0.98] disabled:pointer-events-none",
+                    isNewUser ? "aspect-[4/3]" : "h-28 w-36 md:w-auto",
+                  )}
+                >
+                  {/* A light-theme picture of the template's Elements, in both themes. */}
+                  <TemplatePreview id={id} className="min-h-0 w-full flex-1 rounded-md" />
+                  <span className="type-body-strong px-1">
+                    {create.isPending && create.variables === id ? "Creating…" : TEMPLATES[id].name}
+                  </span>
+                </button>
+              ))}
             </div>
             {create.isError && (
               <p role="alert" className="text-destructive">

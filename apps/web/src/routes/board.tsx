@@ -1,4 +1,4 @@
-import { createUndoManager, indexById, listElements } from "@syncanvas/board-model"
+import { applyTemplate, createUndoManager, indexById, listElements } from "@syncanvas/board-model"
 import {
   canComment,
   canEdit,
@@ -124,6 +124,32 @@ function JoinByLink({ boardId, token }: { boardId: string; token: string }) {
 }
 
 const NO_BOXES = new Map<string, ElementBox>()
+
+/**
+ * Made from a template (`?template=`, M5a ticket 04): once synced, an empty Board gets the
+ * template's Elements as this tab's first edit (so undo removes them), the view fits them,
+ * and the parameter goes. A Board that already has content is left alone.
+ */
+function useTemplateFromLink(
+  doc: Y.Doc,
+  origin: unknown,
+  ready: boolean,
+  canvas: React.RefObject<CanvasHandle | null>,
+) {
+  const { template } = route.useSearch()
+  const navigate = useNavigate()
+  const handled = useRef(false)
+  useEffect(() => {
+    if (!template || !ready || handled.current) return
+    handled.current = true
+    if (listElements(doc).length === 0) {
+      applyTemplate(doc, template, origin)
+      // After the canvas has drawn the new Elements.
+      requestAnimationFrame(() => canvas.current?.fit())
+    }
+    void navigate({ to: ".", search: (prev) => ({ ...prev, template: undefined }), replace: true })
+  }, [template, ready, doc, origin, canvas, navigate])
+}
 
 /**
  * Opened from a Notification (`?thread=`): once that Thread is loaded and the canvas is
@@ -360,6 +386,7 @@ function BoardSurface({
   useEffect(() => useComments.getState().close(), [doc])
 
   const canvas = useRef<CanvasHandle>(null)
+  useTemplateFromLink(doc, origin, editable && online && undoManager !== null, canvas)
   if (!undoManager) return null
   return (
     <>

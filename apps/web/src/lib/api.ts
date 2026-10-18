@@ -1,3 +1,4 @@
+import type { TemplateId } from "@syncanvas/board-model"
 import type {
   BoardTokenResponse,
   ChangeRoleRequest,
@@ -47,7 +48,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   dashboard: () => request<DashboardResponse>("/api/dashboard"),
-  createBoard: (input: { title?: string } = {}) =>
+  createBoard: (input: { title?: string; template?: TemplateId } = {}) =>
     request<CreateBoardResponse>("/api/boards", { method: "POST", body: JSON.stringify(input) }),
   boardToken: (boardId: string) =>
     request<BoardTokenResponse>(`/api/boards/${encodeURIComponent(boardId)}/token`, {

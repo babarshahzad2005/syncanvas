@@ -1,3 +1,4 @@
+import { isTemplateId, TEMPLATES } from "@syncanvas/board-model"
 import {
   BOARD_TITLE_MAX,
   type BoardTokenResponse,
@@ -230,9 +231,20 @@ export function createApp(services: ServicesFactory = productionServices) {
   })
 
   app.post("/boards", async (c) => {
-    const input = (await c.req.json().catch(() => ({}))) as { title?: unknown }
+    const input = (await c.req.json().catch(() => ({}))) as {
+      title?: unknown
+      template?: unknown
+    }
+    // A template (M5a ticket 04) names the Board; the client adds its Elements once connected.
+    if (input.template !== undefined && !isTemplateId(input.template)) {
+      return c.json({ error: "That template doesn't exist." }, 400)
+    }
     const title =
-      typeof input.title === "string" ? input.title.trim().slice(0, BOARD_TITLE_MAX) : undefined
+      typeof input.title === "string"
+        ? input.title.trim().slice(0, BOARD_TITLE_MAX)
+        : input.template
+          ? TEMPLATES[input.template].name
+          : undefined
     await checkQuota(c.var.services.db, c.var.user.id)
     const board: CreateBoardResponse = await createBoard(c.var.services.db, {
       ownerId: c.var.user.id,
