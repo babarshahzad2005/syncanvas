@@ -130,7 +130,7 @@ If the schedule slips, **cut in this order:** (1) Version history, (2) email dig
 | **M3 Sharing and access** | Invitations, Share Link, Roles, live downgrade and revoke, connection cap | S7 green |
 | **M4 Comments and notifications** | Threads, pins, Mentions, replies, resolve, notification list, digest with unsubscribe | Two browsers: a Commenter pins a Thread to an Element and mentions the Owner, who sees the pin and the Notification live; the pin follows the Element, detaches when it's deleted, and reattaches on undo. Viewers and Guests are refused every comment write |
 | **M5a Dashboard and Board lifecycle** | Folders, favorites, sort by last opened, rename, Trash (restore, delete forever), owned-Board quota, templates, thumbnails, Settings and account deletion | A new User makes a Board from a template, renames it, files it in a Folder and stars it; the dashboard shows its thumbnail and sorts by last opened. Deleting it closes a Collaborator's open connection at once and moves it to Trash; Restore brings it back with its Members and Threads. Deleting the account removes its owned Boards and leaves its comments as "Deleted user" |
-| **M5b Content** | Images, search, compaction with Versions (Versions last: first to cut) | Set in its planning round |
+| **M5b Content** | Compaction, images, search, then Versions (Versions last: first to cut) | An Editor drops a PNG and a Collaborator sees it live, while a Viewer can't upload. Search finds a Board by text on one of its sticky notes and never returns someone else's Board. After 500+ edits the Board compacts and reloads identical. An Editor previews an older Version and restores it, the restore can be undone, and a Viewer never sees history |
 | **M6 Export, Embed, hardening** | PNG/SVG/PDF export, Embed, Share Link expiry, load and perf tests, README and portfolio write-up with a live Embed | S3–S6 and S8 green |
 
 ## 9. Open questions
@@ -259,7 +259,7 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 - **Rename:** the Owner and Editors rename a Board, from the Board menu or the dashboard tile's ⋯ (M5 planning).
 - **Thumbnails** come from KV and refresh when an Editor leaves after making changes, at most once per Board every 10 minutes.
 - **Templates:** retro, brainstorm, flowchart, user journey, kanban. A template is applied as the Board's first ordinary edit. Template tiles and a new Board's first thumbnail are drawn from the template's own Elements in the browser, so there are no image files to keep in sync (M5 planning).
-- **Search** covers titles (searchable immediately) and text on Boards (searchable within about 5 minutes). It shows snippets and returns only Boards the User is a Member of.
+- **Search** covers titles (searchable immediately) and text on Boards (searchable within about 5 minutes). It shows snippets and returns only Boards the User is a Member of. Results appear in a dropdown under the header's search box as you type: up to 10 Boards, each with its title and a snippet with the matching words highlighted. There's no separate results page (M5b planning).
 - **Board deletion** (Owner only, after a confirmation) moves the Board to Trash for 30 days. Members lose access immediately and their open connections close. The Owner can restore it from Trash, or delete it forever there. Boards in Trash don't count toward the 50 owned Boards (M5 planning).
 - **Account deletion** permanently deletes the User's owned Boards, bypassing Trash. It removes their Memberships and changes the author of their comments to "Deleted user". It's in Settings → Account, confirmed by typing DELETE after a summary of what goes (M5 planning).
 - **Settings** is a dialog from the account menu with two sections: Notifications (the digest switch) and Account (M5 planning).
@@ -272,7 +272,10 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
   2. It uploads through the API, which checks that the user is an Editor and has quota left, then stores the image in KV.
   3. It writes the image Element.
   4. A failed upload leaves a placeholder with a retry button.
-- **Versions** are visible only to Editors and above. One is kept per hour of activity for 30 days, then one per day indefinitely. Preview is read-only. Restore applies the difference as a new edit attributed to the person restoring, which also creates a new Version.
+- **Adding images** (M5b planning): drop or paste them onto the canvas, or use the dock's Image button (a file picker). A new image fits within 480 px; resizing always keeps its proportions. Several files at once are laid out in a row.
+- **Image lifetime** (M5b planning): deleting an image from the canvas keeps its file, because undo and Versions may need it. Files go when their Board is deleted for good. The 50 MB quota counts every image a User has uploaded to Boards that still exist.
+- **Daily upload pause** (M5b planning): KV allows 1,000 writes a day for the whole account. Thumbnails stop at 700 writes a day, images at 950; past that, uploads say "Image uploads are paused until tomorrow."
+- **Versions** are visible only to Editors and above. One is kept per hour of activity for 30 days, then one per day for a year, then none (M5b planning: the free plan's 5 GB of board room storage is shared by every Board). Preview is read-only. Restore applies the difference as a new edit attributed to the person restoring, which also creates a new Version.
 
 ### A8. Export and Embed (P0, Share Link expiry P1)
 

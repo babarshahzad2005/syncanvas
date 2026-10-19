@@ -156,7 +156,7 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 |---|---|---|
 | `updates` | `seq INTEGER PK, data BLOB, at INTEGER` | Append-only Yjs updates since the last compaction |
 | `state` | `id=1, doc BLOB, seq INTEGER, at INTEGER` | Latest compacted doc |
-| `versions` | `id, at, doc BLOB, kind: auto\|restore` | Version history (hourly for 30 days, then daily) |
+| `versions` | `id, at, doc BLOB, kind: auto\|restore` | Version history (hourly for 30 days, then daily for a year) |
 | `thread_anchors` | `element_id PK` | Elements with Threads, so the board room reports their last position when they're deleted |
 
 **Alarms** (`ctx.storage.setAlarm`) drive three jobs:
@@ -239,7 +239,7 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
 - Keys: `images/{boardId}/{uuid}` and `thumbs/{boardId}/{version}` (the upload time in base 36; a new key per upload, so a cached copy is never stale, and the old key is deleted). The capped fallback image lives in the board room, not KV.
 - Local development uses Wrangler's local KV, so there's no preview namespace.
 - Uploads: `POST /api/uploads` (Editor, type and size checked, quota 5 MB per image and 50 MB per User), then `KV.put`. Serving: `GET /api/assets/:key` with `Cache-Control: immutable`, so most reads come from the edge cache and not from KV.
-- Free-tier limits: 1 GB storage, 1,000 writes per day. Thumbnails are written at most once per Board every 10 minutes. New keys can take about 60 s to appear in other regions, so the client retries missing images with a placeholder.
+- Free-tier limits: 1 GB storage, 1,000 writes per day. One daily counter (`kv_writes`) covers both: thumbnails stop at 700 writes a day and images at 950 (M5b planning). Thumbnails are written at most once per Board every 10 minutes. New keys can take about 60 s to appear in other regions, so the client retries missing images with a placeholder.
 
 **Email:** Brevo transactional API (free: 300 per day, single verified sender), with React Email templates for: magic link, Invitation, digest. Every digest carries `List-Unsubscribe` and `List-Unsubscribe-Post` headers.
 
