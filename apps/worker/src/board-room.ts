@@ -49,6 +49,13 @@ export const CLOSE = {
   busy: 4429,
 } as const
 
+/** Compaction (M5b ticket 01; TECH_STACK §4): merge the stored updates after this many… */
+export const COMPACT_AFTER_UPDATES = 500
+/** …or this long after the first update since the last compaction. */
+export const COMPACT_AFTER_MS = 5 * 60 * 1000
+/** A DO SQLite row holds at most 2 MB, so a saved state is split into parts this size. */
+export const STATE_PART_BYTES = 1024 * 1024
+
 /** Live connections per Board (PRD A4). Members always get in; others wait past this. */
 export const CONNECTION_CAP = 100
 
@@ -108,17 +115,73 @@ export class BoardRoom extends DurableObject<Env> {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(HEARTBEAT_PING, HEARTBEAT_PONG))
     ctx.blockConcurrencyWhile(async () => {
       this.createTables()
-      for (const row of this.ctx.storage.sql.exec<{ data: ArrayBuffer }>(
-        "select data from updates order by seq",
-      )) {
-        Y.applyUpdate(this.doc, new Uint8Array(row.data))
+      this.load()
+      // Boards from before compaction, or an alarm lost to a crash: catch up now or soon.
+      const pending = this.pendingUpdates()
+      if (pending >= COMPACT_AFTER_UPDATES) this.compact()
+      else if (pending > 0 && (await ctx.storage.getAlarm()) === null) {
+        await ctx.storage.setAlarm(Date.now() + COMPACT_AFTER_MS)
       }
     })
+  }
+
+  /** The saved state (its parts in order), then the updates accepted since it was saved. */
+  private load() {
+    const parts = this.ctx.storage.sql
+      .exec<{ data: ArrayBuffer }>("select data from state order by part")
+      .toArray()
+      .map((row) => new Uint8Array(row.data))
+    if (parts.length > 0) Y.applyUpdate(this.doc, joinParts(parts))
+    for (const row of this.ctx.storage.sql.exec<{ data: ArrayBuffer }>(
+      "select data from updates order by seq",
+    )) {
+      Y.applyUpdate(this.doc, new Uint8Array(row.data))
+    }
+  }
+
+  private pendingUpdates() {
+    const [row] = this.ctx.storage.sql
+      .exec<{ n: number }>("select count(*) as n from updates")
+      .toArray()
+    return row?.n ?? 0
+  }
+
+  // ---------- Compaction (M5b ticket 01) ----------
+
+  /**
+   * Replaces the stored updates with one saved state of the doc. Every stored update is
+   * already in the doc (they're stored and applied together, with nothing in between), so
+   * the swap loses nothing. One transaction: a crash leaves the old rows or the new.
+   */
+  private compact() {
+    const parts = splitParts(Y.encodeStateAsUpdate(this.doc), this.statePartBytes())
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec("delete from state")
+      for (const [part, data] of parts.entries()) {
+        this.ctx.storage.sql.exec("insert into state (part, data) values (?, ?)", part, data)
+      }
+      this.ctx.storage.sql.exec("delete from updates")
+    })
+  }
+
+  /** The room's timed jobs. Compaction first; search indexing and Versions follow it. */
+  async alarm() {
+    if (this.pendingUpdates() > 0) this.compact()
+  }
+
+  /** For tests and the dev-only hook: compact now, as the alarm would. */
+  async compactNow() {
+    await this.alarm()
+    return { pending: this.pendingUpdates() }
   }
 
   private createTables() {
     this.ctx.storage.sql.exec(
       "create table if not exists updates (seq integer primary key autoincrement, data blob not null, at integer not null)",
+    )
+    // The doc as of the last compaction, in parts under SQLite's 2 MB row limit (M5b).
+    this.ctx.storage.sql.exec(
+      "create table if not exists state (part integer primary key, data blob not null)",
     )
     // The last access change per User (M3): a board token issued before it carries a stale
     // Role, so the change wins over the token until the token expires.
@@ -236,6 +299,10 @@ export class BoardRoom extends DurableObject<Env> {
     const anchored = this.anchoredBoxes()
     Y.applyUpdate(this.doc, update)
     this.noteDeletedAnchors(anchored)
+    const pending = this.pendingUpdates()
+    if (pending >= COMPACT_AFTER_UPDATES) this.compact()
+    // The first update since the last compaction starts the clock.
+    else if (pending === 1) void this.ctx.storage.setAlarm(Date.now() + COMPACT_AFTER_MS)
 
     const outgoing = syncMessage((e) => syncProtocol.writeUpdate(e, update))
     for (const other of this.ctx.getWebSockets()) {
@@ -324,6 +391,7 @@ export class BoardRoom extends DurableObject<Env> {
    */
   async destroy() {
     this.closeEveryone()
+    await this.ctx.storage.deleteAlarm()
     await this.ctx.storage.deleteAll()
     this.doc.destroy()
     this.doc = new Y.Doc()
@@ -348,6 +416,12 @@ export class BoardRoom extends DurableObject<Env> {
       .exec<{ changed_at: number }>("select changed_at from access where user_id = ?", userId)
       .toArray()
     return row !== undefined && issuedAt <= row.changed_at
+  }
+
+  private statePartBytes() {
+    // Tests set tiny parts through the environment, so every compaction spans several.
+    const configured = Number((this.env as { STATE_PART_BYTES?: string }).STATE_PART_BYTES)
+    return Number.isFinite(configured) && configured > 0 ? configured : STATE_PART_BYTES
   }
 
   private connectionCap() {
@@ -544,4 +618,21 @@ export class BoardRoom extends DurableObject<Env> {
       // Already closed.
     }
   }
+}
+
+/** Splits bytes into pieces of at most `size`. */
+export function splitParts(bytes: Uint8Array, size: number): Uint8Array[] {
+  const parts: Uint8Array[] = []
+  for (let at = 0; at < bytes.length; at += size) parts.push(bytes.slice(at, at + size))
+  return parts.length > 0 ? parts : [bytes]
+}
+
+function joinParts(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  let at = 0
+  for (const p of parts) {
+    out.set(p, at)
+    at += p.length
+  }
+  return out
 }

@@ -1,4 +1,10 @@
-import { env, evictDurableObject, SELF } from "cloudflare:test"
+import {
+  env,
+  evictDurableObject,
+  runDurableObjectAlarm,
+  runInDurableObject,
+  SELF,
+} from "cloudflare:test"
 import { ELEMENT_CAP, elementsOf, TEXT_LIMIT } from "@syncanvas/board-model"
 import type { AccessNotice, ControlMessage, Role } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
@@ -8,6 +14,7 @@ import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 import {
   CLOSE,
+  COMPACT_AFTER_MS,
   HEARTBEAT_PING,
   HEARTBEAT_PONG,
   MESSAGE_ACCESS,
@@ -983,5 +990,86 @@ describe("BoardRoom deleting (M5a ticket 03)", () => {
     const afterEviction = await joinAs(board, "owner", "ada", Date.now() + 2_000)
     expect(afterEviction.rect("gone")).toBeUndefined()
     afterEviction.close()
+  })
+})
+
+describe("BoardRoom compaction (M5b ticket 01)", () => {
+  /** Rows in the room's own storage, read inside the Durable Object. */
+  const rows = (boardId: string) =>
+    runInDurableObject(room(boardId), (_instance, state) => {
+      const count = (table: string) =>
+        state.storage.sql.exec<{ n: number }>(`select count(*) as n from ${table}`).one().n
+      return { updates: count("updates"), parts: count("state") }
+    })
+
+  it("keeps the same doc, trims updates, and reloads identical after eviction", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    for (let i = 0; i < 5; i++) owner.addRect(`r${i}`, { color: "blue" })
+    const editor = await joinAs(board, "editor", "grace")
+    await until(() => editor.rect("r4") !== undefined, "the edits to arrive")
+    expect((await rows(board)).updates).toBe(5)
+
+    expect(await room(board).compactNow()).toEqual({ pending: 0 })
+    const after = await rows(board)
+    expect(after.updates).toBe(0)
+    // The test config's 512-byte parts: the state spans several rows.
+    expect(after.parts).toBeGreaterThan(1)
+
+    // Edits after compaction are stored as updates on top of the state.
+    editor.addRect("later")
+    await until(() => owner.rect("later") !== undefined, "the later edit")
+    owner.close()
+    editor.close()
+
+    await evictDurableObject(room(board))
+    const fresh = await joinAs(board, "viewer", "lin", Date.now() + 2_000)
+    for (let i = 0; i < 5; i++) expect(fresh.rect(`r${i}`)).toMatchObject({ color: "blue" })
+    expect(fresh.rect("later")).toBeDefined()
+    expect((await rows(board)).updates).toBe(1)
+    fresh.close()
+  })
+
+  it("compacts on its own after 500 updates", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    for (let i = 0; i < 520; i++) owner.addRect(`r${i}`)
+    // The room is busy with 520 updates; give the join longer than usual.
+    const viewer = await join(board, "viewer", 15_000)
+    await until(() => viewer.rect("r519") !== undefined, "all edits to arrive", 10_000)
+    const { updates } = await rows(board)
+    expect(updates).toBeLessThan(500)
+    expect(updates).toBeGreaterThan(0)
+    owner.close()
+    viewer.close()
+    await evictDurableObject(room(board))
+    const fresh = await joinAs(board, "viewer", "lin", Date.now() + 2_000)
+    expect(elementsOf(fresh.doc).size).toBe(520)
+    fresh.close()
+  })
+
+  it("sets an alarm on the first update, and the alarm compacts", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    owner.addRect("one")
+    const viewer = await joinAs(board, "viewer", "lin")
+    await until(() => viewer.rect("one") !== undefined, "the edit")
+    const alarm = await runInDurableObject(room(board), (_i, state) => state.storage.getAlarm())
+    expect(alarm).toBeGreaterThan(Date.now() + COMPACT_AFTER_MS - 60_000)
+    expect(await runDurableObjectAlarm(room(board))).toBe(true)
+    expect((await rows(board)).updates).toBe(0)
+    owner.close()
+    viewer.close()
+  })
+
+  it("destroy clears the alarm along with the storage", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    owner.addRect("gone")
+    const viewer = await joinAs(board, "viewer", "lin")
+    await until(() => viewer.rect("gone") !== undefined, "the edit")
+    await room(board).destroy()
+    const alarm = await runInDurableObject(room(board), (_i, state) => state.storage.getAlarm())
+    expect(alarm).toBeNull()
   })
 })

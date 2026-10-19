@@ -4,7 +4,9 @@ import { defineConfig } from "@playwright/test"
 // Locally this drives the installed Microsoft Edge, so no browser download is needed.
 export default defineConfig({
   testDir: "e2e",
-  timeout: 60_000,
+  // Two-browser specs spend most of their time on sign-in and sync through Neon, which can be
+  // slow; 60 s left the slower specs failing on time alone (M5b ticket 01).
+  timeout: 120_000,
   expect: { timeout: 10_000 },
   workers: 1,
   reporter: process.env.CI ? "github" : "list",

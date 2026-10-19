@@ -23,6 +23,8 @@ export default defineProject({
           BETTER_AUTH_SECRET: "unused-in-room-tests",
           // A small connection cap, so the tests can fill a Board.
           CONNECTION_CAP: "4",
+          // Tiny state parts, so compaction always splits and joins (M5b ticket 01).
+          STATE_PART_BYTES: "512",
         },
       },
     }),

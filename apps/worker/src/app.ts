@@ -230,6 +230,12 @@ export function createApp(services: ServicesFactory = productionServices) {
     const url = lastDevMagicLink(c.req.query("email") ?? "")
     return url ? c.json({ url }) : c.json({ error: "No link sent to that address yet." }, 404)
   })
+  // End-to-end tests compact a Board now instead of waiting for its alarm (M5b ticket 01).
+  app.post("/dev/compact/:boardId", async (c) => {
+    if (!devInboxEnabled(c.env)) return c.notFound()
+    const room = c.env.BOARD_ROOM.get(c.env.BOARD_ROOM.idFromName(c.req.param("boardId")))
+    return c.json(await room.compactNow())
+  })
   app.on(["GET", "POST"], "/auth/*", (c) => c.var.services.auth.handler(c.req.raw))
 
   app.get("/dashboard", async (c) => {

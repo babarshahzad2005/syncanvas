@@ -155,12 +155,12 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | Table | Columns | Purpose |
 |---|---|---|
 | `updates` | `seq INTEGER PK, data BLOB, at INTEGER` | Append-only Yjs updates since the last compaction |
-| `state` | `id=1, doc BLOB, seq INTEGER, at INTEGER` | Latest compacted doc |
+| `state` | `part INTEGER PK, data BLOB` | Latest compacted doc, split into 1 MB parts (SQLite rows hold at most 2 MB) |
 | `versions` | `id, at, doc BLOB, kind: auto\|restore` | Version history (hourly for 30 days, then daily for a year) |
 | `thread_anchors` | `element_id PK` | Elements with Threads, so the board room reports their last position when they're deleted |
 
 **Alarms** (`ctx.storage.setAlarm`) drive three jobs:
-- **Compaction:** after 500 updates or 5 minutes of activity, merge the updates into `state`.
+- **Compaction:** at 500 stored updates (at once), or 5 minutes after the first update since the last compaction (the alarm), replace `state` and `updates` with one encoded state, in one transaction. A room that wakes with leftover updates compacts or sets the alarm.
 - **Version thinning:** apply the retention rules.
 - **Text extraction:** send the Board's text to the API's internal search-index endpoint (within about 5 minutes of a change).
 
