@@ -25,6 +25,8 @@ export default defineProject({
           CONNECTION_CAP: "4",
           // Tiny state parts, so compaction always splits and joins (M5b ticket 01).
           STATE_PART_BYTES: "512",
+          // No Postgres here: tests that check indexing swap in their own writer.
+          SEARCH_INDEX: "off",
         },
       },
     }),

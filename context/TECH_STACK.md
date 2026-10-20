@@ -162,7 +162,7 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 **Alarms** (`ctx.storage.setAlarm`) drive three jobs:
 - **Compaction:** at 500 stored updates (at once), or 5 minutes after the first update since the last compaction (the alarm), replace `state` and `updates` with one encoded state, in one transaction. A room that wakes with leftover updates compacts or sets the alarm.
 - **Version thinning:** apply the retention rules.
-- **Text extraction:** send the Board's text to the API's internal search-index endpoint (within about 5 minutes of a change).
+- **Text extraction** (M5b ticket 04): on the alarm, after compaction, the room gathers the text of text Elements and sticky notes (`boardText`, up to 200,000 characters). When its hash differs from the last one written (kept in the room's `meta` table), it upserts `board_search` itself through Hyperdrive, with one short connection per write. A failed write sets an alarm 5 minutes on to try again. The alarm is never pushed back once set, so a busy Board still indexes every 5 minutes.
 
 ### RPC surface (called from the API in the same Worker)
 `setRole(userId, role)`, `kick(userId | 'guests' | 'embeds')`, `closeAll()` (deletion), `broadcast(event)`, `listVersions()`, `previewVersion(id)`, `restoreVersion(id, userId)`.
@@ -200,7 +200,6 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | `/api/assets/thumbs/:boardId?v=` | A Board's thumbnail, for its Members (`private`, immutable at the current version) |
 | `/api/assets/images/:boardId/:uuid` | An image, for a Member's session or an `Authorization: Bearer` board token for that Board (`private`, immutable; 404 until KV has it) |
 | `/api/search` | Full-text search over the user's Boards |
-| `/api/internal/*` | Called only by BoardRoom (search text, Element deleted → Thread last position). Authenticated with a shared secret |
 | `/api/unsubscribe/:token` | One-click unsubscribe (also served as an RFC 8058 `List-Unsubscribe-Post` target) |
 
 **Board tokens:** the private key lives in a Worker secret and the public key in a variable. The API signs and the BoardRoom verifies. They're in the same Worker, but the code path stays separate, which keeps the option of splitting the deployment open.
@@ -228,7 +227,7 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | `thread_participants` | `thread_id`, `user_id` (posted or mentioned → gets reply Notifications) |
 | `notifications` | `id`, `user_id`, `kind: mention\|reply`, `thread_id`, `read_at`, `emailed_at`, `created_at` |
 | `images` | `key` (`images/{boardId}/{uuid}`), `board_id` (cascade), `user_id` (set null), `bytes` (for the 50 MB quota), `content_type`, `created_at`. Purge deletes the KV keys listed here |
-| `board_search` | `board_id`, `body`, `tsv tsvector` (GIN index); titles indexed via a generated `tsvector` on `boards` |
+| `board_search` | `board_id` (cascade), `body`, `tsv` generated `to_tsvector('english', body)` (GIN index), `updated_at`. Titles are indexed by a generated `boards.title_tsv` (GIN), so a rename is searchable at once |
 
 Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `websearch_to_tsquery` + `ts_rank` + `ts_headline` for snippets, joined to `memberships` so results only include the user's own Boards.
 
@@ -262,7 +261,7 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
   - The Embed viewer (`embed.html`): `frame-ancestors *`, but no cookies are sent and it uses only its own token.
 - **Uploads:** the Worker checks content type (by magic bytes, not only the header) and size, and SVG is excluded.
 - **Rate limits:** sign-in, invitation emails, uploads, Board creation, and per-socket awareness and update rate.
-- **Secrets:** Wrangler secrets for Better Auth, Google OAuth, the Brevo API key, the Ed25519 private key, and the internal secret. Locally they live in `.dev.vars` (gitignored).
+- **Secrets:** Wrangler secrets for Better Auth, Google OAuth, the Brevo API key, and the Ed25519 private key. Locally they live in `.dev.vars` (gitignored).
 
 ---
 

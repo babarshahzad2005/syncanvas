@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers"
-import { checkUpdate, elementsOf, readElement } from "@syncanvas/board-model"
+import { boardText, checkUpdate, elementsOf, readElement } from "@syncanvas/board-model"
 import {
   type AccessNotice,
   type ControlMessage,
@@ -12,6 +12,8 @@ import * as encoding from "lib0/encoding"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 import { type BoardTokenKind, verifyBoardToken } from "./board-token"
+import { createDb } from "./db/client"
+import { boardSearch } from "./db/schema"
 import {
   decodePresence,
   MESSAGE_AWARENESS,
@@ -55,6 +57,12 @@ export const COMPACT_AFTER_UPDATES = 500
 export const COMPACT_AFTER_MS = 5 * 60 * 1000
 /** A DO SQLite row holds at most 2 MB, so a saved state is split into parts this size. */
 export const STATE_PART_BYTES = 1024 * 1024
+
+/**
+ * Writes a Board's words to the search index (M5b ticket 04). Production: Postgres through
+ * Hyperdrive. Room tests swap it on the instance (`runInDurableObject`).
+ */
+export type SearchWriter = (boardId: string, body: string) => Promise<void>
 
 /** Live connections per Board (PRD A4). Members always get in; others wait past this. */
 export const CONNECTION_CAP = 100
@@ -107,6 +115,8 @@ export class BoardRoom extends DurableObject<Env> {
    */
   private presence = new Map<number, PresenceEntry>()
   private presenceWarm = false
+  /** Where indexing writes; see SearchWriter. */
+  searchWriter: SearchWriter = (boardId, body) => this.writeSearch(boardId, body)
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -164,9 +174,72 @@ export class BoardRoom extends DurableObject<Env> {
     })
   }
 
-  /** The room's timed jobs. Compaction first; search indexing and Versions follow it. */
+  private async ensureAlarm(at = Date.now() + COMPACT_AFTER_MS) {
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(at)
+  }
+
+  /**
+   * The room's timed jobs. Compaction first, then search indexing; Versions follow (ticket 06).
+   * The alarm is set 5 minutes after the first update since the last one ran, so each job
+   * runs at most once every 5 minutes.
+   */
   async alarm() {
     if (this.pendingUpdates() > 0) this.compact()
+    await this.index()
+  }
+
+  // ---------- Search indexing (M5b ticket 04) ----------
+
+  /**
+   * Sends the Board's words to the search index when they changed since the last write
+   * (compared by hash, kept in `meta`). A failed write tries again on an alarm 5 minutes on.
+   */
+  private async index() {
+    const boardId = this.meta("board_id")
+    if (!boardId) return // never connected to since this was added: nothing new to index
+    const body = boardText(this.doc)
+    const hash = await sha256(body)
+    if (hash === this.meta("indexed_hash")) return
+    try {
+      await this.searchWriter(boardId, body)
+      this.setMeta("indexed_hash", hash)
+    } catch (error) {
+      console.error(
+        `Couldn't index board ${boardId}:`,
+        error instanceof Error ? error.message : error,
+      )
+      await this.ensureAlarm()
+    }
+  }
+
+  /** The production SearchWriter: one short connection per write, closed afterwards. */
+  private async writeSearch(boardId: string, body: string) {
+    if ((this.env as { SEARCH_INDEX?: string }).SEARCH_INDEX === "off") return
+    const { db, close } = createDb(this.env.HYPERDRIVE.connectionString)
+    try {
+      const updatedAt = new Date()
+      await db
+        .insert(boardSearch)
+        .values({ boardId, body, updatedAt })
+        .onConflictDoUpdate({ target: boardSearch.boardId, set: { body, updatedAt } })
+    } finally {
+      await close()
+    }
+  }
+
+  private meta(key: string): string | null {
+    const [row] = this.ctx.storage.sql
+      .exec<{ value: string }>("select value from meta where key = ?", key)
+      .toArray()
+    return row?.value ?? null
+  }
+
+  private setMeta(key: string, value: string) {
+    this.ctx.storage.sql.exec(
+      "insert into meta (key, value) values (?, ?) on conflict (key) do update set value = excluded.value",
+      key,
+      value,
+    )
   }
 
   /** For tests and the dev-only hook: compact now, as the alarm would. */
@@ -187,6 +260,10 @@ export class BoardRoom extends DurableObject<Env> {
     // Role, so the change wins over the token until the token expires.
     this.ctx.storage.sql.exec(
       "create table if not exists access (user_id text primary key, role text, changed_at integer not null)",
+    )
+    // Small facts about the room (M5b): its Board's id, and a hash of the last indexed text.
+    this.ctx.storage.sql.exec(
+      "create table if not exists meta (key text primary key, value text not null)",
     )
     // Elements with Threads, and where the deleted ones last were (M4, ADR 0012).
     this.ctx.storage.sql.exec("create table if not exists anchors (element_id text primary key)")
@@ -216,6 +293,8 @@ export class BoardRoom extends DurableObject<Env> {
     }
     if (!claims) return refuse(CLOSE.invalidToken, "invalid or expired token")
     if (claims.boardId !== boardId) return refuse(CLOSE.forbidden, "token is for another board")
+    // The room learns its Board's id from the first good token (search indexing needs it).
+    if (this.meta("board_id") !== boardId) this.setMeta("board_id", boardId)
     let role: Role = claims.role
     // Sent to Trash after this token was issued (M5a ticket 03): a restore issues new ones.
     if (this.changedSince(EVERYONE, claims.issuedAt)) return refuse(CLOSE.forbidden, "deleted")
@@ -301,8 +380,10 @@ export class BoardRoom extends DurableObject<Env> {
     this.noteDeletedAnchors(anchored)
     const pending = this.pendingUpdates()
     if (pending >= COMPACT_AFTER_UPDATES) this.compact()
-    // The first update since the last compaction starts the clock.
-    else if (pending === 1) void this.ctx.storage.setAlarm(Date.now() + COMPACT_AFTER_MS)
+    // The first update since the last compaction starts the clock, unless one is already
+    // running: a busy Board compacting every 500 updates mustn't keep pushing it back, or
+    // search indexing (which runs on the alarm) would never happen.
+    else if (pending === 1) void this.ensureAlarm()
 
     const outgoing = syncMessage((e) => syncProtocol.writeUpdate(e, update))
     for (const other of this.ctx.getWebSockets()) {
@@ -635,4 +716,10 @@ function joinParts(parts: Uint8Array[]): Uint8Array {
     at += p.length
   }
   return out
+}
+
+/** Hex SHA-256 of a string, to tell whether a Board's text changed without keeping it. */
+async function sha256(text: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")
 }

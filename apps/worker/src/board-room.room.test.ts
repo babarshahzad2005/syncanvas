@@ -5,7 +5,7 @@ import {
   runInDurableObject,
   SELF,
 } from "cloudflare:test"
-import { ELEMENT_CAP, elementsOf, TEXT_LIMIT } from "@syncanvas/board-model"
+import { addRect, addSticky, ELEMENT_CAP, elementsOf, TEXT_LIMIT } from "@syncanvas/board-model"
 import type { AccessNotice, ControlMessage, Role } from "@syncanvas/shared"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 import {
+  type BoardRoom,
   CLOSE,
   COMPACT_AFTER_MS,
   HEARTBEAT_PING,
@@ -1077,4 +1078,80 @@ describe("BoardRoom compaction (M5b ticket 01)", () => {
     const alarm = await runInDurableObject(room(board), (_i, state) => state.storage.getAlarm())
     expect(alarm).toBeNull()
   })
+})
+
+describe("BoardRoom search indexing (M5b ticket 04)", () => {
+  /** Swaps in a writer that records each write, or fails while `state.failing` is set. */
+  async function captureWrites(board: string) {
+    const state = { failing: false, writes: [] as { boardId: string; body: string }[] }
+    await runInDurableObject(room(board), (instance: BoardRoom) => {
+      instance.searchWriter = async (boardId, body) => {
+        if (state.failing) throw new Error("Postgres is down")
+        state.writes.push({ boardId, body })
+      }
+    })
+    return state
+  }
+
+  it("writes the text of text Elements and sticky notes, and only when it changed", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const index = await captureWrites(board)
+    addSticky(owner.doc, { center: { x: 0, y: 0 }, content: "Launch plan" }, "test")
+    addRect(owner.doc, { position: { x: 0, y: 0 }, size: { w: 10, h: 10 } }, "test")
+    const viewer = await joinAs(board, "viewer", "lin")
+    await until(() => elementsOf(viewer.doc).size === 2, "the edits")
+
+    await room(board).compactNow()
+    expect(index.writes).toEqual([{ boardId: board, body: "Launch plan" }])
+    // Nothing new to say: no second write, even after more (non-text) edits.
+    addRect(owner.doc, { position: { x: 50, y: 0 }, size: { w: 10, h: 10 } }, "test")
+    await until(() => elementsOf(viewer.doc).size === 3, "the rectangle")
+    await room(board).compactNow()
+    expect(index.writes).toHaveLength(1)
+    // New words: written again.
+    addSticky(owner.doc, { center: { x: 0, y: 0 }, content: "Budget" }, "test")
+    await until(() => elementsOf(viewer.doc).size === 4, "the note")
+    await room(board).compactNow()
+    expect(index.writes.at(-1)?.body).toBe("Launch plan\nBudget")
+    owner.close()
+    viewer.close()
+  })
+
+  it("tries a failed write again on the next alarm", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const index = await captureWrites(board)
+    addSticky(owner.doc, { center: { x: 0, y: 0 }, content: "Retro notes" }, "test")
+    const viewer = await joinAs(board, "viewer", "lin")
+    await until(() => elementsOf(viewer.doc).size === 1, "the note")
+
+    index.failing = true
+    await room(board).compactNow()
+    expect(index.writes).toHaveLength(0)
+    // An alarm is waiting to try again, with no new edit needed.
+    const alarm = await runInDurableObject(room(board), (_i, state) => state.storage.getAlarm())
+    expect(alarm).not.toBeNull()
+    index.failing = false
+    expect(await runDurableObjectAlarm(room(board))).toBe(true)
+    expect(index.writes).toEqual([{ boardId: board, body: "Retro notes" }])
+    owner.close()
+    viewer.close()
+  })
+
+  it("keeps a busy Board's alarm instead of pushing it back with every compaction", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    owner.addRect("first")
+    const viewer = await joinAs(board, "viewer", "lin")
+    await until(() => viewer.rect("first") !== undefined, "the first edit")
+    const before = await runInDurableObject(room(board), (_i, state) => state.storage.getAlarm())
+    for (let i = 0; i < 510; i++) owner.addRect(`r${i}`)
+    await until(() => viewer.rect("r509") !== undefined, "all edits", 20_000)
+    const after = await runInDurableObject(room(board), (_i, state) => state.storage.getAlarm())
+    expect(before).not.toBeNull()
+    expect(after).toBe(before)
+    owner.close()
+    viewer.close()
+  }, 60_000)
 })

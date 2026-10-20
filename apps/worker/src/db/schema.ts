@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm"
 import {
   boolean,
   check,
+  customType,
   doublePrecision,
   foreignKey,
   index,
@@ -12,6 +13,15 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core"
+
+/** Postgres full-text search vectors (M5b ticket 04), always generated from a text column. */
+const tsvector = customType<{ data: string }>({ dataType: () => "tsvector" })
+
+/**
+ * The search configuration everywhere: English stemming ("notes" finds "note"). Queries use
+ * the same one (`websearch_to_tsquery('english', …)`).
+ */
+export const SEARCH_CONFIG = "english"
 
 // Better Auth tables, from Better Auth's Drizzle schema generator (core + magic link).
 // Regenerate if auth plugins change; keep column names snake_case.
@@ -105,8 +115,13 @@ export const boards = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
     deletedAt: timestamp("deleted_at"),
+    /** The title as search terms (M5b ticket 04): generated, so a rename is searchable at once. */
+    titleTsv: tsvector("title_tsv").generatedAlwaysAs(sql`to_tsvector('english', "title")`),
   },
-  (table) => [index("boards_owner_idx").on(table.ownerId)],
+  (table) => [
+    index("boards_owner_idx").on(table.ownerId),
+    index("boards_title_tsv_idx").using("gin", table.titleTsv),
+  ],
 )
 
 /** A User's saved Role on a Board. The Owner also has a row, with role "owner". */
@@ -407,4 +422,23 @@ export const images = pgTable(
     index("images_board_idx").on(table.boardId),
     index("images_user_idx").on(table.userId),
   ],
+)
+
+// ---------- Search (M5b ticket 04) ----------
+
+/**
+ * The words on each Board, written by its board room after compaction when they changed
+ * (within about 5 minutes of an edit). Titles are searched through `boards.title_tsv`.
+ */
+export const boardSearch = pgTable(
+  "board_search",
+  {
+    boardId: text("board_id")
+      .primaryKey()
+      .references(() => boards.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    tsv: tsvector("tsv").generatedAlwaysAs(sql`to_tsvector('english', "body")`),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [index("board_search_tsv_idx").using("gin", table.tsv)],
 )

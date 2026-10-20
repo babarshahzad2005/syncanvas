@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest"
 import * as Y from "yjs"
 import {
+  addRect,
   addSticky,
   addText,
   applyTextChange,
+  boardText,
   diffText,
   elementsOf,
   listElements,
+  SEARCH_TEXT_LIMIT,
   setTextStyle,
   textOf,
   transformIndex,
@@ -155,5 +158,25 @@ describe("sticky notes", () => {
     setTextStyle(doc, id, { fontSize: "XL", bold: true }, "me")
     expect(listElements(doc)).toMatchObject([{ fontSize: "L", bold: true }])
     expect(validateBoardDoc(doc)).toEqual([])
+  })
+})
+
+describe("boardText", () => {
+  it("collects text Elements and sticky notes bottom to top, and nothing else", () => {
+    const doc = new Y.Doc()
+    addSticky(doc, { center: { x: 0, y: 0 }, content: "  Launch plan " }, "me")
+    addRect(doc, { position: { x: 0, y: 0 }, size: { w: 10, h: 10 } }, "me")
+    addSticky(doc, { center: { x: 0, y: 0 }, content: "   " }, "me")
+    const text = addText(doc, { position: { x: 0, y: 0 }, width: null, lineHeight: 20 }, "me")
+    textOf(doc, text)?.insert(0, "Budget\nQ3")
+    expect(boardText(doc)).toBe("Launch plan\nBudget\nQ3")
+  })
+
+  it("stops at the limit", () => {
+    const doc = new Y.Doc()
+    addSticky(doc, { center: { x: 0, y: 0 }, content: "x".repeat(10_000) }, "me")
+    for (let i = 0; i < 25; i++)
+      addSticky(doc, { center: { x: 0, y: 0 }, content: "y".repeat(9_000) }, "me")
+    expect(boardText(doc)).toHaveLength(SEARCH_TEXT_LIMIT)
   })
 })

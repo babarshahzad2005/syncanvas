@@ -2,6 +2,7 @@ import * as Y from "yjs"
 import { cleanStaleGroups } from "./groups"
 import {
   elementsOf,
+  listElements,
   type PaletteColor,
   type Point,
   type Size,
@@ -189,4 +190,21 @@ export function setSize(doc: Y.Doc, id: string, size: Size, origin: unknown) {
   const current = fields?.get("size") as Size | undefined
   if (!fields || (current && current.w === size.w && current.h === size.h)) return
   doc.transact(() => fields.set("size", { w: size.w, h: size.h }), origin)
+}
+
+// ---------- Search text (M5b ticket 04) ----------
+
+/** Most characters of a Board's text sent to the search index (a tsvector holds about 1 MB). */
+export const SEARCH_TEXT_LIMIT = 200_000
+
+/**
+ * The words on a Board, for search: every text Element and sticky note, bottom to top, one
+ * per line (empty ones skipped), cut at SEARCH_TEXT_LIMIT.
+ */
+export function boardText(doc: Y.Doc): string {
+  const lines: string[] = []
+  for (const e of listElements(doc)) {
+    if ((e.type === "text" || e.type === "sticky") && e.text.trim()) lines.push(e.text.trim())
+  }
+  return lines.join("\n").slice(0, SEARCH_TEXT_LIMIT)
 }
