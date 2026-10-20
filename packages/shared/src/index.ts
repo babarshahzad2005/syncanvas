@@ -353,6 +353,12 @@ export const IMAGE_QUOTA_BYTES = 50 * 1024 * 1024
 /** Image types a Board accepts (GIFs show their first frame). */
 export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const
 export type ImageType = (typeof IMAGE_TYPES)[number]
+/** What uploads say when refused (the API's errors; the client checks the first two first). */
+export const IMAGE_TOO_BIG = "Images can be up to 5 MB."
+export const IMAGE_WRONG_TYPE = "Images can be PNG, JPEG, GIF, or WebP."
+export const IMAGE_QUOTA =
+  "You've used your 50 MB for images. Delete boards you don't need to free space."
+export const IMAGE_PAUSED = "Image uploads are paused until tomorrow."
 /** POST /api/boards/:id/images: the KV key, and the size read from the file's header. */
 export type ImageUploadResponse = { key: string; width: number; height: number }
 /** Where a Board's image is read from (with a session, or a board token as a Bearer). */

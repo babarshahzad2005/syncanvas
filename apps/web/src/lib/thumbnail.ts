@@ -1,6 +1,7 @@
 import type { ElementWithId } from "@syncanvas/board-model"
 import { boundsOf, type Camera, drawScene } from "@syncanvas/renderer"
 import { THUMBNAIL_EVERY_MS, THUMBNAIL_MAX_BYTES } from "@syncanvas/shared"
+import { imageCache } from "@/board/images"
 import { ApiError, api } from "@/lib/api"
 
 // Board thumbnails (M5a ticket 05; FLOWS §6): the whole Board drawn small in the light theme,
@@ -53,6 +54,7 @@ export function renderThumbnail(
     dpr: 1,
     selection: new Set(),
     showGrid: false,
+    images: imageCache.get,
   })
   return new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.8))
 }

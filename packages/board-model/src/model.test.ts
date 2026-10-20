@@ -65,6 +65,12 @@ const VALID: Record<string, Record<string, unknown>> = {
     align: "center",
   },
   sticky: { type: "sticky", ...box, color: "yellow", text: "idea", fontSize: "M", bold: true },
+  image: {
+    type: "image",
+    ...box,
+    key: "images/board-1/0b9c1a2e-3f4d-4e5a-9b6c-7d8e9f0a1b2c",
+    natural: { w: 1600, h: 900 },
+  },
 }
 
 function fieldsOf(values: Record<string, unknown>): Y.Map<unknown> {
@@ -139,6 +145,7 @@ describe("v2 Element types", () => {
   const text = VALID.text as Record<string, unknown>
   const sticky = VALID.sticky as Record<string, unknown>
   const connector = VALID.connector as Record<string, unknown>
+  const image = VALID.image as Record<string, unknown>
 
   it.each([
     ["an unknown field", { ...rect, shadow: true }],
@@ -162,6 +169,11 @@ describe("v2 Element types", () => {
     ["a connector end without fallback", { ...connector, end: { elementId: "a" } }],
     ["a bad anchor", { ...connector, end: { anchor: "middle", fallback: { x: 0, y: 0 } } }],
     ["a bad connector style", { ...connector, style: "curved" }],
+    ["an image without a key", { ...image, key: undefined }],
+    ["an image key outside images/", { ...image, key: "thumbs/board-1/abc" }],
+    ["an image key that isn't a uuid", { ...image, key: "images/board-1/../secret" }],
+    ["an image with no natural size", { ...image, natural: { w: 0, h: 900 } }],
+    ["an image with a color", { ...image, color: "ink" }],
   ])("rejects %s", (_label, values) => {
     expect(validateBoardDoc(docWith(values))).toEqual(["element e1 is invalid"])
   })
@@ -249,7 +261,7 @@ describe("operations", () => {
     const id = addElement(doc, VALID.sticky as Record<string, unknown>, "me")
     recolorElement(doc, id, "ink", "me")
     recolorElement(doc, id, "blue", "me")
-    expect(listElements(doc)[0]?.color).toBe("blue")
+    expect(listElements(doc)[0]).toMatchObject({ color: "blue" })
     expect(validateBoardDoc(doc)).toEqual([])
   })
 })

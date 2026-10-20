@@ -5,11 +5,19 @@ import type {
   Role,
   ShareLinkState,
 } from "@syncanvas/shared"
-import { IMAGE_MAX_BYTES, IMAGE_QUOTA_BYTES, imageUrl } from "@syncanvas/shared"
+import {
+  IMAGE_MAX_BYTES,
+  IMAGE_PAUSED,
+  IMAGE_QUOTA,
+  IMAGE_QUOTA_BYTES,
+  IMAGE_TOO_BIG,
+  IMAGE_WRONG_TYPE,
+  imageUrl,
+} from "@syncanvas/shared"
 import { eq } from "drizzle-orm"
 import { beforeEach, describe, expect, it } from "vitest"
 import { images, kvWrites, user } from "./db/schema"
-import { IMAGE_PAUSED, IMAGE_QUOTA, IMAGE_TOO_BIG, IMAGE_WRONG_TYPE, imageInfo } from "./images"
+import { imageInfo } from "./images"
 import { createTestApp, type TestApp } from "./test-app"
 import { KV_WRITES_FOR_IMAGES, KV_WRITES_FOR_THUMBNAILS } from "./thumbnails"
 

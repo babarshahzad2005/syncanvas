@@ -14,6 +14,7 @@ import {
   type ElementWithId,
   elementsOf,
   expandToGroups,
+  foreignImageKeys,
   type Geometry,
   hasBox,
   isAttachable,
@@ -26,6 +27,7 @@ import {
   type Point,
   type Rect,
   readElement,
+  remapImageKeys,
   type StrokePoint,
   scaledGeometry,
   setGeometry,
@@ -79,6 +81,15 @@ import {
   elementsFromPaste,
   pasteAt,
 } from "./clipboard"
+import { UploadOverlay } from "./image-overlay"
+import {
+  addImages,
+  clearUploads,
+  copyImagesHere,
+  imageCache,
+  imageFiles,
+  useUploads,
+} from "./images"
 import { type DragTool, isDragTool, useBoardUi } from "./store"
 import { TextEditor } from "./text-editor"
 
@@ -162,6 +173,7 @@ type Gesture =
     }
 
 type Props = {
+  boardId: string
   doc: Y.Doc
   /** Transaction origin for this tab's edits (what the UndoManager tracks). */
   origin: object
@@ -176,7 +188,11 @@ type Props = {
 declare global {
   interface Window {
     __SYNCANVAS_TEST__?: boolean
-    __syncanvas?: { elements: () => ElementWithId[]; camera: () => Camera }
+    __syncanvas?: {
+      elements: () => ElementWithId[]
+      camera: () => Camera
+      image: (key: string) => string | null
+    }
     /** Test hook: every other tab's presence state, as this tab sees it. */
     __syncanvasPresence?: () => Record<string, unknown>[]
   }
@@ -273,12 +289,13 @@ function previewOf(
 }
 
 export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
-  { doc, origin, undoManager, canEdit, canComment = false, connection = null },
+  { boardId, doc, origin, undoManager, canEdit, canComment = false, connection = null },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
   const cursorHost = useRef<HTMLDivElement>(null)
+  const filePicker = useRef<HTMLInputElement>(null)
   const theme = useResolvedTheme()
   const tool = useBoardUi((s) => s.tool)
   const editing = useBoardUi((s) => s.editing)
@@ -344,7 +361,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         },
         overrides?.keys(),
       )
-      drawScene(ctx, {
+      const animating = drawScene(ctx, {
         elements: visible,
         byId: s.index.byId,
         camera: s.camera,
@@ -366,7 +383,12 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
               }
             : null,
         editing: ui.editing?.id ?? null,
+        images: imageCache.get,
+        uploads: useUploads.getState().uploads,
+        time: performance.now(),
       })
+      // Placeholders spin until their image arrives.
+      if (animating) render()
       placeEditor()
       s.cursors?.setCamera(s.camera)
       // Comment pins follow every frame (M4).
@@ -420,11 +442,29 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     },
   }))
 
-  // Re-render when the theme or the selection changes.
+  // Re-render when the theme or the selection changes, an image file arrives, or an upload
+  // starts or ends.
   useEffect(() => {
     render()
-    return useBoardUi.subscribe(render)
+    const unsubscribes = [
+      useBoardUi.subscribe(render),
+      imageCache.subscribe(render),
+      useUploads.subscribe(render),
+    ]
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe()
+    }
   })
+
+  // Placeholders belong to the Board they were added to.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset whenever the doc changes
+  useEffect(() => clearUploads(), [doc])
+
+  // The dock's Image button and I open the file picker (Editors only).
+  useEffect(() => {
+    useUploads.setState({ pick: canEdit ? () => filePicker.current?.click() : null })
+    return () => useUploads.setState({ pick: null })
+  }, [canEdit])
 
   // A Thread picked from the comments list: center its pin, keeping the zoom (M4).
   // biome-ignore lint/correctness/useExhaustiveDependencies: setCamera only reads refs
@@ -561,7 +601,11 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     render()
     elements.observeDeep(refresh)
     if (window.__SYNCANVAS_TEST__) {
-      window.__syncanvas = { elements: () => listElements(doc), camera: () => state.current.camera }
+      window.__syncanvas = {
+        elements: () => listElements(doc),
+        camera: () => state.current.camera,
+        image: (key) => imageCache.stateOf(key),
+      }
     }
     return () => elements.unobserveDeep(refresh)
   }, [doc, render])
@@ -767,6 +811,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         case "s":
           if (canEdit) ui().setTool("sticky")
           return
+        case "i":
+          useUploads.getState().pick?.()
+          return
         case "escape":
           if (ui().following) {
             ui().setFollowing(null)
@@ -804,13 +851,15 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     }
   })
 
-  // Paste (Ctrl/Cmd+V fires a paste event): Syncanvas Elements land at the cursor, or the
-  // viewport's center when the pointer isn't over the Board.
+  // Paste (Ctrl/Cmd+V fires a paste event): Syncanvas Elements, or image files, land at the
+  // cursor, or the viewport's center when the pointer isn't over the Board.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       if ((e.target as HTMLElement | null)?.closest?.("input, textarea, [contenteditable]")) return
+      // Ours first: copying from a Board also puts a picture of it on the clipboard.
       const elements = elementsFromPaste(e)
-      if (!elements) return
+      const files = elements ? [] : imageFiles(e.clipboardData)
+      if (!elements && files.length === 0) return
       e.preventDefault()
       if (!canEdit) {
         toast("This Board is view-only", {
@@ -819,11 +868,21 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         return
       }
       const { camera, size, pointer } = state.current
-      pasteAt(
-        clipboardContext(),
-        elements,
-        pointer ?? screenToWorld(camera, { x: size.w / 2, y: size.h / 2 }),
-      )
+      const at = pointer ?? screenToWorld(camera, { x: size.w / 2, y: size.h / 2 })
+      if (!elements) {
+        void addImages(imageTarget(), files, at)
+        return
+      }
+      // Images copied from another Board get a copy here first, so everyone here can see them.
+      const foreign = foreignImageKeys(elements, boardId)
+      if (foreign.length === 0) {
+        pasteAt(clipboardContext(), elements, at)
+        return
+      }
+      void copyImagesHere(boardId, foreign).then((copies) => {
+        const pasted = remapImageKeys(elements, boardId, copies)
+        if (pasted.length > 0) pasteAt(clipboardContext(), pasted, at)
+      })
     }
     document.addEventListener("paste", onPaste)
     return () => document.removeEventListener("paste", onPaste)
@@ -832,6 +891,30 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
   function clipboardContext() {
     const { index } = state.current
     return { doc, origin, undoManager, byId: index.byId, all: index.all() }
+  }
+
+  function imageTarget() {
+    undoManager.stopCapturing()
+    return { boardId, doc, origin, count: state.current.index.all().length }
+  }
+
+  /** Where the dock's picker puts images: the middle of the view. */
+  function viewCenter(): Point {
+    const { camera, size } = state.current
+    return screenToWorld(camera, { x: size.w / 2, y: size.h / 2 })
+  }
+
+  function onDragOver(e: React.DragEvent) {
+    if (!canEdit || !e.dataTransfer.types.includes("Files")) return
+    e.preventDefault() // allows the drop
+    e.dataTransfer.dropEffect = "copy"
+  }
+
+  function onDrop(e: React.DragEvent) {
+    const files = imageFiles(e.dataTransfer)
+    if (!canEdit || files.length === 0) return
+    e.preventDefault()
+    void addImages(imageTarget(), files, screenToWorld(state.current.camera, local(e)))
   }
 
   function local(e: { clientX: number; clientY: number }): Point {
@@ -1155,6 +1238,8 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     if (!corner || !anchor) return null
     const [only] = selected
     const single = selected.length === 1
+    // Images never distort: their corners always keep the proportions.
+    const imagesOnly = selected.every((e) => e.type === "image")
     // Text and sticky notes resize their width only; their height follows their text.
     const widthOnly = single && (only?.type === "text" || only?.type === "sticky")
     const min =
@@ -1169,7 +1254,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       // A side the selection doesn't have (a flat line's height) stays flat.
       let w = r.w === 0 ? 0 : Math.max(min, (p.x - anchor.x) * dirX)
       let h = r.h === 0 || widthOnly ? r.h : Math.max(min, (p.y - anchor.y) * dirY)
-      if (keepRatio && !widthOnly && r.w > 0 && r.h > 0) {
+      if ((keepRatio || imagesOnly) && !widthOnly && r.w > 0 && r.h > 0) {
         const k = Math.max(w / r.w, h / r.h)
         w = r.w * k
         h = r.h * k
@@ -1443,7 +1528,23 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
           state.current.presence?.cursor(null)
         }}
         onDoubleClick={onDoubleClick}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
       />
+      <input
+        ref={filePicker}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        multiple
+        hidden
+        aria-label="Add images"
+        onChange={(e) => {
+          const files = [...(e.currentTarget.files ?? [])]
+          e.currentTarget.value = "" // picking the same file again still fires
+          if (files.length > 0) void addImages(imageTarget(), files, viewCenter())
+        }}
+      />
+      {canEdit && <UploadOverlay target={imageTarget} />}
       {editing && canEdit && (
         <TextEditor
           key={editing.id}

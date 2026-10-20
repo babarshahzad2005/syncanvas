@@ -1,7 +1,11 @@
 import {
   canEdit,
   IMAGE_MAX_BYTES,
+  IMAGE_PAUSED,
+  IMAGE_QUOTA,
   IMAGE_QUOTA_BYTES,
+  IMAGE_TOO_BIG,
+  IMAGE_WRONG_TYPE,
   type ImageType,
   type ImageUploadResponse,
 } from "@syncanvas/shared"
@@ -16,12 +20,6 @@ import { type AssetStore, forget, KV_WRITES_FOR_IMAGES, takeKvWrite } from "./th
 // Images on Boards (M5b ticket 02; FLOWS "Upload an image", ADR 0007): Editors upload them
 // through the Worker into KV, and anyone who can open the Board reads them from our origin.
 // Each upload is a new key whose bytes never change, so reads are cached for good.
-
-export const IMAGE_TOO_BIG = "Images can be up to 5 MB."
-export const IMAGE_WRONG_TYPE = "Images can be PNG, JPEG, GIF, or WebP."
-export const IMAGE_QUOTA =
-  "You've used your 50 MB for images. Delete boards you don't need to free space."
-export const IMAGE_PAUSED = "Image uploads are paused until tomorrow."
 
 export type ImageInfo = { type: ImageType; width: number; height: number }
 

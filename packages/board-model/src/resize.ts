@@ -15,6 +15,8 @@ export type Rect = { x: number; y: number; w: number; h: number }
 export const MIN_TEXT_WIDTH = 20
 /** Narrowest a sticky note can get (its height follows its width). */
 export const MIN_STICKY_WIDTH = 80
+/** Narrowest an image can get (its height follows its proportions). */
+export const MIN_IMAGE_SIDE = 8
 
 /** Geometry fields a resize may write, each replaced whole (ADR 0002). */
 export type Geometry = {
@@ -87,6 +89,11 @@ export function scaledGeometry(
     case "sticky": {
       const w = Math.max(MIN_STICKY_WIDTH, e.size.w * sx)
       return { position, size: { w, h: w } }
+    }
+    case "image": {
+      // Never distorted: the width scales, the height follows the image's proportions.
+      const w = Math.max(MIN_IMAGE_SIDE, e.size.w * sx)
+      return { position, size: { w, h: (w * e.natural.h) / e.natural.w } }
     }
   }
 }

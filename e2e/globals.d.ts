@@ -25,8 +25,12 @@ declare global {
         style?: string
         groupId?: string
         locked?: boolean
+        key?: string
+        natural?: { w: number; h: number }
       }[]
       camera: () => { x: number; y: number; zoom: number }
+      /** How far an image file has got: "ready", "loading", "missing", or null (M5b). */
+      image: (key: string) => string | null
     }
   }
 }

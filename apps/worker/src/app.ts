@@ -10,6 +10,7 @@ import {
   type EditCommentRequest,
   type GuestTokenResponse,
   IMAGE_MAX_BYTES,
+  IMAGE_TOO_BIG,
   type ImageUploadResponse,
   type InviteRequest,
   type InviteResponse,
@@ -59,7 +60,7 @@ import {
   type SendDigest,
   type SendInvitation,
 } from "./email"
-import { IMAGE_TOO_BIG, readImage, uploadImage } from "./images"
+import { readImage, uploadImage } from "./images"
 import {
   type CloseAll,
   checkQuota,

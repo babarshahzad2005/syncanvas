@@ -74,6 +74,7 @@ import {
   ungroupSelection,
 } from "./actions"
 import type { CanvasHandle } from "./board-canvas"
+import { useUploads } from "./images"
 import { type Tool, useBoardUi } from "./store"
 
 // Board chrome, "Dock tray" layout (DESIGN.md → Layout → Board screen).
@@ -94,7 +95,8 @@ const TOOLS: {
   { id: "connector", label: "Connector", shortcut: "C", icon: Spline },
   { id: "text", label: "Text", shortcut: "T", icon: Type },
   { id: "sticky", label: "Sticky note", shortcut: "S", icon: StickyNote },
-  { id: null, label: "Image", icon: Image },
+  // Not a tool: it opens the file picker (M5b ticket 03).
+  { id: null, label: "Image", shortcut: "I", icon: Image },
   { id: "comment", label: "Comment", shortcut: "M", icon: MessageCircle },
 ]
 
@@ -273,19 +275,16 @@ export function Dock({
         className="flex items-center justify-center gap-0.5 p-1"
       >
         {TOOLS.map((t) => {
-          const available =
-            t.id === "select" || (t.id === "comment" ? canComment : t.id !== null && canEdit)
+          const available = t.id === "select" || (t.id === "comment" ? canComment : canEdit)
           return (
             <Hint
               key={t.label}
               label={
                 available
                   ? t.label
-                  : t.id === null
-                    ? `${t.label} (coming soon)`
-                    : t.id === "comment" && !online
-                      ? "Comments need a connection"
-                      : `${t.label} (view only)`
+                  : t.id === "comment" && !online
+                    ? "Comments need a connection"
+                    : `${t.label} (view only)`
               }
               shortcut={t.shortcut}
             >
@@ -295,7 +294,7 @@ export function Dock({
                 aria-label={t.label}
                 aria-pressed={t.id !== null && tool === t.id}
                 disabled={!available}
-                onClick={() => t.id && setTool(t.id)}
+                onClick={() => (t.id ? setTool(t.id) : useUploads.getState().pick?.())}
                 className={cn(
                   // Switching tools never animates (DESIGN.md Motion); only the press scales.
                   "transition-transform",
@@ -345,13 +344,15 @@ function SelectionTray({
       }
       const stickies = all(STICKY_TYPES)
       const anySticky = fields.some((f) => f?.get("type") === "sticky")
+      const anyImage = fields.some((f) => f?.get("type") === "image")
       const texts = all(TEXT_TYPES)
       // Only the controls the whole selection shares (spec: style tray per type).
       return JSON.stringify([
         selectionCommands(doc, selection),
         shared("color"),
         // Sticky notes have their own colors, so a mix with other types shows no colors.
-        stickies ? "sticky" : anySticky ? null : "palette",
+        // Images have none.
+        stickies ? "sticky" : anySticky || anyImage ? null : "palette",
         all(SHAPE_TYPES) ? shared("fill", "light") : null,
         all(PEN_TYPES) ? shared("width") : null,
         // Text and stickies share size (S/M/L) and bold; alignment and XL are text-only.

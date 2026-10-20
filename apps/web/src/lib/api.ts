@@ -8,6 +8,7 @@ import type {
   EditCommentRequest,
   FolderSummary,
   GuestTokenResponse,
+  ImageUploadResponse,
   InviteRequest,
   InviteResponse,
   JoinResponse,
@@ -178,6 +179,14 @@ export const api = {
       body: image,
       headers: { "content-type": image.type },
       keepalive,
+    }),
+
+  /** M5b ticket 03: the bytes as the body; the server reads the type from them. */
+  uploadImage: (boardId: string, image: Blob) =>
+    request<ImageUploadResponse>(`${board(boardId)}/images`, {
+      method: "POST",
+      body: image,
+      headers: { "content-type": image.type || "application/octet-stream" },
     }),
 
   // ---------- Folders (M5a ticket 02) ----------

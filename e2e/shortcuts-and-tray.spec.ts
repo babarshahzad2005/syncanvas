@@ -30,7 +30,11 @@ test("tool keys, the shortcut sheet, and the tray for mixed selections", async (
       "true",
     )
   }
-  await expect(tools.getByRole("button", { name: "Image" })).toBeDisabled()
+  // I opens the file picker, like the dock's Image button (M5b ticket 03).
+  await expect(tools.getByRole("button", { name: "Image", exact: true })).toBeEnabled()
+  const chooser = page.waitForEvent("filechooser")
+  await page.keyboard.press("i")
+  expect((await chooser).isMultiple()).toBe(true)
 
   // "?" opens the sheet; Escape closes it.
   await page.keyboard.press("?")

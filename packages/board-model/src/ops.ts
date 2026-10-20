@@ -128,7 +128,7 @@ export function moveElements(
 /** Sets a color. Sticky notes only take sticky colors; other colors are ignored for them. */
 export function recolorElement(doc: Y.Doc, id: string, color: PaletteColor, origin: unknown) {
   const fields = elementsOf(doc).get(id)
-  if (!fields) return
+  if (!fields || fields.get("type") === "image") return // images have no color
   if (fields.get("type") === "sticky" && !isStickyColor(color)) return
   doc.transact(() => {
     fields.set("color", color)

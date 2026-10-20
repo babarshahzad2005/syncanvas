@@ -27,6 +27,7 @@ import type * as Y from "yjs"
 import { BoardCanvas, type CanvasHandle } from "@/board/board-canvas"
 import { Dock, UndoZoomPill } from "@/board/chrome"
 import { pictureOf } from "@/board/clipboard"
+import { imageCache } from "@/board/images"
 import { errorMessage, ROLE_LABEL, ShareButton } from "@/board/share-dialog"
 import { ShortcutSheet } from "@/board/shortcut-sheet"
 import { useBoardUi } from "@/board/store"
@@ -225,6 +226,21 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
   // Comments (M4): loaded once connected, then kept live by the board room.
   const threads = useThreads(boardId, connection, status === "online")
   useThreadFromLink(threads, connection?.lastBoxes ?? NO_BOXES)
+
+  // Images (M5b ticket 03): Members read them with their session, Guests with a board token.
+  useEffect(() => {
+    if (!guestLink || !connection) {
+      imageCache.setAuth(async () => ({}))
+      return
+    }
+    imageCache.setAuth(async (fresh) => {
+      const token =
+        fresh || !connection.token
+          ? (await api.guestToken(boardId, guestLink)).token
+          : connection.token
+      return { authorization: `Bearer ${token}` }
+    })
+  }, [boardId, guestLink, connection])
 
   // The Owner changed your Role: the Board has already switched; say who did it.
   useEffect(
@@ -431,6 +447,7 @@ function BoardSurface({
     <>
       <BoardCanvas
         ref={canvas}
+        boardId={boardId}
         doc={doc}
         origin={origin}
         undoManager={undoManager}

@@ -21,6 +21,7 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       { label: "Connector", keys: [["C"]] },
       { label: "Text", keys: [["T"]] },
       { label: "Sticky note", keys: [["S"]] },
+      { label: "Image", keys: [["I"]] },
       { label: "Comment", keys: [["M"]] },
     ],
   },

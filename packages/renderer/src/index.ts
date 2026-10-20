@@ -7,6 +7,7 @@ import {
   type ElementWithId,
   type Fill,
   hasBox,
+  type ImageElement,
   indexById,
   isAttachable,
   type PaletteColor,
@@ -183,6 +184,8 @@ const CANVAS = {
     surface: "#FFFFFF",
     border: "#E6E3DD",
     mutedForeground: "#6B6760",
+    // Image placeholders (DESIGN.md → Images).
+    muted: "#F2F0EC",
   },
   dark: {
     background: "#161514",
@@ -192,6 +195,7 @@ const CANVAS = {
     surface: "#1F1E1C",
     border: "#3A3834",
     mutedForeground: "#A39F98",
+    muted: "#2A2926",
   },
 } as const
 
@@ -273,6 +277,17 @@ export function hitTest(
 
 // ---------- Drawing ----------
 
+/**
+ * An image file as the canvas has it (M5b ticket 03): decoded and ready, still on its way
+ * (a placeholder with a spinner), or given up on (a placeholder alone).
+ */
+export type ImageState = { bitmap: CanvasImageSource } | "loading" | "missing"
+/** Looks up (and, the first time, starts loading) the file behind an image Element. */
+export type ImageSource = (e: ImageElement) => ImageState
+
+/** An image being added in this tab: not in the document until its upload finishes. */
+export type UploadPlaceholder = { position: Point; size: Size; failed: boolean }
+
 export type Scene = {
   /** What to draw, in drawing order: the whole Board, or just what's near the viewport. */
   elements: readonly ElementWithId[]
@@ -317,9 +332,19 @@ export type Scene = {
   marquee?: { position: Point; size: Size } | null
   /** The text or sticky being edited in the textarea overlay: its text isn't drawn on the canvas. */
   editing?: string | null
+  /** Image files; without it, images draw as placeholders. */
+  images?: ImageSource
+  /** Images being uploaded from this tab, drawn as placeholders. */
+  uploads?: readonly UploadPlaceholder[]
+  /** Milliseconds (any clock): turns the placeholders' spinners. */
+  time?: number
 }
 
-export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
+/**
+ * Draws a whole frame. Returns true while something on it is animating (a placeholder's
+ * spinner), so the caller draws again on the next frame.
+ */
+export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene): boolean {
   const { camera, theme, size, dpr } = scene
   const colors = CANVAS[theme]
 
@@ -341,9 +366,13 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
     for (const [id, e] of overrides) if (copy.has(id)) copy.set(id, e)
     byId = copy
   }
+  const paint: Paint = { images: scene.images, time: scene.time ?? 0, busy: false }
   for (const e of elements) {
     if (e.id === scene.editing && e.type === "text") continue // the textarea shows it
-    drawElement(ctx, e, byId, theme, camera.zoom, e.id === scene.editing)
+    drawElement(ctx, e, byId, theme, camera.zoom, e.id === scene.editing, paint)
+  }
+  for (const upload of scene.uploads ?? []) {
+    drawPlaceholder(ctx, upload.position, upload.size, theme, camera.zoom, paint, !upload.failed)
   }
   if (scene.preview?.type === "arrow") {
     const p = scene.preview
@@ -429,6 +458,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
     ctx.strokeStyle = colors.primary
     ctx.strokeRect(x + 0.5, y + 0.5, Math.abs(s.w), Math.abs(s.h))
   }
+  return paint.busy
 }
 
 /**
@@ -608,9 +638,20 @@ function drawElement(
   theme: Theme,
   zoom: number,
   editing: boolean,
+  paint: Paint,
 ) {
   if (e.type === "sticky") {
     drawSticky(ctx, e, theme, editing)
+    return
+  }
+  if (e.type === "image") {
+    const state = paint.images?.(e) ?? "missing"
+    if (typeof state === "object") {
+      ctx.imageSmoothingQuality = "high"
+      ctx.drawImage(state.bitmap, e.position.x, e.position.y, e.size.w, e.size.h)
+    } else {
+      drawPlaceholder(ctx, e.position, e.size, theme, zoom, paint, state === "loading")
+    }
     return
   }
   const shades = paletteShades(e.color, theme)
@@ -634,6 +675,41 @@ function drawElement(
       drawText(ctx, e, shades.stroke)
       return
   }
+}
+
+// ---------- Image placeholders (DESIGN.md → Images) ----------
+
+/** What drawing a frame shares: image files, the clock, and whether anything is animating. */
+type Paint = { images: ImageSource | undefined; time: number; busy: boolean }
+
+/** One turn of the spinner, in milliseconds. */
+const SPIN_MS = 800
+
+/** A `muted` box where an image will be, with a small spinner while it's on its way. */
+function drawPlaceholder(
+  ctx: CanvasRenderingContext2D,
+  position: Point,
+  size: Size,
+  theme: Theme,
+  zoom: number,
+  paint: Paint,
+  spinning: boolean,
+) {
+  const colors = CANVAS[theme]
+  ctx.fillStyle = colors.muted
+  ctx.fillRect(position.x, position.y, size.w, size.h)
+  if (!spinning) return
+  paint.busy = true
+  // 8 screen px across at any zoom, but never bigger than the box.
+  const radius = Math.min(8 / zoom, size.w / 4, size.h / 4)
+  if (radius <= 0) return
+  const start = ((paint.time % SPIN_MS) / SPIN_MS) * Math.PI * 2
+  ctx.beginPath()
+  ctx.arc(position.x + size.w / 2, position.y + size.h / 2, radius, start, start + Math.PI * 1.5)
+  ctx.strokeStyle = colors.mutedForeground
+  ctx.lineWidth = Math.min(2 / zoom, radius / 2)
+  ctx.lineCap = "round"
+  ctx.stroke()
 }
 
 // ---------- Arrows and connectors ----------
@@ -1037,8 +1113,10 @@ export function drawImage(
   bounds: { x: number; y: number; w: number; h: number },
   size: { w: number; h: number; scale: number },
   padding = 16,
+  images?: ImageSource,
 ) {
   drawScene(ctx, {
+    images,
     elements,
     byId,
     camera: {

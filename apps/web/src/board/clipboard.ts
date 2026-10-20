@@ -13,6 +13,7 @@ import {
 import { boundsOf, connectorEndAsDrawn, drawImage, imageSize } from "@syncanvas/renderer"
 import { toast } from "sonner"
 import type * as Y from "yjs"
+import { imageCache } from "./images"
 import { useBoardUi } from "./store"
 
 // Copy, cut, paste, and duplicate (spec: Copy and paste; ADR 0011).
@@ -66,7 +67,7 @@ export async function pictureOf(
   canvas.width = size.w
   canvas.height = size.h
   const ctx = canvas.getContext("2d")
-  if (ctx) drawImage(ctx, elements, byId, bounds, size)
+  if (ctx) drawImage(ctx, elements, byId, bounds, size, undefined, imageCache.get)
   return new Promise((resolve, reject) =>
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("no picture"))), "image/png"),
   )

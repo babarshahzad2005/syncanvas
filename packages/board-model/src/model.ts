@@ -112,6 +112,11 @@ export type StickyElement = Boxed & {
   fontSize: StickySize
   bold: boolean
 }
+/**
+ * An uploaded picture (M5b ticket 03). The file lives in KV under `key`
+ * (`images/{boardId}/{uuid}`), never in the doc; `natural` is its size in pixels as shown.
+ */
+export type ImageElement = Boxed & { type: "image"; key: string; natural: Size }
 
 export type Element =
   | RectElement
@@ -121,6 +126,7 @@ export type Element =
   | ConnectorElement
   | TextElement
   | StickyElement
+  | ImageElement
 export type ElementType = Element["type"]
 export type BoxedElement = Exclude<Element, ConnectorElement>
 export type ElementWithId = Element & { id: string }
@@ -184,6 +190,13 @@ const isConnectorStyle = oneOf<ConnectorStyle>(["straight", "elbow"])
 const isAnchor = oneOf<Anchor>(["top", "right", "bottom", "left"])
 const isId = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 64
 
+const IMAGE_KEY =
+  /^images\/[\w-]{1,64}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+/** An image's KV key, as the API hands them out: `images/{boardId}/{uuid}`. */
+export const isImageKey = (v: unknown): v is string => typeof v === "string" && IMAGE_KEY.test(v)
+/** The Board an image was uploaded to (its key says so). */
+export const imageBoardOf = (key: string) => key.split("/")[1] ?? ""
+
 function isPenPoints(v: unknown): v is [number, number, number][] {
   if (!Array.isArray(v) || v.length === 0 || v.length > PEN_POINT_LIMIT) return false
   return v.every(
@@ -235,6 +248,7 @@ const SCHEMA: Record<ElementType, { required: readonly string[]; optional: reado
     required: ["type", "position", "size", "z", "color", "text", "fontSize", "bold"],
     optional: [],
   },
+  image: { required: ["type", "position", "size", "z", "key", "natural"], optional: [] },
 }
 
 function hasOnlyKnownFields(fields: Y.Map<unknown>, type: ElementType): boolean {
@@ -271,6 +285,16 @@ export function readElement(fields: Y.Map<unknown>): Element | null {
   }
 
   const color = fields.get("color")
+
+  if (type === "image") {
+    const position = fields.get("position")
+    const size = fields.get("size")
+    const key = fields.get("key")
+    const natural = fields.get("natural")
+    if (!isPoint(position) || !isSize(size) || !isImageKey(key) || !isSize(natural)) return null
+    if (natural.w <= 0 || natural.h <= 0) return null
+    return { ...common, type, position, size, key, natural }
+  }
 
   if (type === "connector") {
     const start = fields.get("start")
