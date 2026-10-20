@@ -1,7 +1,7 @@
 name: CI
 
 # Every pull request: lint, types, unit/integration tests, then the browser tests against
-# `pnpm dev` on a temporary Neon branch. Every push to main: the same checks, then migrate
+# `pnpm dev` on a temporary Neon branch, split across three machines that share it. Every push to main: the same checks, then migrate
 # the production database (Neon main) and deploy to Cloudflare. (TECH_STACK §10, ticket 10.)
 
 on:
@@ -30,10 +30,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
 
-  e2e:
-    name: Browser tests
+  e2e-db:
+    name: Browser test database
     if: github.event_name == 'pull_request'
-    needs: checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -54,6 +53,40 @@ jobs:
           parent_branch: dev
           branch_name: pr-${{ github.event.number }}
 
+      - name: Apply migrations to the PR branch
+        run: pnpm --filter @syncanvas/worker db:migrate
+        env:
+          DATABASE_URL: ${{ steps.db.outputs.db_url }}
+
+  e2e:
+    name: Browser tests (${{ matrix.shard }}/3)
+    if: github.event_name == 'pull_request'
+    needs: [checks, e2e-db]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # The branch e2e-db made: the action returns an existing branch instead of creating one.
+      # (A job output can't carry the connection string, so each shard asks for it.)
+      - name: Connect to the PR's Neon branch
+        id: db
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          parent_branch: dev
+          branch_name: pr-${{ github.event.number }}
+
       - name: Local secrets for the dev server (generated per run, never stored)
         run: |
           echo "CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=${{ steps.db.outputs.db_url }}" > apps/web/.env
@@ -61,17 +94,14 @@ jobs:
           pnpm --filter @syncanvas/worker gen:secret
           pnpm --filter @syncanvas/worker gen:keys
 
-      - name: Apply migrations to the PR branch
-        run: pnpm --filter @syncanvas/worker db:migrate
-
       - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm e2e
+      - run: pnpm e2e --shard=${{ matrix.shard }}/3
 
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/

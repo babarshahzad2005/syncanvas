@@ -9,6 +9,9 @@ export default defineConfig({
   timeout: 120_000,
   expect: { timeout: 10_000 },
   workers: 1,
+  // CI retries a failed spec once, so a flake costs one spec, not a rerun of the job. A spec
+  // that passes only on retry is reported as flaky: fix it, don't ignore it.
+  retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
     baseURL: "http://localhost:5173",

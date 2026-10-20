@@ -64,13 +64,7 @@ export class CursorLayer {
         this.place(cursor)
       }
       cursor.smoother.addPoint([point.x, point.y])
-      const resting = cursor
-      if (resting.settle) clearTimeout(resting.settle)
-      resting.settle = setTimeout(() => {
-        if (!resting.at) return
-        resting.at = point
-        this.place(resting)
-      }, SETTLE_MS)
+      this.settleOn(cursor, point, SETTLE_MS)
       this.showLabel(cursor)
     }
     for (const [clientId, cursor] of this.cursors) {
@@ -130,6 +124,21 @@ export class CursorLayer {
     if (!cursor.at) return
     const p = worldToScreen(this.camera, cursor.at)
     cursor.root.style.transform = `translate(${p.x}px, ${p.y}px)`
+  }
+
+  /**
+   * perfect-cursors queues one animation per point, so on a slow machine it can still be
+   * playing after points stop arriving; settling then would be overwritten by the rest of the
+   * queue and the cursor would end short again. Wait until it has finished.
+   */
+  private settleOn(cursor: Cursor, point: { x: number; y: number }, wait: number) {
+    if (cursor.settle) clearTimeout(cursor.settle)
+    cursor.settle = setTimeout(() => {
+      if (!cursor.at) return
+      if (cursor.smoother.state === "animating") return this.settleOn(cursor, point, 50)
+      cursor.at = point
+      this.place(cursor)
+    }, wait)
   }
 
   private showLabel(cursor: Cursor) {
