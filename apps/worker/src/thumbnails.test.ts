@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm"
 import { beforeEach, describe, expect, it } from "vitest"
 import { boards, kvWrites } from "./db/schema"
 import { createTestApp, type TestApp } from "./test-app"
-import { KV_WRITES_PER_DAY } from "./thumbnails"
+import { KV_WRITES_FOR_THUMBNAILS } from "./thumbnails"
 
 // Board thumbnails (M5a ticket 05): who may upload, what, how often, and who may read them.
 
@@ -65,9 +65,9 @@ async function age(boardId: string, minutes: number) {
   const [row] = await t.db.select().from(boards).where(eq(boards.id, boardId))
   const key = row?.thumbnailKey ?? ""
   const older = `thumbs/${boardId}/${(Date.now() - minutes * 60_000).toString(36)}`
-  const value = t.thumbs.get(key)
-  if (value) t.thumbs.set(older, value)
-  t.thumbs.delete(key)
+  const value = t.assets.get(key)
+  if (value) t.assets.set(older, value)
+  t.assets.delete(key)
   await t.db.update(boards).set({ thumbnailKey: older }).where(eq(boards.id, boardId))
   return older
 }
@@ -87,7 +87,7 @@ describe("Uploading a thumbnail", () => {
     const { thumbnailUrl } = await json<{ thumbnailUrl: string }>(res)
     expect(thumbnailUrl).toMatch(new RegExp(`^/api/assets/thumbs/${board}\\?v=[0-9a-z]+$`))
     expect((await tile(ada, board))?.thumbnailUrl).toBe(thumbnailUrl)
-    expect([...t.thumbs.keys()]).toEqual([expect.stringMatching(`^thumbs/${board}/`)])
+    expect([...t.assets.keys()]).toEqual([expect.stringMatching(`^thumbs/${board}/`)])
   })
 
   it("lets the Owner and Editors upload, and nobody else", async () => {
@@ -106,7 +106,7 @@ describe("Uploading a thumbnail", () => {
     }
     expect((await upload(stranger, board)).status).toBe(403)
     expect((await upload(editor, board)).status).toBe(200)
-    expect(t.thumbs.size).toBe(1)
+    expect(t.assets.size).toBe(1)
   })
 
   it("takes WebP or PNG up to 200 KB, and nothing else", async () => {
@@ -117,7 +117,7 @@ describe("Uploading a thumbnail", () => {
     expect((await upload(ada, board, png(), "image/webp")).status).toBe(415)
     expect((await upload(ada, board, webp(), "image/gif")).status).toBe(415)
     expect((await upload(ada, board, webp(200 * 1024 + 1))).status).toBe(413)
-    expect(t.thumbs.size).toBe(0)
+    expect(t.assets.size).toBe(0)
     expect((await upload(ada, board, png(), "image/png")).status).toBe(200)
   })
 
@@ -138,21 +138,21 @@ describe("Uploading a thumbnail", () => {
     const old = await age(board, 11)
     expect((await upload(ada, board)).status).toBe(200)
     // One key per Board: the old one goes.
-    expect(t.thumbs.has(old)).toBe(false)
-    expect([...t.thumbs.keys()].filter((k) => k.startsWith(`thumbs/${board}/`))).toHaveLength(1)
+    expect(t.assets.has(old)).toBe(false)
+    expect([...t.assets.keys()].filter((k) => k.startsWith(`thumbs/${board}/`))).toHaveLength(1)
   })
 
   it("stops for the day once KV writes reach the cap", async () => {
     const board = await create(ada)
     const today = new Date().toISOString().slice(0, 10)
-    await t.db.insert(kvWrites).values({ day: today, count: KV_WRITES_PER_DAY - 1 })
+    await t.db.insert(kvWrites).values({ day: today, count: KV_WRITES_FOR_THUMBNAILS - 1 })
     expect((await upload(ada, board)).status).toBe(200)
     await age(board, 11)
     const res = await upload(ada, board)
     expect(res.status).toBe(503)
     expect((await json<{ error: string }>(res)).error).toBe("Thumbnails are paused until tomorrow.")
     const [row] = await t.db.select().from(kvWrites).where(eq(kvWrites.day, today))
-    expect(row?.count).toBe(KV_WRITES_PER_DAY)
+    expect(row?.count).toBe(KV_WRITES_FOR_THUMBNAILS)
   })
 })
 
@@ -184,12 +184,12 @@ describe("Reading a thumbnail", () => {
   it("goes from KV when the Board is deleted for good", async () => {
     const board = await create(ada)
     await upload(ada, board)
-    expect(t.thumbs.size).toBe(1)
+    expect(t.assets.size).toBe(1)
     await t.request(`/api/boards/${board}`, { method: "DELETE", cookie: ada })
     // Still there in Trash, so a restore brings it back.
-    expect(t.thumbs.size).toBe(1)
+    expect(t.assets.size).toBe(1)
     await t.request(`/api/boards/${board}/forever`, { method: "DELETE", cookie: ada })
-    expect(t.thumbs.size).toBe(0)
+    expect(t.assets.size).toBe(0)
   })
 
   it("tells the dashboard which template a Board came from", async () => {

@@ -342,7 +342,7 @@ describe("Trash and the quota", () => {
       .where(eq(boards.id, recent))
 
     const destroyed: string[] = []
-    expect(await purgeTrash(t.db, async (id) => void destroyed.push(id), t.thumbStore)).toEqual({
+    expect(await purgeTrash(t.db, async (id) => void destroyed.push(id), t.assetStore)).toEqual({
       purged: 1,
     })
     expect(destroyed).toEqual([old])
@@ -360,7 +360,7 @@ describe("Trash and the quota", () => {
         async () => {
           throw new Error("unreachable")
         },
-        t.thumbStore,
+        t.assetStore,
       ),
     ).toEqual({ purged: 0 })
     expect((await trashOf(ada)).length).toBe(1)

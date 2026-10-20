@@ -81,7 +81,7 @@ describe("Deleting an account", () => {
 
     // Owned Boards: rooms destroyed, thumbnails and rows gone, Trash included.
     expect(t.destroyed.sort()).toEqual([mine, trashed].sort())
-    expect(t.thumbs.size).toBe(0)
+    expect(t.assets.size).toBe(0)
     expect((await t.db.select({ id: boards.id }).from(boards)).map((b) => b.id)).toEqual([hers])
     // Grace's Board stays, with Ada's comment as "Deleted user" (no author).
     const left = await threads(grace, hers)

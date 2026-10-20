@@ -13,7 +13,7 @@ import { createAuth } from "./auth"
 import type { AccessChange } from "./board-room"
 import * as schema from "./db/schema"
 import type { DigestMessage, InvitationMessage } from "./email"
-import type { ThumbStore } from "./thumbnails"
+import type { AssetStore } from "./thumbnails"
 
 export const ORIGIN = "http://localhost:5173"
 /** A fresh Ed25519 pair in the same encoding as scripts/gen-keys.mjs. */
@@ -66,14 +66,14 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
   const closedAll: string[] = []
   const destroyed: string[] = []
   /** The thumbnail KV namespace (M5a ticket 05). */
-  const thumbs = new Map<string, { bytes: ArrayBuffer; contentType: string }>()
-  const thumbStore: ThumbStore = {
+  const assets = new Map<string, { bytes: ArrayBuffer; contentType: string }>()
+  const assetStore: AssetStore = {
     put: async (key, bytes, contentType) => {
-      thumbs.set(key, { bytes, contentType })
+      assets.set(key, { bytes, contentType })
     },
-    get: async (key) => thumbs.get(key) ?? null,
+    get: async (key) => assets.get(key) ?? null,
     delete: async (key) => {
-      thumbs.delete(key)
+      assets.delete(key)
     },
   }
   const app = createApp(() => ({
@@ -100,7 +100,7 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     destroyRoom: async (boardId) => {
       destroyed.push(boardId)
     },
-    thumbs: thumbStore,
+    assets: assetStore,
   }))
 
   const request = (path: string, init: RequestInit & { cookie?: string } = {}) => {
@@ -152,8 +152,8 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     digests,
     closedAll,
     destroyed,
-    thumbs,
-    thumbStore,
+    assets,
+    assetStore,
     db,
     pg,
   }

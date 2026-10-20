@@ -381,3 +381,30 @@ export const kvWrites = pgTable("kv_writes", {
   day: text("day").primaryKey(),
   count: integer("count").notNull().default(0),
 })
+
+// ---------- Images (M5b ticket 02) ----------
+
+/**
+ * Every image file in KV. Purge deletes a Board's keys from here (never a KV `list`, which has
+ * its own daily limit), and the 50 MB quota sums `bytes` by uploader. Deleting an image
+ * Element keeps its row and file: undo and Versions may still need them.
+ */
+export const images = pgTable(
+  "images",
+  {
+    /** `images/{boardId}/{uuid}` in KV. */
+    key: text("key").primaryKey(),
+    boardId: text("board_id")
+      .notNull()
+      .references(() => boards.id, { onDelete: "cascade" }),
+    /** Who uploaded it; kept as null when they delete their account, as other Boards may show it. */
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    bytes: integer("bytes").notNull(),
+    contentType: text("content_type").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("images_board_idx").on(table.boardId),
+    index("images_user_idx").on(table.userId),
+  ],
+)

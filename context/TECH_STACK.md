@@ -195,9 +195,10 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | `/api/boards/:id/threads` | List, create, reply, edit, delete, resolve, reopen |
 | `/api/notifications` | List, mark read, mark all read, unread count |
 | `/api/folders`, `/api/favorites` | Personal organization |
-| `/api/uploads` | Image upload through the Worker (Editor + quota check; M5b) |
+| `/api/boards/:id/images` | POST an image (Editor; PNG, JPEG, GIF or WebP by magic bytes; ≤ 5 MB; 50 MB per User; daily KV cap). Answers `{key, width, height}` from the file header |
 | `/api/boards/:id/thumbnail` | PUT a thumbnail (Editor; WebP or PNG ≤ 200 KB; once per 10 minutes per Board) |
 | `/api/assets/thumbs/:boardId?v=` | A Board's thumbnail, for its Members (`private`, immutable at the current version) |
+| `/api/assets/images/:boardId/:uuid` | An image, for a Member's session or an `Authorization: Bearer` board token for that Board (`private`, immutable; 404 until KV has it) |
 | `/api/search` | Full-text search over the user's Boards |
 | `/api/internal/*` | Called only by BoardRoom (search text, Element deleted → Thread last position). Authenticated with a shared secret |
 | `/api/unsubscribe/:token` | One-click unsubscribe (also served as an RFC 8058 `List-Unsubscribe-Post` target) |
@@ -215,7 +216,7 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | `user`, `session`, `account`, `verification` | Better Auth schema (via its Drizzle adapter) |
 | `user_settings` | `user_id`, `digest_enabled` |
 | `boards` | `id`, `owner_id`, `title`, `thumbnail_key`, `template`, `created_at`, `updated_at`, `deleted_at` |
-| `kv_writes` | `day` (UTC), `count`: KV writes so far, so thumbnails stop at 900 a day |
+| `kv_writes` | `day` (UTC), `count`: KV writes so far, so thumbnails stop at 700 a day and images at 950 |
 | `memberships` | `board_id`, `user_id`, `role`, `via: owner\|invitation\|share_link`, PK (`board_id`, `user_id`) |
 | `invitations` | `id`, `board_id`, `email`, `role`, `invited_by`, `expires_at`, `accepted_at` |
 | `share_links` | `board_id` (unique), `token_hash`, `role`, `expires_at` |
@@ -226,7 +227,7 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | `comments` | `id`, `thread_id`, `author_id?` (null = "Deleted user"), `body`, `edited_at` |
 | `thread_participants` | `thread_id`, `user_id` (posted or mentioned → gets reply Notifications) |
 | `notifications` | `id`, `user_id`, `kind: mention\|reply`, `thread_id`, `read_at`, `emailed_at`, `created_at` |
-| `images` | `key`, `user_id`, `board_id`, `bytes` (for the 50 MB quota) |
+| `images` | `key` (`images/{boardId}/{uuid}`), `board_id` (cascade), `user_id` (set null), `bytes` (for the 50 MB quota), `content_type`, `created_at`. Purge deletes the KV keys listed here |
 | `board_search` | `board_id`, `body`, `tsv tsvector` (GIN index); titles indexed via a generated `tsvector` on `boards` |
 
 Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `websearch_to_tsquery` + `ts_rank` + `ts_headline` for snippets, joined to `memberships` so results only include the user's own Boards.
@@ -238,7 +239,7 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
 **Workers KV** (namespace `ASSETS`, ADR 0007)
 - Keys: `images/{boardId}/{uuid}` and `thumbs/{boardId}/{version}` (the upload time in base 36; a new key per upload, so a cached copy is never stale, and the old key is deleted). The capped fallback image lives in the board room, not KV.
 - Local development uses Wrangler's local KV, so there's no preview namespace.
-- Uploads: `POST /api/uploads` (Editor, type and size checked, quota 5 MB per image and 50 MB per User), then `KV.put`. Serving: `GET /api/assets/:key` with `Cache-Control: immutable`, so most reads come from the edge cache and not from KV.
+- Uploads: `POST /api/boards/:id/images` (Editor, type by magic bytes, 5 MB per image and 50 MB per User), then `KV.put` and an `images` row. Serving: `GET /api/assets/images/:boardId/:uuid` (session or board token) with `Cache-Control: private, immutable`, so repeat reads come from the browser cache and not from KV.
 - Free-tier limits: 1 GB storage, 1,000 writes per day. One daily counter (`kv_writes`) covers both: thumbnails stop at 700 writes a day and images at 950 (M5b planning). Thumbnails are written at most once per Board every 10 minutes. New keys can take about 60 s to appear in other regions, so the client retries missing images with a placeholder.
 
 **Email:** Brevo transactional API (free: 300 per day, single verified sender), with React Email templates for: magic link, Invitation, digest. Every digest carries `List-Unsubscribe` and `List-Unsubscribe-Post` headers.

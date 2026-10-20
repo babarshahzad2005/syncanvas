@@ -4,7 +4,7 @@ import type { Database } from "./db/client"
 import { boards, memberships, user } from "./db/schema"
 import { type DestroyRoom, purge } from "./lifecycle"
 import { type ApplyAccess, type Caller, refuse } from "./sharing"
-import type { ThumbStore } from "./thumbnails"
+import type { AssetStore } from "./thumbnails"
 
 // Deleting an account (M5a ticket 06; FLOWS §1 Delete an account).
 
@@ -17,7 +17,7 @@ import type { ThumbStore } from "./thumbnails"
  */
 export async function deleteAccount(
   db: Database,
-  rooms: { destroy: DestroyRoom; applyAccess: ApplyAccess; thumbs: ThumbStore },
+  rooms: { destroy: DestroyRoom; applyAccess: ApplyAccess; assets: AssetStore },
   input: { caller: Caller; confirm: unknown },
 ) {
   if (input.confirm !== "DELETE") throw refuse(400, { error: "Type DELETE to confirm." })
@@ -26,7 +26,7 @@ export async function deleteAccount(
     .from(boards)
     .where(eq(boards.ownerId, input.caller.id))
   // If a room can't be reached this stops, and the account stays for another try.
-  for (const { id } of owned) await purge(db, rooms.destroy, rooms.thumbs, id)
+  for (const { id } of owned) await purge(db, rooms.destroy, rooms.assets, id)
 
   const joined = await db
     .select({ boardId: memberships.boardId })

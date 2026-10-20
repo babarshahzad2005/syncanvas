@@ -1034,19 +1034,24 @@ describe("BoardRoom compaction (M5b ticket 01)", () => {
     const board = newBoardId()
     const owner = await joinAs(board, "owner", "ada")
     for (let i = 0; i < 520; i++) owner.addRect(`r${i}`)
-    // The room is busy with 520 updates; give the join longer than usual.
-    const viewer = await join(board, "viewer", 15_000)
-    await until(() => viewer.rect("r519") !== undefined, "all edits to arrive", 10_000)
-    const { updates } = await rows(board)
-    expect(updates).toBeLessThan(500)
-    expect(updates).toBeGreaterThan(0)
+    // Wait for the room to take all 520 (it compacts at the 500th) before anyone joins: a join
+    // racing 520 updates is slow when the machine is busy running the other suites.
+    const start = Date.now()
+    let stored = await rows(board)
+    while (stored.parts === 0 || stored.updates !== 20) {
+      if (Date.now() - start > 30_000) throw new Error(`timed out: ${JSON.stringify(stored)}`)
+      await tick()
+      stored = await rows(board)
+    }
+    const viewer = await join(board, "viewer")
+    await until(() => viewer.rect("r519") !== undefined, "all edits to arrive")
     owner.close()
     viewer.close()
     await evictDurableObject(room(board))
     const fresh = await joinAs(board, "viewer", "lin", Date.now() + 2_000)
     expect(elementsOf(fresh.doc).size).toBe(520)
     fresh.close()
-  })
+  }, 60_000)
 
   it("sets an alarm on the first update, and the alarm compacts", async () => {
     const board = newBoardId()

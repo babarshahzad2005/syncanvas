@@ -345,3 +345,17 @@ export const THUMBNAIL_EVERY_MS = 10 * 60 * 1000
 export const THUMBNAIL_MAX_BYTES = 200 * 1024
 /** PUT /api/boards/:id/thumbnail. */
 export type ThumbnailResponse = { thumbnailUrl: string }
+
+/** Largest image upload, in bytes (PRD Limits). */
+export const IMAGE_MAX_BYTES = 5 * 1024 * 1024
+/** Image bytes one User may have on Boards that still exist (PRD Limits). */
+export const IMAGE_QUOTA_BYTES = 50 * 1024 * 1024
+/** Image types a Board accepts (GIFs show their first frame). */
+export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const
+export type ImageType = (typeof IMAGE_TYPES)[number]
+/** POST /api/boards/:id/images: the KV key, and the size read from the file's header. */
+export type ImageUploadResponse = { key: string; width: number; height: number }
+/** Where a Board's image is read from (with a session, or a board token as a Bearer). */
+export function imageUrl(key: string) {
+  return `/api/assets/${key}`
+}

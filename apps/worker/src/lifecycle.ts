@@ -9,9 +9,10 @@ import { and, eq, isNotNull, lt } from "drizzle-orm"
 import { countOwned, findMembership } from "./boards"
 import type { Database } from "./db/client"
 import { boards, folderBoards, folders, memberships } from "./db/schema"
+import { deleteBoardImages } from "./images"
 import { type Caller, memberOrRefuse, NO_ACCESS, refuse } from "./sharing"
 import type { Broadcast } from "./threads"
-import type { ThumbStore } from "./thumbnails"
+import type { AssetStore } from "./thumbnails"
 
 // Board lifecycle from the dashboard and the Board menu (M5a): renaming, favorites, Folders,
 // Trash, and deleting.
@@ -186,23 +187,24 @@ export async function restoreBoard(db: Database, input: { boardId: string; calle
 }
 
 /**
- * Deletes a Board for good: its room's storage first, then its thumbnail, then the row (the
- * rest cascades).
+ * Deletes a Board for good: its room's storage first, then its image files and thumbnail, then
+ * the row (the rest cascades, the `images` rows included).
  */
 export async function purge(
   db: Database,
   destroy: DestroyRoom,
-  thumbs: ThumbStore,
+  assets: AssetStore,
   boardId: string,
 ) {
   // If the room or KV can't be reached, keep the row so the next cleanup tries again.
   await destroy(boardId)
+  await deleteBoardImages(db, assets, boardId)
   const [board] = await db
     .select({ thumbnailKey: boards.thumbnailKey })
     .from(boards)
     .where(eq(boards.id, boardId))
     .limit(1)
-  if (board?.thumbnailKey) await thumbs.delete(board.thumbnailKey)
+  if (board?.thumbnailKey) await assets.delete(board.thumbnailKey)
   await db.delete(boards).where(eq(boards.id, boardId))
 }
 
@@ -210,18 +212,18 @@ export async function purge(
 export async function deleteForever(
   db: Database,
   destroy: DestroyRoom,
-  thumbs: ThumbStore,
+  assets: AssetStore,
   input: { boardId: string; caller: Caller },
 ) {
   await ownedOrRefuse(db, input.boardId, input.caller, true)
-  await purge(db, destroy, thumbs, input.boardId)
+  await purge(db, destroy, assets, input.boardId)
 }
 
 /** The daily cleanup's part (FLOWS §5): Boards in Trash for over 30 days go for good. */
 export async function purgeTrash(
   db: Database,
   destroy: DestroyRoom,
-  thumbs: ThumbStore,
+  assets: AssetStore,
   now: Date = new Date(),
 ) {
   const cutoff = new Date(now.getTime() - TRASH_DAYS * 24 * 60 * 60 * 1000)
@@ -232,7 +234,7 @@ export async function purgeTrash(
   let purged = 0
   for (const { id } of old) {
     try {
-      await purge(db, destroy, thumbs, id)
+      await purge(db, destroy, assets, id)
       purged++
     } catch (error) {
       console.error(`Couldn't purge board ${id}:`, error instanceof Error ? error.message : error)

@@ -9,6 +9,8 @@ import {
   displayNameOf,
   type EditCommentRequest,
   type GuestTokenResponse,
+  IMAGE_MAX_BYTES,
+  type ImageUploadResponse,
   type InviteRequest,
   type InviteResponse,
   type JoinRequest,
@@ -57,6 +59,7 @@ import {
   type SendDigest,
   type SendInvitation,
 } from "./email"
+import { IMAGE_TOO_BIG, readImage, uploadImage } from "./images"
 import {
   type CloseAll,
   checkQuota,
@@ -98,7 +101,7 @@ import {
   reply,
   setThreadStatus,
 } from "./threads"
-import { kvThumbStore, readThumbnail, type ThumbStore, uploadThumbnail } from "./thumbnails"
+import { type AssetStore, kvAssetStore, readThumbnail, uploadThumbnail } from "./thumbnails"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
 export type Services = {
@@ -117,8 +120,8 @@ export type Services = {
   closeAll: CloseAll
   /** Closes everything and deletes a Board's room storage, before deleting it for good. */
   destroyRoom: DestroyRoom
-  /** Board thumbnails in Workers KV (M5a ticket 05). */
-  thumbs: ThumbStore
+  /** Board thumbnails (M5a ticket 05) and images (M5b ticket 02) in Workers KV. */
+  assets: AssetStore
   dispose?: () => Promise<void>
 }
 export type ServicesFactory = (env: Env) => Services
@@ -160,7 +163,7 @@ export const productionServices: ServicesFactory = (env) => {
     sendDigest,
     closeAll,
     destroyRoom,
-    thumbs: kvThumbStore(env.ASSETS),
+    assets: kvAssetStore(env.ASSETS),
     dispose: close,
   }
 }
@@ -217,7 +220,8 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/me/*",
     "/folders",
     "/folders/*",
-    "/assets/*",
+    // Images take a board token instead, for Guests (below).
+    "/assets/thumbs/*",
   ]) {
     app.use(path, requireUser)
   }
@@ -338,7 +342,7 @@ export function createApp(services: ServicesFactory = productionServices) {
   })
 
   app.delete("/boards/:id/forever", async (c) => {
-    await deleteForever(c.var.services.db, c.var.services.destroyRoom, c.var.services.thumbs, {
+    await deleteForever(c.var.services.db, c.var.services.destroyRoom, c.var.services.assets, {
       boardId: c.req.param("id"),
       caller: c.var.user,
     })
@@ -354,7 +358,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     }
     const body: ThumbnailResponse = await uploadThumbnail(
       c.var.services.db,
-      c.var.services.thumbs,
+      c.var.services.assets,
       {
         boardId: c.req.param("id"),
         caller: c.var.user,
@@ -366,7 +370,7 @@ export function createApp(services: ServicesFactory = productionServices) {
   })
 
   app.get("/assets/thumbs/:boardId", async (c) => {
-    const thumb = await readThumbnail(c.var.services.db, c.var.services.thumbs, {
+    const thumb = await readThumbnail(c.var.services.db, c.var.services.assets, {
       boardId: c.req.param("boardId"),
       caller: c.var.user,
       version: c.req.query("v"),
@@ -377,6 +381,51 @@ export function createApp(services: ServicesFactory = productionServices) {
         "x-content-type-options": "nosniff",
         // Private: only Members may see it. A new upload gets a new ?v=, so this never goes stale.
         "cache-control": thumb.fresh ? "private, max-age=31536000, immutable" : "private, no-cache",
+      },
+    })
+  })
+
+  // ---------- Images (M5b ticket 02) ----------
+
+  app.post("/boards/:id/images", async (c) => {
+    // Refused before reading a body that's plainly too big.
+    if (Number(c.req.header("content-length") ?? 0) > IMAGE_MAX_BYTES) {
+      return c.json({ error: IMAGE_TOO_BIG }, 413)
+    }
+    const body: ImageUploadResponse = await uploadImage(c.var.services.db, c.var.services.assets, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+      bytes: await c.req.arrayBuffer(),
+    })
+    return c.json(body, 201)
+  })
+
+  // A Member's session, or a board token as a Bearer (Guests have no session).
+  app.get("/assets/images/:boardId/:id", async (c) => {
+    const authorization = c.req.header("authorization")
+    let reader: Parameters<typeof readImage>[2]["reader"]
+    if (authorization) {
+      const bearer = authorization.replace(/^Bearer\s+/i, "")
+      reader = {
+        kind: "token",
+        claims: await verifyBoardToken(bearer, c.env.BOARD_TOKEN_PUBLIC_KEY),
+      }
+    } else {
+      const session = await c.var.services.auth.api.getSession({ headers: c.req.raw.headers })
+      if (!session) return c.json({ error: "You need to sign in." }, 401)
+      reader = { kind: "member", userId: session.user.id }
+    }
+    const image = await readImage(c.var.services.db, c.var.services.assets, {
+      boardId: c.req.param("boardId"),
+      id: c.req.param("id"),
+      reader,
+    })
+    return new Response(image.bytes, {
+      headers: {
+        "content-type": image.contentType,
+        "x-content-type-options": "nosniff",
+        // A key's bytes never change; private, as only people with access may see it.
+        "cache-control": "private, max-age=31536000, immutable",
       },
     })
   })
@@ -599,11 +648,11 @@ export function createApp(services: ServicesFactory = productionServices) {
 
   app.delete("/me", async (c) => {
     const input = (await c.req.json().catch(() => ({}))) as { confirm?: unknown }
-    const { destroyRoom, applyAccess, thumbs } = c.var.services
+    const { destroyRoom, applyAccess, assets } = c.var.services
     return c.json(
       await deleteAccount(
         c.var.services.db,
-        { destroy: destroyRoom, applyAccess, thumbs },
+        { destroy: destroyRoom, applyAccess, assets },
         { caller: c.var.user, confirm: input.confirm },
       ),
     )

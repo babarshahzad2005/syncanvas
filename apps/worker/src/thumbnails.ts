@@ -15,14 +15,14 @@ import { type Caller, memberOrRefuse, NO_ACCESS, refuse } from "./sharing"
 // KV key, so an edge or browser copy is never stale: KV can take ~60 s to show a value
 // elsewhere, and a reused key could serve the old picture under the new URL.
 
-/** Where thumbnails live (Workers KV in production, a Map in tests). */
-export type ThumbStore = {
+/** Where thumbnails and images live (Workers KV in production, a Map in tests). */
+export type AssetStore = {
   put(key: string, bytes: ArrayBuffer, contentType: string): Promise<void>
   get(key: string): Promise<{ bytes: ArrayBuffer; contentType: string } | null>
   delete(key: string): Promise<void>
 }
 
-export function kvThumbStore(kv: KVNamespace): ThumbStore {
+export function kvAssetStore(kv: KVNamespace): AssetStore {
   return {
     put: (key, bytes, contentType) => kv.put(key, bytes, { metadata: { contentType } }),
     get: async (key) => {
@@ -36,8 +36,12 @@ export function kvThumbStore(kv: KVNamespace): ThumbStore {
   }
 }
 
-/** Stays under KV's 1,000 free writes a day, leaving room for the rest of the app. */
-export const KV_WRITES_PER_DAY = 900
+/**
+ * One daily count of KV writes, under KV's 1,000 free a day. Thumbnails stop first, so a busy
+ * day of them never blocks images (M5b ticket 02).
+ */
+export const KV_WRITES_FOR_THUMBNAILS = 700
+export const KV_WRITES_FOR_IMAGES = 950
 
 /** The version is the upload time in base 36, which also drives the 10-minute limit. */
 function keyFor(boardId: string, at: Date) {
@@ -64,10 +68,10 @@ const SIGNATURES: Record<string, (b: Uint8Array) => boolean> = {
 }
 
 /**
- * Counts one KV write for today, unless today's count has reached the cap. Returns whether
- * the write may go ahead.
+ * Counts one KV write for today, unless today's count has reached `cap`. Returns whether the
+ * write may go ahead.
  */
-async function takeKvWrite(db: Database, now: Date) {
+export async function takeKvWrite(db: Database, now: Date, cap: number) {
   const day = now.toISOString().slice(0, 10)
   const rows = await db
     .insert(kvWrites)
@@ -75,7 +79,7 @@ async function takeKvWrite(db: Database, now: Date) {
     .onConflictDoUpdate({
       target: kvWrites.day,
       set: { count: sql`${kvWrites.count} + 1` },
-      setWhere: lt(kvWrites.count, KV_WRITES_PER_DAY),
+      setWhere: lt(kvWrites.count, cap),
     })
     .returning({ count: kvWrites.count })
   return rows.length > 0
@@ -84,7 +88,7 @@ async function takeKvWrite(db: Database, now: Date) {
 /** An Editor (or the Owner) replaces a Board's thumbnail. */
 export async function uploadThumbnail(
   db: Database,
-  store: ThumbStore,
+  store: AssetStore,
   input: {
     boardId: string
     caller: Caller
@@ -115,7 +119,7 @@ export async function uploadThumbnail(
   const tooSoon = () =>
     refuse(429, { error: "This board's thumbnail was updated in the last 10 minutes." })
   if (old && now.getTime() - uploadedAt(old) < THUMBNAIL_EVERY_MS) throw tooSoon()
-  if (!(await takeKvWrite(db, now))) {
+  if (!(await takeKvWrite(db, now, KV_WRITES_FOR_THUMBNAILS))) {
     throw refuse(503, { error: "Thumbnails are paused until tomorrow." })
   }
 
@@ -140,8 +144,8 @@ export async function uploadThumbnail(
   return { thumbnailUrl: thumbnailUrl(input.boardId, key) ?? "" }
 }
 
-/** Deletes a KV key; a leftover thumbnail is only wasted space, so failures are logged. */
-async function forget(store: ThumbStore, key: string) {
+/** Deletes a KV key; a leftover file is only wasted space, so failures are logged. */
+export async function forget(store: AssetStore, key: string) {
   try {
     await store.delete(key)
   } catch (error) {
@@ -155,7 +159,7 @@ async function forget(store: ThumbStore, key: string) {
  */
 export async function readThumbnail(
   db: Database,
-  store: ThumbStore,
+  store: AssetStore,
   input: { boardId: string; caller: Caller; version: string | undefined },
 ) {
   const membership = await findMembership(db, input.boardId, input.caller.id)
