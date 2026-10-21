@@ -26,6 +26,41 @@ export type BoardSummary = {
   folderId: string | null
 }
 
+/**
+ * Search (M5b ticket 05). Snippets mark matched words between SEARCH_MARK_START and
+ * SEARCH_MARK_END; the client turns them into bold text (never HTML from the server).
+ */
+export const SEARCH_MARK_START = ""
+export const SEARCH_MARK_END = ""
+/** Queries shorter than this (trimmed) find nothing. */
+export const SEARCH_MIN_LENGTH = 2
+/** GET /api/search?q= */
+export type SearchResult = {
+  id: string
+  title: string
+  /** A line of the Board's text around the matches, or null for a title-only match. */
+  snippet: string | null
+  role: Role
+  updatedAt: string
+}
+export type SearchResponse = { results: SearchResult[] }
+
+/** Splits a snippet into plain and matched parts, for drawing the matches in bold. */
+export function snippetParts(snippet: string): { text: string; match: boolean }[] {
+  const parts: { text: string; match: boolean }[] = []
+  let match = false
+  let text = ""
+  for (const ch of snippet) {
+    if (ch === SEARCH_MARK_START || ch === SEARCH_MARK_END) {
+      if (text) parts.push({ text, match })
+      text = ""
+      match = ch === SEARCH_MARK_START
+    } else text += ch
+  }
+  if (text) parts.push({ text, match })
+  return parts
+}
+
 /** One of your Folders (private, one level), with how many of your Boards are in it. */
 export type FolderSummary = { id: string; name: string; boardCount: number }
 

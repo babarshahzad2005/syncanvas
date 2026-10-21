@@ -14,6 +14,7 @@ import type {
   JoinResponse,
   NotificationsResponse,
   ReplyRequest,
+  SearchResponse,
   ShareLinkRequest,
   ShareLinkState,
   SharingResponse,
@@ -50,6 +51,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   dashboard: () => request<DashboardResponse>("/api/dashboard"),
+  search: (q: string) => request<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}`),
   createBoard: (input: { title?: string; template?: TemplateId } = {}) =>
     request<CreateBoardResponse>("/api/boards", { method: "POST", body: JSON.stringify(input) }),
   boardToken: (boardId: string) =>
@@ -216,4 +218,5 @@ export const queryKeys = {
   threads: (boardId: string) => ["threads", boardId] as const,
   notifications: ["notifications"] as const,
   settings: ["settings"] as const,
+  search: (q: string) => ["search", q] as const,
 }

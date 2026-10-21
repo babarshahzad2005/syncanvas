@@ -12,7 +12,6 @@ import {
   LogOut,
   Pencil,
   Plus,
-  Search,
   Star,
   Trash2,
 } from "lucide-react"
@@ -26,6 +25,7 @@ import { DeleteBoardDialog } from "@/components/delete-board-dialog"
 import { FolderDialog } from "@/components/folder-dialog"
 import { NotificationBell } from "@/components/notification-bell"
 import { RenameDialog } from "@/components/rename-dialog"
+import { SearchBox } from "@/components/search-box"
 import { TemplatePreview } from "@/components/template-preview"
 import { Button } from "@/components/ui/button"
 import {
@@ -48,8 +48,8 @@ import { timeAgo } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { clearLocalCopy } from "@/sync/local-copy"
 
-// Dashboard, "Launcher" layout (DESIGN.md → Layout → Dashboard). Search arrives in M5b; it's
-// shown disabled because the layout needs it.
+// Dashboard, "Launcher" layout (DESIGN.md → Layout → Dashboard), with search in the header
+// (M5b ticket 05).
 
 const FILTERS = ["All", "Mine", "Shared with me", "Favorites"] as const
 type Filter = (typeof FILTERS)[number]
@@ -268,23 +268,16 @@ export function Dashboard({ folderId }: { folderId?: string } = {}) {
   )
 }
 
-/** The dashboard's header, shared with the Trash page: wordmark, search, bell, account. */
+/**
+ * The dashboard's header, shared with the Trash page: wordmark, search, bell, account. On
+ * phones the search box gets its own row under the rest.
+ */
 export function DashboardHeader() {
   const { data: session } = authClient.useSession()
   return (
-    <header className="flex h-16 items-center gap-4 px-4 md:px-8">
+    <header className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-2.5 pb-2 md:h-16 md:flex-nowrap md:px-8 md:py-0">
       <Wordmark />
-      <label
-        className="mx-auto hidden h-11 w-full max-w-xl items-center gap-2 rounded-lg border border-input bg-surface px-3 text-muted-foreground opacity-60 md:flex"
-        title="Search arrives in a later update"
-      >
-        <Search className="size-4" />
-        <input
-          disabled
-          placeholder="Search boards and their text"
-          className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-        />
-      </label>
+      <SearchBox slashFocus className="order-last w-full md:order-none md:mx-auto md:max-w-xl" />
       <div className="ml-auto flex items-center gap-1 md:ml-0">
         {session && <NotificationBell placement="page" />}
         {session && <AccountMenu user={session.user} />}

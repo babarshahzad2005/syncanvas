@@ -18,6 +18,7 @@ import {
   type JoinResponse,
   type NotificationsResponse,
   type ReplyRequest,
+  type SearchResponse,
   type ShareLinkRequest,
   type ShareLinkState,
   type SharingResponse,
@@ -76,6 +77,7 @@ import {
   setFavorite,
 } from "./lifecycle"
 import { listNotifications, markAllRead, markRead, unreadFor } from "./notifications"
+import { search } from "./search"
 import {
   type ApplyAccess,
   type CloseGuests,
@@ -190,6 +192,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/boards",
     "/boards/*",
     "/dashboard",
+    "/search",
     "/guest/*",
     "/notifications",
     "/notifications/*",
@@ -215,6 +218,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/boards",
     "/boards/*",
     "/dashboard",
+    "/search",
     "/notifications",
     "/notifications/*",
     "/me",
@@ -242,6 +246,14 @@ export function createApp(services: ServicesFactory = productionServices) {
     return c.json(await room.compactNow())
   })
   app.on(["GET", "POST"], "/auth/*", (c) => c.var.services.auth.handler(c.req.raw))
+
+  // Search (M5b ticket 05): your own Boards by title or text.
+  app.get("/search", async (c) => {
+    const body: SearchResponse = {
+      results: await search(c.var.services.db, c.var.user.id, c.req.query("q") ?? ""),
+    }
+    return c.json(body)
+  })
 
   app.get("/dashboard", async (c) => {
     const body: DashboardResponse = {

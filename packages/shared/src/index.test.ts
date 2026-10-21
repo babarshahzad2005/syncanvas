@@ -5,6 +5,9 @@ import {
   displayNameOf,
   nameFromEmail,
   normalizeDisplayName,
+  SEARCH_MARK_END,
+  SEARCH_MARK_START,
+  snippetParts,
 } from "./index"
 
 describe("canEdit", () => {
@@ -43,5 +46,16 @@ describe("display names", () => {
   it("shows the chosen name, or the prefill until there is one", () => {
     expect(displayNameOf({ name: "Ada", email: "x@example.com" })).toBe("Ada")
     expect(displayNameOf({ name: "", email: "grace.hopper@example.com" })).toBe("Grace Hopper")
+  })
+})
+
+describe("snippetParts", () => {
+  it("splits a snippet into plain and matched parts", () => {
+    expect(snippetParts(`to improve: ${SEARCH_MARK_START}zebra${SEARCH_MARK_END} tests`)).toEqual([
+      { text: "to improve: ", match: false },
+      { text: "zebra", match: true },
+      { text: " tests", match: false },
+    ])
+    expect(snippetParts("<b>no html</b>")).toEqual([{ text: "<b>no html</b>", match: false }])
   })
 })
