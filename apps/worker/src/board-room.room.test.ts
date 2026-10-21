@@ -1155,3 +1155,106 @@ describe("BoardRoom search indexing (M5b ticket 04)", () => {
     viewer.close()
   }, 60_000)
 })
+
+describe("BoardRoom Versions (M5b ticket 06)", () => {
+  const HOUR = 60 * 60 * 1000
+  const DAY = 24 * HOUR
+  /** Noon UTC on a fixed day, so hours and days are easy to reason about. */
+  const T0 = Date.UTC(2026, 9, 1, 12)
+
+  async function setClock(board: string, at: number) {
+    await runInDurableObject(room(board), (instance: BoardRoom) => {
+      instance.clock = () => at
+    })
+  }
+
+  /** An edit at `at`, compacted at once (as the alarm would). */
+  async function editAt(
+    board: string,
+    owner: TestClient,
+    viewer: TestClient,
+    id: string,
+    at: number,
+  ) {
+    await setClock(board, at)
+    owner.addRect(id)
+    await until(() => viewer.rect(id) !== undefined, `edit ${id}`)
+    await room(board).compactNow()
+  }
+
+  function elementIds(state: Uint8Array | null) {
+    const doc = new Y.Doc()
+    if (state) Y.applyUpdate(doc, state)
+    return [...elementsOf(doc).keys()].sort()
+  }
+
+  it("keeps one Version per hour of activity, and gives back each one's state", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const viewer = await joinAs(board, "viewer", "lin")
+    await editAt(board, owner, viewer, "a", T0)
+    await editAt(board, owner, viewer, "b", T0 + 10 * 60 * 1000) // same hour: none new
+    await editAt(board, owner, viewer, "c", T0 + HOUR)
+    const versions = await room(board).listVersions()
+    expect(versions.map((v) => [v.at, v.kind, v.by])).toEqual([
+      [T0 + HOUR, "auto", null],
+      [T0, "auto", null],
+    ])
+    expect(elementIds(await room(board).versionState(versions[0]?.id ?? 0))).toEqual([
+      "a",
+      "b",
+      "c",
+    ])
+    expect(elementIds(await room(board).versionState(versions[1]?.id ?? 0))).toEqual(["a"])
+    expect(await room(board).versionState(9999)).toBeNull()
+    owner.close()
+    viewer.close()
+  })
+
+  it("keeps the latest of each day after 30 days, and nothing after a year", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const viewer = await joinAs(board, "viewer", "lin")
+    const now = T0
+    await editAt(board, owner, viewer, "year-old", now - 400 * DAY)
+    await editAt(board, owner, viewer, "morning", now - 40 * DAY - 3 * HOUR)
+    await editAt(board, owner, viewer, "evening", now - 40 * DAY + 3 * HOUR)
+    await editAt(board, owner, viewer, "recent-1", now - 10 * DAY)
+    await editAt(board, owner, viewer, "recent-2", now - 10 * DAY + HOUR)
+    // The next alarm, today, thins.
+    await setClock(board, now)
+    await room(board).compactNow()
+    const kept = (await room(board).listVersions()).map((v) => v.at)
+    expect(kept).toEqual([now - 10 * DAY + HOUR, now - 10 * DAY, now - 40 * DAY + 3 * HOUR])
+    // Their parts go with them.
+    const orphans = await runInDurableObject(
+      room(board),
+      (_i, state) =>
+        state.storage.sql
+          .exec(
+            "select count(*) as n from version_parts where version_id not in (select id from versions)",
+          )
+          .one().n,
+    )
+    expect(orphans).toBe(0)
+    owner.close()
+    viewer.close()
+  })
+
+  it("keeps a restore as its own Version, labeled with who restored", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const viewer = await joinAs(board, "viewer", "lin")
+    await editAt(board, owner, viewer, "a", T0)
+    const [first] = await room(board).listVersions()
+    expect(await room(board).noteRestore(9999, "Grace Hopper")).toBe(false)
+    expect(await room(board).noteRestore(first?.id ?? 0, "Grace Hopper")).toBe(true)
+    // Same hour, and nothing changed: the restore still gets its Version at the next alarm.
+    await setClock(board, T0 + 60_000)
+    await room(board).compactNow()
+    const [newest] = await room(board).listVersions()
+    expect(newest).toMatchObject({ kind: "restore", by: "Grace Hopper", at: T0 + 60_000 })
+    owner.close()
+    viewer.close()
+  })
+})

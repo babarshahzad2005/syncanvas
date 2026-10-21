@@ -10,10 +10,11 @@ import { migrate } from "drizzle-orm/pglite/migrator"
 import { expect } from "vitest"
 import { createApp } from "./app"
 import { createAuth } from "./auth"
-import type { AccessChange } from "./board-room"
+import type { AccessChange, VersionSummary } from "./board-room"
 import * as schema from "./db/schema"
 import type { DigestMessage, InvitationMessage } from "./email"
 import type { AssetStore } from "./thumbnails"
+import type { VersionsRoom } from "./versions"
 
 export const ORIGIN = "http://localhost:5173"
 /** A fresh Ed25519 pair in the same encoding as scripts/gen-keys.mjs. */
@@ -76,6 +77,19 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
       assets.delete(key)
     },
   }
+  /** Each board room's Versions (M5b ticket 06), and the restores noted. */
+  const versionStore = new Map<string, { summary: VersionSummary; state: Uint8Array }[]>()
+  const restores: { boardId: string; versionId: number; name: string }[] = []
+  const versionsRoom: VersionsRoom = {
+    list: async (boardId) => (versionStore.get(boardId) ?? []).map((v) => v.summary),
+    state: async (boardId, id) =>
+      versionStore.get(boardId)?.find((v) => v.summary.id === id)?.state ?? null,
+    noteRestore: async (boardId, versionId, name) => {
+      if (!versionStore.get(boardId)?.some((v) => v.summary.id === versionId)) return false
+      restores.push({ boardId, versionId, name })
+      return true
+    },
+  }
   const app = createApp(() => ({
     db,
     auth,
@@ -100,6 +114,7 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     destroyRoom: async (boardId) => {
       destroyed.push(boardId)
     },
+    versions: versionsRoom,
     assets: assetStore,
   }))
 
@@ -152,6 +167,8 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     digests,
     closedAll,
     destroyed,
+    versionStore,
+    restores,
     assets,
     assetStore,
     db,

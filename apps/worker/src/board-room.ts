@@ -58,6 +58,16 @@ export const COMPACT_AFTER_MS = 5 * 60 * 1000
 /** A DO SQLite row holds at most 2 MB, so a saved state is split into parts this size. */
 export const STATE_PART_BYTES = 1024 * 1024
 
+/** Versions (M5b ticket 06): one per hour of activity, the latest per day after 30 days… */
+export const VERSION_DAILY_AFTER_MS = 30 * 24 * 60 * 60 * 1000
+/** …and none after a year. */
+export const VERSION_KEEP_MS = 365 * 24 * 60 * 60 * 1000
+const HOUR_MS = 60 * 60 * 1000
+const DAY_MS = 24 * HOUR_MS
+
+/** One Version, as the history panel lists it. `by` names who restored, for restores. */
+export type VersionSummary = { id: number; at: number; kind: "auto" | "restore"; by: string | null }
+
 /**
  * Writes a Board's words to the search index (M5b ticket 04). Production: Postgres through
  * Hyperdrive. Room tests swap it on the instance (`runInDurableObject`).
@@ -117,6 +127,8 @@ export class BoardRoom extends DurableObject<Env> {
   private presenceWarm = false
   /** Where indexing writes; see SearchWriter. */
   searchWriter: SearchWriter = (boardId, body) => this.writeSearch(boardId, body)
+  /** The time Versions are stamped and thinned with. Room tests move it. */
+  clock: () => number = () => Date.now()
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -165,13 +177,115 @@ export class BoardRoom extends DurableObject<Env> {
    */
   private compact() {
     const parts = splitParts(Y.encodeStateAsUpdate(this.doc), this.statePartBytes())
+    const now = this.clock()
+    const restoredBy = this.meta("restored_by")
     this.ctx.storage.transactionSync(() => {
       this.ctx.storage.sql.exec("delete from state")
       for (const [part, data] of parts.entries()) {
         this.ctx.storage.sql.exec("insert into state (part, data) values (?, ?)", part, data)
       }
       this.ctx.storage.sql.exec("delete from updates")
+      // The same state is kept as a Version (ticket 06): after a restore, labeled with who did
+      // it; otherwise once per hour of activity.
+      if (restoredBy !== null) {
+        this.saveVersion(parts, now, "restore", restoredBy)
+        this.ctx.storage.sql.exec("delete from meta where key = 'restored_by'")
+      } else if (!this.hasVersionInHour(now)) {
+        this.saveVersion(parts, now, "auto", null)
+      }
     })
+  }
+
+  // ---------- Versions (M5b ticket 06) ----------
+
+  private hasVersionInHour(now: number) {
+    const start = now - (now % HOUR_MS)
+    return (
+      this.ctx.storage.sql
+        .exec("select 1 from versions where at >= ? and at < ? limit 1", start, start + HOUR_MS)
+        .toArray().length > 0
+    )
+  }
+
+  private saveVersion(
+    parts: Uint8Array[],
+    at: number,
+    kind: VersionSummary["kind"],
+    by: string | null,
+  ) {
+    const [row] = this.ctx.storage.sql
+      .exec<{ id: number }>(
+        "insert into versions (at, kind, by) values (?, ?, ?) returning id",
+        at,
+        kind,
+        by,
+      )
+      .toArray()
+    if (!row) return
+    for (const [part, data] of parts.entries()) {
+      this.ctx.storage.sql.exec(
+        "insert into version_parts (version_id, part, data) values (?, ?, ?)",
+        row.id,
+        part,
+        data,
+      )
+    }
+  }
+
+  /**
+   * Retention (PRD A7): every Version for 30 days, then the latest of each day, and nothing
+   * after a year. Days are UTC.
+   */
+  private thinVersions() {
+    const now = this.clock()
+    const daily = now - VERSION_DAILY_AFTER_MS
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec("delete from versions where at < ?", now - VERSION_KEEP_MS)
+      // The day is written into the SQL: a bound number may arrive as a REAL, which would make
+      // the division fractional and every Version its own "day".
+      this.ctx.storage.sql.exec(
+        `delete from versions where at < ?1 and at < (
+          select max(w.at) from versions w where w.at < ?1 and w.at / ${DAY_MS} = versions.at / ${DAY_MS}
+        )`,
+        daily,
+      )
+      this.ctx.storage.sql.exec(
+        "delete from version_parts where version_id not in (select id from versions)",
+      )
+    })
+  }
+
+  /** For the history panel (through the API, which checks the Role): newest first. */
+  async listVersions(): Promise<VersionSummary[]> {
+    return this.ctx.storage.sql
+      .exec<VersionSummary>("select id, at, kind, by from versions order by at desc, id desc")
+      .toArray()
+      .map((v) => ({ id: v.id, at: v.at, kind: v.kind, by: v.by }))
+  }
+
+  /** A Version's doc as one Yjs update, or null if there's no such Version. */
+  async versionState(id: number): Promise<Uint8Array | null> {
+    const parts = this.ctx.storage.sql
+      .exec<{ data: ArrayBuffer }>(
+        "select data from version_parts where version_id = ? order by part",
+        id,
+      )
+      .toArray()
+      .map((row) => new Uint8Array(row.data))
+    return parts.length > 0 ? joinParts(parts) : null
+  }
+
+  /**
+   * A restore happened (the restorer's client applied it as an ordinary edit, ticket 07): the
+   * next compaction keeps a `restore` Version labeled with their name. False if there's no
+   * such Version.
+   */
+  async noteRestore(id: number, name: string): Promise<boolean> {
+    const found = this.ctx.storage.sql.exec("select 1 from versions where id = ?", id).toArray()
+    if (found.length === 0) return false
+    this.setMeta("restored_by", name)
+    await this.ensureAlarm()
+    return true
   }
 
   private async ensureAlarm(at = Date.now() + COMPACT_AFTER_MS) {
@@ -184,7 +298,9 @@ export class BoardRoom extends DurableObject<Env> {
    * runs at most once every 5 minutes.
    */
   async alarm() {
-    if (this.pendingUpdates() > 0) this.compact()
+    // A restore that changed nothing still gets its Version.
+    if (this.pendingUpdates() > 0 || this.meta("restored_by") !== null) this.compact()
+    this.thinVersions()
     await this.index()
   }
 
@@ -260,6 +376,13 @@ export class BoardRoom extends DurableObject<Env> {
     // Role, so the change wins over the token until the token expires.
     this.ctx.storage.sql.exec(
       "create table if not exists access (user_id text primary key, role text, changed_at integer not null)",
+    )
+    // Versions (M5b ticket 06): saved states, in parts like `state`.
+    this.ctx.storage.sql.exec(
+      "create table if not exists versions (id integer primary key autoincrement, at integer not null, kind text not null, by text)",
+    )
+    this.ctx.storage.sql.exec(
+      "create table if not exists version_parts (version_id integer not null, part integer not null, data blob not null, primary key (version_id, part))",
     )
     // Small facts about the room (M5b): its Board's id, and a hash of the last indexed text.
     this.ctx.storage.sql.exec(

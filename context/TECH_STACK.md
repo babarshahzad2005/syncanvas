@@ -156,16 +156,16 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 |---|---|---|
 | `updates` | `seq INTEGER PK, data BLOB, at INTEGER` | Append-only Yjs updates since the last compaction |
 | `state` | `part INTEGER PK, data BLOB` | Latest compacted doc, split into 1 MB parts (SQLite rows hold at most 2 MB) |
-| `versions` | `id, at, doc BLOB, kind: auto\|restore` | Version history (hourly for 30 days, then daily for a year) |
+| `versions`, `version_parts` | `id, at, kind: auto\|restore, by` and `version_id, part, data` (split like `state`) | Version history (hourly for 30 days, then daily for a year; M5b ticket 06) |
 | `thread_anchors` | `element_id PK` | Elements with Threads, so the board room reports their last position when they're deleted |
 
 **Alarms** (`ctx.storage.setAlarm`) drive three jobs:
 - **Compaction:** at 500 stored updates (at once), or 5 minutes after the first update since the last compaction (the alarm), replace `state` and `updates` with one encoded state, in one transaction. A room that wakes with leftover updates compacts or sets the alarm.
-- **Version thinning:** apply the retention rules.
+- **Versions** (M5b ticket 06): each compaction keeps its state as an `auto` Version when the current hour has none. After a restore (`noteRestore`), the next compaction keeps a `restore` Version labeled with the restorer's name, even in the same hour or with nothing changed. Every alarm thins: all Versions for 30 days, then the latest of each UTC day, and none after a year.
 - **Text extraction** (M5b ticket 04): on the alarm, after compaction, the room gathers the text of text Elements and sticky notes (`boardText`, up to 200,000 characters). When its hash differs from the last one written (kept in the room's `meta` table), it upserts `board_search` itself through Hyperdrive, with one short connection per write. A failed write sets an alarm 5 minutes on to try again. The alarm is never pushed back once set, so a busy Board still indexes every 5 minutes.
 
 ### RPC surface (called from the API in the same Worker)
-`setRole(userId, role)`, `kick(userId | 'guests' | 'embeds')`, `closeAll()` (deletion), `broadcast(event)`, `listVersions()`, `previewVersion(id)`, `restoreVersion(id, userId)`.
+`setRole(userId, role)`, `kick(userId | 'guests' | 'embeds')`, `closeAll()` (deletion), `broadcast(event)`, `listVersions()`, `versionState(id)` (the Version as one Yjs update), `noteRestore(id, name)`. Restores are applied in the restorer's client (ticket 07), never by the room.
 
 **Static fallback image:** the server never renders, so while the Board is at its cap, the board room sends a `refresh-static` request to one connected Editor every 30 s. That client renders a PNG (≤ 1 MB, to fit a 2 MB SQLite row) and sends it back over its socket. The board room stores it in a `static_image` table in its own SQLite storage, not KV (ADR 0007), and serves it at `/ws/{boardId}/static.png`, which turned-away viewers poll.
 

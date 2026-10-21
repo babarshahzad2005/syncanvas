@@ -27,6 +27,7 @@ import {
   type ThreadView,
   type ThumbnailResponse,
   type UserSettings,
+  type VersionsResponse,
 } from "@syncanvas/shared"
 import { eq } from "drizzle-orm"
 import { Hono } from "hono"
@@ -105,6 +106,7 @@ import {
   setThreadStatus,
 } from "./threads"
 import { type AssetStore, kvAssetStore, readThumbnail, uploadThumbnail } from "./thumbnails"
+import { listVersions, noteRestore, type VersionsRoom, versionState } from "./versions"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
 export type Services = {
@@ -123,6 +125,8 @@ export type Services = {
   closeAll: CloseAll
   /** Closes everything and deletes a Board's room storage, before deleting it for good. */
   destroyRoom: DestroyRoom
+  /** The board room's Version history (M5b ticket 06). */
+  versions: VersionsRoom
   /** Board thumbnails (M5a ticket 05) and images (M5b ticket 02) in Workers KV. */
   assets: AssetStore
   dispose?: () => Promise<void>
@@ -156,6 +160,12 @@ export const productionServices: ServicesFactory = (env) => {
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).closeAll()
   const destroyRoom: DestroyRoom = (boardId) =>
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).destroy()
+  const room = (boardId: string) => env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId))
+  const versions: VersionsRoom = {
+    list: (boardId) => room(boardId).listVersions(),
+    state: (boardId, id) => room(boardId).versionState(id),
+    noteRestore: (boardId, id, name) => room(boardId).noteRestore(id, name),
+  }
   return {
     db,
     auth,
@@ -166,6 +176,7 @@ export const productionServices: ServicesFactory = (env) => {
     sendDigest,
     closeAll,
     destroyRoom,
+    versions,
     assets: kvAssetStore(env.ASSETS),
     dispose: close,
   }
@@ -396,6 +407,43 @@ export function createApp(services: ServicesFactory = productionServices) {
         "cache-control": thumb.fresh ? "private, max-age=31536000, immutable" : "private, no-cache",
       },
     })
+  })
+
+  // ---------- Version history (M5b ticket 06): Editors and the Owner only ----------
+
+  app.get("/boards/:id/versions", async (c) => {
+    const body: VersionsResponse = {
+      versions: await listVersions(c.var.services.db, c.var.services.versions, {
+        boardId: c.req.param("id"),
+        caller: c.var.user,
+      }),
+    }
+    return c.json(body)
+  })
+
+  app.get("/boards/:id/versions/:versionId", async (c) => {
+    const state = await versionState(c.var.services.db, c.var.services.versions, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+      versionId: c.req.param("versionId"),
+    })
+    return new Response(state, {
+      headers: {
+        "content-type": "application/octet-stream",
+        // A Version never changes; only people who may see history get it.
+        "cache-control": "private, max-age=31536000, immutable",
+      },
+    })
+  })
+
+  app.post("/boards/:id/versions/:versionId/restored", async (c) => {
+    await noteRestore(c.var.services.db, c.var.services.versions, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+      versionId: c.req.param("versionId"),
+      name: displayNameOf(c.var.user),
+    })
+    return c.json({ ok: true })
   })
 
   // ---------- Images (M5b ticket 02) ----------

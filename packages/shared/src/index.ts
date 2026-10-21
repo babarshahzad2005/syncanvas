@@ -61,6 +61,14 @@ export function snippetParts(snippet: string): { text: string; match: boolean }[
   return parts
 }
 
+/**
+ * One saved Version of a Board (M5b ticket 06): an hourly `auto` one, or the state after a
+ * restore, with who did it.
+ */
+export type VersionInfo = { id: number; at: string; kind: "auto" | "restore"; by: string | null }
+/** GET /api/boards/:id/versions, newest first. */
+export type VersionsResponse = { versions: VersionInfo[] }
+
 /** One of your Folders (private, one level), with how many of your Boards are in it. */
 export type FolderSummary = { id: string; name: string; boardCount: number }
 
