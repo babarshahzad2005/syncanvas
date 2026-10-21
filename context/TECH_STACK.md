@@ -290,7 +290,7 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
 
 **GitHub Actions (`.github/workflows/ci.yml`, `pr-cleanup.yml`):**
 1. Every PR and every push to `main`: `pnpm check` (Biome, typecheck, unit, integration, and workerd room tests).
-2. PRs only: one job creates the Neon `pr-N` branch and migrates it. Then three shards share it, each generating local secrets for its run and running `pnpm e2e --shard=N/3` (CI retries a failed spec once and skips the e2e user cleanup, since the branch is thrown away). Each shard uploads its Playwright report on failure.
+2. PRs labeled `full-e2e` only (once per milestone, at its exit ticket, to save Actions minutes; other PRs run step 1 alone): one job creates the Neon `pr-N` branch and migrates it. Then three shards share it, each generating local secrets for its run and running `pnpm e2e --shard=N/3` (CI retries a failed spec once and skips the e2e user cleanup, since the branch is thrown away). Each shard uploads its Playwright report on failure.
 3. Pushes to `main` only (`production` environment): migrate the production database, then `pnpm release` (build, delete `.dev.vars` from the output, `wrangler deploy`).
 4. When a PR closes: delete its `pr-N` Neon branch.
 

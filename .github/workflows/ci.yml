@@ -1,16 +1,20 @@
 name: CI
 
-# Every pull request: lint, types, unit/integration tests, then the browser tests against
-# `pnpm dev` on a temporary Neon branch, split across three machines that share it. Every push to main: the same checks, then migrate
-# the production database (Neon main) and deploy to Cloudflare. (TECH_STACK §10, ticket 10.)
+# Every pull request: lint, types, unit/integration tests. The browser tests (against
+# `pnpm dev` on a temporary Neon branch, split across three machines that share it) run only
+# when the PR gets the `full-e2e` label: once per milestone, at its exit ticket, to save
+# Actions minutes (the repo is private: 2,000 a month). Every push to main: the same checks,
+# then migrate the production database (Neon main) and deploy to Cloudflare. (TECH_STACK §10.)
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Labeling a PR starts the browser tests in their own group, so it doesn't cancel the checks.
+  group: ci-${{ github.ref }}-${{ github.event.action == 'labeled' && 'e2e' || 'checks' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -19,6 +23,8 @@ permissions:
 jobs:
   checks:
     name: Lint, types, tests
+    # Not again when a label is added: the commit's checks already ran.
+    if: github.event.action != 'labeled'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,7 +38,7 @@ jobs:
 
   e2e-db:
     name: Browser test database
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'full-e2e'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -60,8 +66,8 @@ jobs:
 
   e2e:
     name: Browser tests (${{ matrix.shard }}/3)
-    if: github.event_name == 'pull_request'
-    needs: [checks, e2e-db]
+    if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'full-e2e'
+    needs: e2e-db
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
