@@ -29,6 +29,7 @@ import type * as Y from "yjs"
 import { BoardCanvas, type CanvasHandle } from "@/board/board-canvas"
 import { Dock, UndoZoomPill } from "@/board/chrome"
 import { pictureOf } from "@/board/clipboard"
+import { ExportDialog } from "@/board/export-dialog"
 import { closeHistory, HistoryPanel, openHistory, PreviewBanner, useHistory } from "@/board/history"
 import { imageCache } from "@/board/images"
 import { errorMessage, ROLE_LABEL, ShareButton } from "@/board/share-dialog"
@@ -338,6 +339,7 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
         )}
         <TitlePill
           boardId={boardId}
+          doc={doc}
           title={board?.title}
           status={status}
           readOnly={role ? !canEdit(role) : false}
@@ -527,7 +529,7 @@ function BoardSurface({
   )
 }
 
-/** Top-left title pill. The Board menu (rename, theme, export…) arrives in M1. */
+/** Top-left title pill, with the Board menu (rename, Version history, export, delete). */
 function TitlePill({
   boardId,
   title,
@@ -537,8 +539,11 @@ function TitlePill({
   onRenamed,
   onHistory,
   onDelete,
+  doc,
 }: {
   boardId: string
+  /** The Board's doc once it's loaded: export draws from it (M6). */
+  doc: Y.Doc | null
   title?: string
   status: ConnectionStatus
   readOnly: boolean
@@ -551,6 +556,7 @@ function TitlePill({
   onDelete?: () => Promise<void>
 }) {
   const [renaming, setRenaming] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [pending, setPending] = useState(false)
   return (
@@ -572,7 +578,7 @@ function TitlePill({
         <span className="type-body-strong max-w-64 truncate">{title ?? "Loading…"}</span>
         <TitleStatus status={status} readOnly={readOnly} />
       </Link>
-      {/* The Board menu (DESIGN.md → title pill): rename now; theme and export come later. */}
+      {/* The Board menu (DESIGN.md → title pill). */}
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -594,6 +600,9 @@ function TitlePill({
               <History /> Version history…
             </DropdownMenuItem>
           )}
+          <DropdownMenuItem disabled={!doc} onClick={() => setExporting(true)}>
+            <Download /> Export…
+          </DropdownMenuItem>
           <DropdownMenuItem render={<Link to="/" />}>
             <LayoutGrid /> Back to your boards
           </DropdownMenuItem>
@@ -620,6 +629,7 @@ function TitlePill({
           }}
         />
       )}
+      {doc && <ExportDialog open={exporting} onOpenChange={setExporting} doc={doc} title={title} />}
       <RenameDialog
         boardId={boardId}
         title={title ?? ""}

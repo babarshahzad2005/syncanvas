@@ -1082,29 +1082,33 @@ function drawSnapPoints(
   }
 }
 
-// ---------- Pictures (clipboard PNG; later exports and thumbnails) ----------
+// ---------- Pictures (clipboard PNG, PNG export, thumbnails) ----------
 
-/** Largest picture side, in pixels: big selections are scaled down to fit. */
+/** Largest clipboard picture side, in pixels: big selections are scaled down to fit. */
 const IMAGE_MAX_SIDE = 4096
+/** Largest PNG export side (PRD Limits): bigger exports are scaled down, with a notice. */
+export const EXPORT_MAX_SIDE = 8192
 
 /**
  * The pixel size for a picture of `bounds` (world units) with `padding` around it, at
- * `scale` pixels per unit, shrunk to fit IMAGE_MAX_SIDE.
+ * `scale` pixels per unit, shrunk to fit `maxSide`. `scale` is what was used: below the one
+ * asked for when the picture had to shrink.
  */
 export function imageSize(
   bounds: { w: number; h: number },
   scale = 2,
   padding = 16,
+  maxSide = IMAGE_MAX_SIDE,
 ): { w: number; h: number; scale: number } {
   const w = bounds.w + padding * 2
   const h = bounds.h + padding * 2
-  const fit = Math.min(scale, IMAGE_MAX_SIDE / Math.max(w, h, 1))
+  const fit = Math.min(scale, maxSide / Math.max(w, h, 1))
   return { w: Math.max(1, Math.ceil(w * fit)), h: Math.max(1, Math.ceil(h * fit)), scale: fit }
 }
 
 /**
- * Draws `elements` (with `byId` for connector ends) into a context sized by `imageSize`:
- * light theme, no grid, no selection, the bounds framed by the padding.
+ * Draws `elements` (with `byId` for connector ends) into a context sized by `imageSize`: no
+ * grid, no selection, the bounds framed by the padding, in the light theme unless asked.
  */
 export function drawImage(
   ctx: CanvasRenderingContext2D,
@@ -1114,6 +1118,7 @@ export function drawImage(
   size: { w: number; h: number; scale: number },
   padding = 16,
   images?: ImageSource,
+  theme: Theme = "light",
 ) {
   drawScene(ctx, {
     images,
@@ -1124,7 +1129,7 @@ export function drawImage(
       x: (padding - bounds.x) * size.scale,
       y: (padding - bounds.y) * size.scale,
     },
-    theme: "light",
+    theme,
     size: { w: size.w, h: size.h },
     dpr: 1,
     selection: new Set(),

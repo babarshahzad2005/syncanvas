@@ -85,3 +85,32 @@ describe("image Elements", () => {
     expect(hitTest([picture], { x: 300, y: 60 }, 1)).toBe(null)
   })
 })
+
+describe("pictures", () => {
+  it("draw in the theme asked for, light by default", async () => {
+    const { drawImage } = await import("./index")
+    const fills = (theme?: "light" | "dark") => {
+      const set: string[] = []
+      const ctx = new Proxy({} as Record<string, unknown>, {
+        get: () => () => {},
+        set: (_t, name, value) => {
+          if (name === "fillStyle") set.push(String(value))
+          return true
+        },
+      }) as unknown as CanvasRenderingContext2D
+      drawImage(
+        ctx,
+        [],
+        new Map(),
+        { x: 0, y: 0, w: 10, h: 10 },
+        { w: 42, h: 42, scale: 1 },
+        16,
+        undefined,
+        theme,
+      )
+      return set[0]
+    }
+    expect(fills()).toBe("#F8F7F4")
+    expect(fills("dark")).toBe("#161514")
+  })
+})
