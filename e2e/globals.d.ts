@@ -32,6 +32,8 @@ declare global {
       /** How far an image file has got: "ready", "loading", "missing", or null (M5b). */
       image: (key: string) => string | null
     }
+    /** The Elements of the Version being previewed (M5b ticket 07). */
+    __syncanvasPreview?: { elements: () => { type: string }[] }
   }
 }
 

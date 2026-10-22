@@ -1,4 +1,5 @@
 import { applyTemplate, createUndoManager, indexById, listElements } from "@syncanvas/board-model"
+import type { Camera } from "@syncanvas/renderer"
 import {
   canComment,
   canEdit,
@@ -15,6 +16,7 @@ import {
   CloudOff,
   Download,
   Eye,
+  History,
   LayoutGrid,
   Loader2,
   Lock,
@@ -27,6 +29,7 @@ import type * as Y from "yjs"
 import { BoardCanvas, type CanvasHandle } from "@/board/board-canvas"
 import { Dock, UndoZoomPill } from "@/board/chrome"
 import { pictureOf } from "@/board/clipboard"
+import { closeHistory, HistoryPanel, openHistory, PreviewBanner, useHistory } from "@/board/history"
 import { imageCache } from "@/board/images"
 import { errorMessage, ROLE_LABEL, ShareButton } from "@/board/share-dialog"
 import { ShortcutSheet } from "@/board/shortcut-sheet"
@@ -340,6 +343,11 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
           readOnly={role ? !canEdit(role) : false}
           canRename={!guestLink && status === "online" && role !== null && canRename(role)}
           onRenamed={(title) => connection?.renamed(title)}
+          onHistory={
+            !guestLink && status === "online" && role !== null && canEdit(role)
+              ? openHistory
+              : undefined
+          }
           onDelete={!guestLink && role === "owner" ? deleteBoard : undefined}
         />
         {/* Top right: the presence pill, then Share (DESIGN.md → Board screen). */}
@@ -439,10 +447,50 @@ function BoardSurface({
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset whenever the doc changes
   useEffect(() => useComments.getState().close(), [doc])
 
+  // Version history (M5b ticket 07): a previewed Version replaces the canvas, read-only, until
+  // "Back to current" or Restore. History closes with the Board, or when editing is lost.
+  const preview = useHistory((s) => s.preview)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: close whenever the doc changes
+  useEffect(() => closeHistory, [doc])
+  useEffect(() => {
+    if (!editable || !online) closeHistory()
+  }, [editable, online])
+  const previewOrigin = useMemo(() => ({ tab: "preview" }), [])
+  const previewUndo = useMemo(
+    () => (preview ? createUndoManager(preview.doc, previewOrigin) : null),
+    [preview, previewOrigin],
+  )
+  // Switching between the live Board and a Version keeps the view where it was.
+  const shown = preview?.version.id ?? null
+  const switched = useRef({ shown, camera: undefined as Camera | undefined })
+  if (switched.current.shown !== shown) {
+    switched.current = { shown, camera: useCanvasView.getState().camera }
+  }
+
   const canvas = useRef<CanvasHandle>(null)
   useTemplateFromLink(doc, origin, editable && online && undoManager !== null, canvas)
   useThumbnailOnLeave(boardId, doc, editable)
   if (!undoManager) return null
+  if (preview && previewUndo) {
+    return (
+      <>
+        <BoardCanvas
+          key={preview.version.id}
+          ref={canvas}
+          boardId={boardId}
+          doc={preview.doc}
+          origin={previewOrigin}
+          undoManager={previewUndo}
+          canEdit={false}
+          initialCamera={switched.current.camera}
+          preview
+        />
+        <PreviewBanner boardId={boardId} doc={doc} origin={origin} undoManager={undoManager} />
+        <HistoryPanel boardId={boardId} />
+        <UndoZoomPill undoManager={previewUndo} canvas={canvas} canEdit={false} />
+      </>
+    )
+  }
   return (
     <>
       <BoardCanvas
@@ -454,7 +502,9 @@ function BoardSurface({
         canEdit={editable}
         canComment={canCommentNow}
         connection={connection}
+        initialCamera={switched.current.camera}
       />
+      <HistoryPanel boardId={boardId} />
       <PinLayer
         boardId={boardId}
         threads={threads}
@@ -485,6 +535,7 @@ function TitlePill({
   readOnly,
   canRename,
   onRenamed,
+  onHistory,
   onDelete,
 }: {
   boardId: string
@@ -494,6 +545,8 @@ function TitlePill({
   /** The Owner and Editors, while connected (M5a ticket 01). */
   canRename: boolean
   onRenamed: (title: string) => void
+  /** Editors and the Owner, while connected (M5b ticket 07): opens Version history. */
+  onHistory?: () => void
   /** The Owner only: sends the Board to Trash (M5a ticket 03). */
   onDelete?: () => Promise<void>
 }) {
@@ -536,6 +589,11 @@ function TitlePill({
           <DropdownMenuItem disabled={!canRename} onClick={() => setRenaming(true)}>
             <Pencil /> Rename…
           </DropdownMenuItem>
+          {onHistory && (
+            <DropdownMenuItem onClick={onHistory}>
+              <History /> Version history…
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem render={<Link to="/" />}>
             <LayoutGrid /> Back to your boards
           </DropdownMenuItem>

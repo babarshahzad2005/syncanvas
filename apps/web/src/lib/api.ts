@@ -22,6 +22,7 @@ import type {
   ThreadView,
   ThumbnailResponse,
   UserSettings,
+  VersionsResponse,
 } from "@syncanvas/shared"
 
 export class ApiError extends Error {
@@ -191,6 +192,22 @@ export const api = {
       headers: { "content-type": image.type || "application/octet-stream" },
     }),
 
+  // ---------- Version history (M5b tickets 06–07) ----------
+  versions: (boardId: string) => request<VersionsResponse>(`${board(boardId)}/versions`),
+  /** A Version's doc as one Yjs update. */
+  versionState: async (boardId: string, versionId: number) => {
+    const res = await fetch(`${board(boardId)}/versions/${versionId}`, {
+      credentials: "same-origin",
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new ApiError(res.status, body?.error ?? `Request failed (${res.status})`)
+    }
+    return new Uint8Array(await res.arrayBuffer())
+  },
+  noteRestore: (boardId: string, versionId: number) =>
+    request<{ ok: true }>(`${board(boardId)}/versions/${versionId}/restored`, { method: "POST" }),
+
   // ---------- Folders (M5a ticket 02) ----------
   createFolder: (name: string) =>
     request<FolderSummary>("/api/folders", { method: "POST", body: JSON.stringify({ name }) }),
@@ -219,4 +236,5 @@ export const queryKeys = {
   notifications: ["notifications"] as const,
   settings: ["settings"] as const,
   search: (q: string) => ["search", q] as const,
+  versions: (boardId: string) => ["versions", boardId] as const,
 }

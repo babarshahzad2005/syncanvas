@@ -120,6 +120,7 @@ const ARROWS: Record<string, Point> = {
 
 export type CanvasHandle = {
   zoomBy: (factor: number) => void
+  camera: () => Camera
   zoomTo: (zoom: number) => void
   fit: () => void
 }
@@ -183,6 +184,10 @@ type Props = {
   canComment?: boolean
   /** The live connection: presence goes out and comes in through it. */
   connection?: BoardConnection | null
+  /** Where to look at first (else the world origin in the middle). */
+  initialCamera?: Camera
+  /** A Version previewed read-only (M5b ticket 07): its test hook is `__syncanvasPreview`. */
+  preview?: boolean
 }
 
 declare global {
@@ -193,6 +198,8 @@ declare global {
       camera: () => Camera
       image: (key: string) => string | null
     }
+    /** Test hook: the Elements of the Version being previewed (M5b ticket 07). */
+    __syncanvasPreview?: { elements: () => ElementWithId[] }
     /** Test hook: every other tab's presence state, as this tab sees it. */
     __syncanvasPresence?: () => Record<string, unknown>[]
   }
@@ -289,7 +296,17 @@ function previewOf(
 }
 
 export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
-  { boardId, doc, origin, undoManager, canEdit, canComment = false, connection = null },
+  {
+    boardId,
+    doc,
+    origin,
+    undoManager,
+    canEdit,
+    canComment = false,
+    connection = null,
+    initialCamera,
+    preview = false,
+  },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -428,6 +445,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
   )
 
   useImperativeHandle(ref, () => ({
+    camera: () => state.current.camera,
     zoomBy: (factor) => {
       const { size, camera } = state.current
       setCamera(zoomAt(camera, { x: size.w / 2, y: size.h / 2 }, factor))
@@ -600,15 +618,20 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
     }
     render()
     elements.observeDeep(refresh)
-    if (window.__SYNCANVAS_TEST__) {
+    if (window.__SYNCANVAS_TEST__ && preview) {
+      window.__syncanvasPreview = { elements: () => listElements(doc) }
+    } else if (window.__SYNCANVAS_TEST__) {
       window.__syncanvas = {
         elements: () => listElements(doc),
         camera: () => state.current.camera,
         image: (key) => imageCache.stateOf(key),
       }
     }
-    return () => elements.unobserveDeep(refresh)
-  }, [doc, render])
+    return () => {
+      elements.unobserveDeep(refresh)
+      if (preview) window.__syncanvasPreview = undefined
+    }
+  }, [doc, render, preview])
 
   // Text is measured with Geist; until the web font loads, measurements use a fallback font.
   // Re-measure once it's ready.
@@ -630,6 +653,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
   }, [render])
 
   // Size the canvas to its box at device-pixel resolution.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: initialCamera only counts at first
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -641,8 +665,9 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
       canvas.width = Math.round(box.width * s.dpr)
       canvas.height = Math.round(box.height * s.dpr)
       if (!s.cameraReady) {
-        // Start with the world origin in the middle of the screen.
-        s.camera = { x: box.width / 2, y: box.height / 2, zoom: 1 }
+        // Start where asked (switching to or from a Version), else with the world origin in
+        // the middle of the screen.
+        s.camera = initialCamera ?? { x: box.width / 2, y: box.height / 2, zoom: 1 }
         s.cameraReady = true
       }
       render()

@@ -71,7 +71,8 @@ export function parsePayload(json: unknown): ElementWithId[] {
   return out
 }
 
-function toYMap(fields: Record<string, unknown>): Y.Map<unknown> {
+/** Plain field values as an Element's Y.Map (text as a Y.Text). */
+export function toYMap(fields: Record<string, unknown>): Y.Map<unknown> {
   const ymap = new Y.Map<unknown>()
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined) continue
