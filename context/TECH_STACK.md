@@ -219,7 +219,7 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | `memberships` | `board_id`, `user_id`, `role`, `via: owner\|invitation\|share_link`, PK (`board_id`, `user_id`) |
 | `invitations` | `id`, `board_id`, `email`, `role`, `invited_by`, `expires_at`, `accepted_at` |
 | `share_links` | `board_id` (unique), `token_hash`, `role`, `expires_at` |
-| `embeds` | `board_id` (unique), `token_hash`, `revoked_at` |
+| `embeds` | `board_id` (PK, cascade), `token_hash` (SHA-256), `created_at`, `revoked_at`. Turning the Embed on again replaces the token (M6 ticket 05) |
 | `folders` | `id`, `user_id`, `name` |
 | `board_placements` | `user_id`, `board_id`, `folder_id?`, `favorite`, `last_opened_at`, PK (`user_id`, `board_id`) |
 | `threads` | `id`, `board_id`, `element_id?`, `x?`, `y?`, `last_x?`, `last_y?`, `status`, `created_by` |
@@ -274,8 +274,8 @@ Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `webs
 | S7 Access enforced on the server | The same pool: forged Viewer updates rejected; `setRole` and `kick` take effect within 1 s | Every PR |
 | API routes | Vitest calling the Hono app directly, on PGlite (in-memory Postgres) with the real Drizzle migrations; magic-link sender swapped for an in-memory outbox | Every PR |
 | End-to-end collaboration | Playwright with multiple browser contexts on one Board. Locally it drives the installed Microsoft Edge (`channel: "msedge"`, no browser download). Sign-in reads links from a dev-only inbox (`/api/dev/magic-link`, on only with `DEV_MAGIC_LINK_INBOX=on` on localhost) | Affected specs locally (`pnpm e2e <files>`); the full suite on every PR in CI, three shards, one retry |
-| S8 Export fidelity | Playwright: render a fixed Board corpus, export, rasterize, compare with `pixelmatch` (threshold set per format) | PR preview |
-| S5 60 fps, S6 open time | Playwright + Chrome DevTools Protocol tracing and network throttling (10 Mbps / 50 ms RTT) | Nightly on `main` |
+| S8 Export fidelity | Playwright: render a fixed Board corpus, export, rasterize, compare with `pixelmatch` (threshold set per format) | CI with the `full-e2e` label (once per milestone) |
+| S5 60 fps, S6 open time | Playwright + Chrome DevTools Protocol tracing and network throttling (10 Mbps / 50 ms RTT) | Locally, by hand (M6 planning: no CI minutes to spare); results in `docs/benchmarks.md` |
 | S3 Latency, S4 20 Editors | `tools/loadtest`: Node, `ws` + `yjs`, N clients, timestamps embedded in updates, p50/p95/p99 | Long runs locally against `wrangler dev`; short confirmation runs against production (free-tier daily limits); results go in the README |
 
 ---

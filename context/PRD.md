@@ -131,7 +131,7 @@ If the schedule slips, **cut in this order:** (1) Version history, (2) email dig
 | **M4 Comments and notifications** | Threads, pins, Mentions, replies, resolve, notification list, digest with unsubscribe | Two browsers: a Commenter pins a Thread to an Element and mentions the Owner, who sees the pin and the Notification live; the pin follows the Element, detaches when it's deleted, and reattaches on undo. Viewers and Guests are refused every comment write |
 | **M5a Dashboard and Board lifecycle** | Folders, favorites, sort by last opened, rename, Trash (restore, delete forever), owned-Board quota, templates, thumbnails, Settings and account deletion | A new User makes a Board from a template, renames it, files it in a Folder and stars it; the dashboard shows its thumbnail and sorts by last opened. Deleting it closes a Collaborator's open connection at once and moves it to Trash; Restore brings it back with its Members and Threads. Deleting the account removes its owned Boards and leaves its comments as "Deleted user" |
 | **M5b Content** | Compaction, images, search, then Versions (Versions last: first to cut) | An Editor drops a PNG and a Collaborator sees it live, while a Viewer can't upload. Search finds a Board by text on one of its sticky notes and never returns someone else's Board. After 500+ edits the Board compacts and reloads identical. An Editor previews an older Version and restores it, the restore can be undone, and a Viewer never sees history |
-| **M6 Export, Embed, hardening** | PNG/SVG/PDF export, Embed, Share Link expiry, load and perf tests, README and portfolio write-up with a live Embed | S3–S6 and S8 green |
+| **M6 Export, Embed, hardening** | PNG/SVG/PDF export, Embed, busy fallback picture, load and perf tests (Share Link expiry shipped in M3). The README and portfolio write-up with a live Embed come in the final publish session | S3–S6 measured and recorded, S8 green. One browser spec: the three exports download; an Embed updates live and stops on revoke; a turned-away Guest sees the picture |
 
 ## 9. Open questions
 
@@ -283,6 +283,11 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 - Exports contain Elements only: no pins, cursors, or selection outlines. They render in the light theme by default, with a dark option.
 - **Embed:** the Owner switches it on to get an iframe snippet backed by its own read-only token. It doesn't expire by default and can be revoked on its own; the Share Link doesn't affect it.
 - The Embed viewer is lightweight, updates live, and shows Board content only: no Threads, pins, or cursors.
+- **Export entry** (M6 planning): Board menu → "Export…" opens a dialog (format, Selection or Whole board, Light or Dark) and downloads at once. Everyone who can see the Board can export, Guests included; the Embed viewer can't. PNG is drawn at 2×. The PDF library loads only when PDF is chosen.
+- **Embed management** (M6 planning): an "Embed" section in the Share dialog, Owner only. Switching it on shows the iframe snippet; switching it off revokes it at once; switching it on again issues a new token.
+- **Embed viewer** (M6 planning): fitted to the whole Board, pan and zoom, no selection, a small "Syncanvas" badge, light unless `?theme=dark`.
+- **Busy fallback** (M6 planning): a turned-away Guest or Embed viewer sees the Board's latest thumbnail, refreshed every 30 s; without one, the busy message alone.
+- **Measurements** (M6 planning): S3 and S4 run locally against `wrangler dev` plus one short production run; S5 and S6 run as local Playwright scripts; results in `docs/benchmarks.md`. S8 runs in CI with the `full-e2e` label. Cut order if time runs short: PDF, then the busy fallback, then the live load-test run.
 
 ---
 
