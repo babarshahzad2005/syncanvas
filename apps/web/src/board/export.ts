@@ -137,14 +137,28 @@ function geistFontCss(): Promise<string> {
   return fontCss
 }
 
-/** Each image's file as a data URL, so the SVG stands alone; null where it couldn't be read. */
-async function imageDataUrls(elements: readonly ElementWithId[]) {
+/** An image file re-encoded as PNG (PDF libraries read PNG and JPEG, not WebP or GIF). */
+async function asPng(blob: Blob): Promise<Blob> {
+  if (blob.type === "image/png" || blob.type === "image/jpeg") return blob
+  const bitmap = await createImageBitmap(blob)
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0)
+  bitmap.close()
+  return canvas.convertToBlob({ type: "image/png" })
+}
+
+/**
+ * Each image's file as a data URL, so the file stands alone; null where it couldn't be read
+ * (drawn as its placeholder). `pngOnly` re-encodes WebP and GIF, for PDF.
+ */
+async function imageDataUrls(elements: readonly ElementWithId[], pngOnly = false) {
   const keys = [...new Set(elements.flatMap((e) => (e.type === "image" ? [e.key] : [])))]
   const urls = new Map<string, string>()
   await Promise.all(
     keys.map(async (key) => {
       try {
-        urls.set(key, await dataUrl(await imageCache.blob(key)))
+        const blob = await imageCache.blob(key)
+        urls.set(key, await dataUrl(pngOnly ? await asPng(blob) : blob))
       } catch {
         // Drawn as its placeholder.
       }
@@ -153,16 +167,88 @@ async function imageDataUrls(elements: readonly ElementWithId[]) {
   return (e: ImageElement) => urls.get(e.key) ?? null
 }
 
-/** The Elements as a standalone SVG (`byId` holds every Element, for connector ends). */
+/** The Elements as standalone SVG text (`byId` holds every Element, for connector ends). */
+async function svgText(
+  elements: readonly ElementWithId[],
+  byId: ReadonlyMap<string, ElementWithId>,
+  theme: Theme,
+  pngOnly = false,
+) {
+  const [css, imageData] = await Promise.all([geistFontCss(), imageDataUrls(elements, pngOnly)])
+  const bounds = boundsOf(elements, byId) ?? { x: 0, y: 0, w: 1, h: 1 }
+  return toSvg(elements, byId, bounds, { theme, imageData, fontCss: css })
+}
+
+/** The Elements as a standalone SVG file. */
 export async function exportSvg(
   elements: readonly ElementWithId[],
   byId: ReadonlyMap<string, ElementWithId>,
   theme: Theme,
 ): Promise<Blob> {
-  const [css, imageData] = await Promise.all([geistFontCss(), imageDataUrls(elements)])
-  const bounds = boundsOf(elements, byId) ?? { x: 0, y: 0, w: 1, h: 1 }
-  const svg = toSvg(elements, byId, bounds, { theme, imageData, fontCss: css })
-  return new Blob([svg], { type: "image/svg+xml" })
+  return new Blob([await svgText(elements, byId, theme)], { type: "image/svg+xml" })
+}
+
+// ---------- PDF (M6 ticket 03) ----------
+
+/** The largest page a PDF may have, in points (the format's limit is 14,400). */
+export const PDF_MAX_SIDE = 14_400
+
+/**
+ * The page for an SVG of `w` × `h` canvas units: one unit per point, scaled down to fit
+ * PDF_MAX_SIDE.
+ */
+export function pdfPageSize(w: number, h: number) {
+  const k = Math.min(1, PDF_MAX_SIDE / Math.max(w, h, 1))
+  return { w: w * k, h: h * k }
+}
+
+const base64Of = async (url: string) =>
+  (await dataUrl(await (await fetch(url)).blob())).replace(/^data:[^,]*,/, "")
+
+/**
+ * The Elements as a one-page vector PDF: the SVG converted by svg2pdf.js, with Geist
+ * registered so text stays text. Both libraries load only now, never with the app.
+ */
+export async function exportPdf(
+  elements: readonly ElementWithId[],
+  byId: ReadonlyMap<string, ElementWithId>,
+  theme: Theme,
+): Promise<Blob> {
+  const [svg, { jsPDF }, { svg2pdf }, fonts] = await Promise.all([
+    svgText(elements, byId, theme, true),
+    import("jspdf"),
+    import("svg2pdf.js"),
+    Promise.all([
+      import("@/assets/fonts/Geist-Regular.ttf?url").then((m) => base64Of(m.default)),
+      import("@/assets/fonts/Geist-SemiBold.ttf?url").then((m) => base64Of(m.default)),
+    ]),
+  ])
+  const root = new DOMParser().parseFromString(svg, "image/svg+xml").documentElement
+  const w = Number(root.getAttribute("width")) || 1
+  const h = Number(root.getAttribute("height")) || 1
+  const page = pdfPageSize(w, h)
+  const pdf = new jsPDF({
+    unit: "pt",
+    format: [page.w, page.h],
+    orientation: page.w > page.h ? "landscape" : "portrait",
+  })
+  // svg2pdf looks fonts up by family and by "normal" or "{weight}normal".
+  const [regular, semibold] = fonts
+  pdf.addFileToVFS("Geist-Regular.ttf", regular)
+  pdf.addFont("Geist-Regular.ttf", "Geist Variable", "normal")
+  pdf.addFileToVFS("Geist-SemiBold.ttf", semibold)
+  pdf.addFont("Geist-SemiBold.ttf", "Geist Variable", "600normal")
+  // The parsed SVG must be in the document for svg2pdf to read its styles.
+  const holder = document.createElement("div")
+  holder.style.cssText = "position:fixed;left:-99999px;top:0;visibility:hidden"
+  holder.append(root)
+  document.body.append(holder)
+  try {
+    await svg2pdf(root, pdf, { x: 0, y: 0, width: page.w, height: page.h })
+  } finally {
+    holder.remove()
+  }
+  return pdf.output("blob")
 }
 
 /** Starts a download of `blob` as `name`. */

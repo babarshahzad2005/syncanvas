@@ -4,6 +4,8 @@ packages:
 allowBuilds:
   esbuild: true
   workerd: true
+  # Its install script only prints a message (jspdf's optional dependency, M6 ticket 03).
+  core-js: false
 minimumReleaseAgeExclude:
   - '@tanstack/history@1.162.5'
   - '@tanstack/react-router@1.170.42'

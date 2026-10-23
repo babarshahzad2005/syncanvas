@@ -1,6 +1,6 @@
 import type { ElementWithId } from "@syncanvas/board-model"
 import { describe, expect, it } from "vitest"
-import { exportElements, exportFileName, pngSize } from "./export"
+import { exportElements, exportFileName, PDF_MAX_SIDE, pdfPageSize, pngSize } from "./export"
 
 // Export (M6 ticket 01): what gets exported, its file name, and the PNG size cap.
 
@@ -44,5 +44,13 @@ describe("pngSize", () => {
     const { size, percent } = pngSize({ w: 20_000 - 32, h: 1_000 })
     expect(Math.max(size.w, size.h)).toBeLessThanOrEqual(8192)
     expect(percent).toBe(20) // 8,192 / (20,000 × 2) ≈ 0.2
+  })
+})
+
+describe("pdfPageSize", () => {
+  it("gives one point per canvas unit, scaled down to the PDF page limit", () => {
+    expect(pdfPageSize(600, 400)).toEqual({ w: 600, h: 400 })
+    const big = pdfPageSize(28_800, 7_200)
+    expect(big).toEqual({ w: PDF_MAX_SIDE, h: 3_600 })
   })
 })

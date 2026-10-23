@@ -13,6 +13,7 @@ import {
   type ExportScope,
   exportElements,
   exportFileName,
+  exportPdf,
   exportPng,
   exportSvg,
 } from "./export"
@@ -21,7 +22,7 @@ import { useBoardUi } from "./store"
 // The export dialog (DESIGN.md → Export; M6 ticket 01): format, what, theme, then download.
 
 /** Formats ready so far; the others show but wait for their tickets (M6 02–03). */
-const READY: readonly ExportFormat[] = ["png", "svg"]
+const READY: readonly ExportFormat[] = ["png", "svg", "pdf"]
 
 function Segmented<T extends string>({
   label,
@@ -99,6 +100,8 @@ function ExportForm({ doc, title, onDone }: { doc: Y.Doc; title?: string; onDone
       const byId = indexById(all)
       if (format === "svg") {
         download(await exportSvg(elements, byId, theme), exportFileName(title, format))
+      } else if (format === "pdf") {
+        download(await exportPdf(elements, byId, theme), exportFileName(title, format))
       } else {
         const { blob, percent } = await exportPng(elements, byId, theme)
         download(blob, exportFileName(title, format))
@@ -106,7 +109,9 @@ function ExportForm({ doc, title, onDone }: { doc: Y.Doc; title?: string; onDone
       }
       onDone()
     } catch {
-      toast.error("Couldn't export the board", { description: "Try again in a moment." })
+      toast.error(format === "pdf" ? "Couldn't make the PDF" : "Couldn't export the board", {
+        description: "Try again in a moment.",
+      })
     } finally {
       setBusy(false)
     }
