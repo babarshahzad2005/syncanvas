@@ -29,6 +29,7 @@ import type * as Y from "yjs"
 import { BoardCanvas, type CanvasHandle } from "@/board/board-canvas"
 import { Dock, UndoZoomPill } from "@/board/chrome"
 import { pictureOf } from "@/board/clipboard"
+import { exportFileName, exportSvg, download as saveFile } from "@/board/export"
 import { ExportDialog } from "@/board/export-dialog"
 import { closeHistory, HistoryPanel, openHistory, PreviewBanner, useHistory } from "@/board/history"
 import { imageCache } from "@/board/images"
@@ -748,7 +749,7 @@ function Busy() {
 
 /**
  * Access is gone and this device holds edits the room never received (M3 ticket 05; FLOWS §2):
- * offer a picture of the local copy before clearing it. SVG export arrives in M6.
+ * offer a picture (PNG) or an SVG of the local copy before clearing it.
  */
 function LostAccess({
   doc,
@@ -771,6 +772,11 @@ function LostAccess({
     a.download = `${(title ?? "board").replace(/[\\/:*?"<>|]+/g, " ").trim() || "board"}.png`
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+  async function downloadSvg() {
+    const elements = listElements(doc)
+    const svg = await exportSvg(elements, indexById(elements), "light")
+    saveFile(svg, exportFileName(title ?? undefined, "svg"))
   }
   return (
     <>
@@ -800,6 +806,9 @@ function LostAccess({
               }}
             >
               Discard and close
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={() => void downloadSvg()}>
+              Download SVG
             </Button>
             <Button ref={downloadButton} disabled={busy} onClick={() => void download()}>
               <Download /> Download a picture

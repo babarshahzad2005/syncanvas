@@ -27,6 +27,7 @@ import { getStroke } from "perfect-freehand"
 import { layoutText, TEXT_FONT_FAMILY, TEXT_SIZES, type TextLayout, textFont } from "./text"
 
 export * from "./spatial"
+export * from "./svg"
 export * from "./text"
 
 // Canvas2D drawing shared by the screen (and later PNG export and thumbnails).
@@ -199,6 +200,11 @@ const CANVAS = {
   },
 } as const
 
+/** The canvas's own colors for a theme: its background, and the image placeholder's. */
+export function canvasColors(theme: Theme): { background: string; muted: string } {
+  return { background: CANVAS[theme].background, muted: CANVAS[theme].muted }
+}
+
 export function paletteShades(color: PaletteColor, theme: Theme): Shades {
   return PALETTE[color][theme]
 }
@@ -338,6 +344,11 @@ export type Scene = {
   uploads?: readonly UploadPlaceholder[]
   /** Milliseconds (any clock): turns the placeholders' spinners. */
   time?: number
+  /**
+   * The zoom line widths are worked out for, if not the camera's. Pictures use 1, so lines
+   * are as thick (relative to the Elements) as on screen at 100%, at any picture scale.
+   */
+  lineZoom?: number
 }
 
 /**
@@ -367,9 +378,10 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene): boolean 
     byId = copy
   }
   const paint: Paint = { images: scene.images, time: scene.time ?? 0, busy: false }
+  const lineZoom = scene.lineZoom ?? camera.zoom
   for (const e of elements) {
     if (e.id === scene.editing && e.type === "text") continue // the textarea shows it
-    drawElement(ctx, e, byId, theme, camera.zoom, e.id === scene.editing, paint)
+    drawElement(ctx, e, byId, theme, lineZoom, e.id === scene.editing, paint)
   }
   for (const upload of scene.uploads ?? []) {
     drawPlaceholder(ctx, upload.position, upload.size, theme, camera.zoom, paint, !upload.failed)
@@ -627,7 +639,7 @@ function drawSticky(
 }
 
 /** Line width that stays legible when zoomed out. */
-const strokeWidth = (zoom: number) => 2 / Math.max(zoom, 0.5)
+export const strokeWidth = (zoom: number) => 2 / Math.max(zoom, 0.5)
 
 // Every type is drawn at least as a placeholder, so a Board never fails to draw a type a
 // later ticket finishes (connector elbows are still to come).
@@ -736,17 +748,18 @@ export function lineEnds(
 const ARROWHEAD_LENGTH = 5
 const ARROWHEAD_ANGLE = 0.45
 
-/** A line through `points` with a filled arrowhead at the last point. */
-function drawArrow(
-  ctx: CanvasRenderingContext2D,
+/**
+ * An arrow's shape for a line of `width` through `points`: the line (ending where the head
+ * begins) and the head's three corners (null when there's no room for one). Shared by the
+ * canvas and SVG, so both draw the same arrow.
+ */
+export function arrowShape(
   points: readonly Point[],
-  color: string,
-  zoom: number,
-) {
+  width: number,
+): { line: Point[]; head: [Point, Point, Point] | null } | null {
   const to = points.at(-1)
   const from = points.at(-2)
-  if (!to || !from) return
-  const width = strokeWidth(zoom)
+  if (!to || !from) return null
   const length = Math.hypot(to.x - from.x, to.y - from.y)
   const angle = Math.atan2(to.y - from.y, to.x - from.x)
   // Short last segments get a smaller head, so the head never swallows the line.
@@ -755,27 +768,50 @@ function drawArrow(
     x: to.x - Math.cos(angle) * head * Math.cos(ARROWHEAD_ANGLE),
     y: to.y - Math.sin(angle) * head * Math.cos(ARROWHEAD_ANGLE),
   }
+  const line = [...points.slice(0, -1), base]
+  if (head <= 0) return { line, head: null }
+  return {
+    line,
+    head: [
+      to,
+      {
+        x: to.x - head * Math.cos(angle - ARROWHEAD_ANGLE),
+        y: to.y - head * Math.sin(angle - ARROWHEAD_ANGLE),
+      },
+      {
+        x: to.x - head * Math.cos(angle + ARROWHEAD_ANGLE),
+        y: to.y - head * Math.sin(angle + ARROWHEAD_ANGLE),
+      },
+    ],
+  }
+}
+
+/** A line through `points` with a filled arrowhead at the last point. */
+function drawArrow(
+  ctx: CanvasRenderingContext2D,
+  points: readonly Point[],
+  color: string,
+  zoom: number,
+) {
+  const width = strokeWidth(zoom)
+  const shape = arrowShape(points, width)
+  if (!shape) return
   ctx.beginPath()
-  const [first, ...rest] = points
-  ctx.moveTo(first?.x ?? 0, first?.y ?? 0)
-  for (const p of rest.slice(0, -1)) ctx.lineTo(p.x, p.y)
-  ctx.lineTo(base.x, base.y)
+  for (const [i, p] of shape.line.entries()) {
+    if (i === 0) ctx.moveTo(p.x, p.y)
+    else ctx.lineTo(p.x, p.y)
+  }
   ctx.lineWidth = width
   ctx.lineCap = "round"
   ctx.lineJoin = "round"
   ctx.strokeStyle = color
   ctx.stroke()
-  if (head <= 0) return
+  if (!shape.head) return
+  const [tip, left, right] = shape.head
   ctx.beginPath()
-  ctx.moveTo(to.x, to.y)
-  ctx.lineTo(
-    to.x - head * Math.cos(angle - ARROWHEAD_ANGLE),
-    to.y - head * Math.sin(angle - ARROWHEAD_ANGLE),
-  )
-  ctx.lineTo(
-    to.x - head * Math.cos(angle + ARROWHEAD_ANGLE),
-    to.y - head * Math.sin(angle + ARROWHEAD_ANGLE),
-  )
+  ctx.moveTo(tip.x, tip.y)
+  ctx.lineTo(left.x, left.y)
+  ctx.lineTo(right.x, right.y)
   ctx.closePath()
   ctx.fillStyle = color
   ctx.fill()
@@ -901,8 +937,24 @@ export function linePath(
 /** Stroke widths in world units (DESIGN.md → Canvas). */
 export const PEN_WIDTHS: Record<PenWidth, number> = { S: 2, M: 4, L: 8 }
 
-function absolutePoints(e: PenElement): StrokePoint[] {
+export function absolutePoints(e: PenElement): StrokePoint[] {
   return e.points.map(([x, y, pressure]) => [e.position.x + x, e.position.y + y, pressure])
+}
+
+/** A stroke's outline as perfect-freehand draws it (shared by the canvas and SVG). */
+export function strokeOutline(
+  points: readonly StrokePoint[],
+  width: PenWidth,
+  complete = true,
+): number[][] {
+  return getStroke(points as StrokePoint[], {
+    size: PEN_WIDTHS[width],
+    thinning: 0.6,
+    smoothing: 0.5,
+    streamline: 0.5,
+    simulatePressure: false,
+    last: complete,
+  })
 }
 
 /**
@@ -916,15 +968,7 @@ function drawStroke(
   color: string,
   complete: boolean,
 ) {
-  const outline = getStroke(points as StrokePoint[], {
-    size: PEN_WIDTHS[width],
-    thinning: 0.6,
-    smoothing: 0.5,
-    streamline: 0.5,
-    simulatePressure: false,
-    last: complete,
-  })
-  const [first, ...rest] = outline
+  const [first, ...rest] = strokeOutline(points, width, complete)
   if (!first) return
   ctx.beginPath()
   ctx.moveTo(first[0] ?? 0, first[1] ?? 0)
@@ -1134,6 +1178,7 @@ export function drawImage(
     dpr: 1,
     selection: new Set(),
     showGrid: false,
+    lineZoom: 1,
   })
 }
 

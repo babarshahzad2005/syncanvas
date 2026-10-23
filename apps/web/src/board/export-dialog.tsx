@@ -14,13 +14,14 @@ import {
   exportElements,
   exportFileName,
   exportPng,
+  exportSvg,
 } from "./export"
 import { useBoardUi } from "./store"
 
 // The export dialog (DESIGN.md → Export; M6 ticket 01): format, what, theme, then download.
 
 /** Formats ready so far; the others show but wait for their tickets (M6 02–03). */
-const READY: readonly ExportFormat[] = ["png"]
+const READY: readonly ExportFormat[] = ["png", "svg"]
 
 function Segmented<T extends string>({
   label,
@@ -95,9 +96,14 @@ function ExportForm({ doc, title, onDone }: { doc: Y.Doc; title?: string; onDone
     if (elements.length === 0) return
     setBusy(true)
     try {
-      const { blob, percent } = await exportPng(elements, indexById(all), theme)
-      download(blob, exportFileName(title, format))
-      if (percent < 100) toast(`Exported at ${percent}% so it fits 8,192 px.`)
+      const byId = indexById(all)
+      if (format === "svg") {
+        download(await exportSvg(elements, byId, theme), exportFileName(title, format))
+      } else {
+        const { blob, percent } = await exportPng(elements, byId, theme)
+        download(blob, exportFileName(title, format))
+        if (percent < 100) toast(`Exported at ${percent}% so it fits 8,192 px.`)
+      }
       onDone()
     } catch {
       toast.error("Couldn't export the board", { description: "Try again in a moment." })
