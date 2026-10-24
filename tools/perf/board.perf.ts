@@ -5,8 +5,12 @@ import { enableTestHooks, signIn, waitUntilOnline } from "../../e2e/helpers"
 // S5 and S6 (PRD success metrics; M6 ticket 08). Timings are taken against the production build
 // served locally on :8787; signing in goes through the dev server on :5173 (same database, and
 // cookies don't care about the port). Results print and append to $PERF_OUT if set.
+//
+// Against the live site (M6 ticket 08d): PERF_BASE=<its URL> and PERF_STATE=<a session saved
+// by live-sign-in.mjs>. The test Board is deleted for good afterwards.
 
-const PROD = "http://localhost:8787"
+const PROD = process.env.PERF_BASE ?? "http://localhost:8787"
+const LIVE_STATE = process.env.PERF_STATE
 
 function report(line: string) {
   console.log(line)
@@ -160,11 +164,23 @@ test("S5: pan and zoom a 5,000-Element Board at 60 fps", async ({ browser }) => 
 
 test("S6: open a 1,000-Element Board cold (10 Mbps, 50 ms) and warm", async ({ browser }) => {
   // Make the Board, then forget everything but the session.
-  const setup = await browser.newContext()
+  const setup = await browser.newContext(LIVE_STATE ? { storageState: LIVE_STATE } : {})
   const page = await setup.newPage()
   await enableTestHooks(page)
-  await signIn(page, `e2e-perf-s6-${Date.now()}@example.com`)
+  if (!LIVE_STATE) await signIn(page, `e2e-perf-s6-${Date.now()}@example.com`)
   const id = await newBoard(page)
+  if (LIVE_STATE) {
+    // Its token, for a short `pnpm loadtest` on the same Board (lasts 5 minutes).
+    const res = await page.request.post(`${PROD}/api/boards/${id}/token`)
+    const { token } = (await res.json()) as { token: string }
+    // The Board's id, then its token, for `pnpm loadtest --board <id> --token-file <file>`.
+    if (process.env.PERF_TOKEN_OUT)
+      appendFileSync(
+        process.env.PERF_TOKEN_OUT,
+        `${id}
+${token}`,
+      )
+  }
   await page.mouse.move(720, 450)
   await fill(page, 1000)
   await page.waitForTimeout(3000) // stored by the room
@@ -213,4 +229,14 @@ test("S6: open a 1,000-Element Board cold (10 Mbps, 50 ms) and warm", async ({ b
   await waitUntilOnline(tab)
   report(`S6 warm open: ${Date.now() - start} ms to online`)
   await context.close()
+  if (LIVE_STATE && !process.env.PERF_KEEP_BOARD) await deleteForGood(browser, id)
 })
+
+/** Trashes the test Board, then deletes it for good (live runs leave nothing behind). */
+async function deleteForGood(browser: import("@playwright/test").Browser, id: string) {
+  const context = await browser.newContext({ storageState: LIVE_STATE })
+  await context.request.delete(`${PROD}/api/boards/${id}`)
+  const res = await context.request.delete(`${PROD}/api/boards/${id}/forever`)
+  report(`Test Board deleted: ${res.ok()}`)
+  await context.close()
+}

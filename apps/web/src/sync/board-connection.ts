@@ -13,6 +13,7 @@ import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 import { ApiError, api } from "@/lib/api"
 import { type TabPresence, tabPresence } from "@/presence/model"
+import { takeEarlyToken } from "./early-token"
 
 // Keeps one Board's Y.Doc in sync with its board room (FLOWS §2 "Open a Board"):
 // fetch a short-lived board token, open /ws/{boardId}, run Yjs sync steps 1 and 2 both ways,
@@ -209,7 +210,7 @@ export class BoardConnection {
         this.linkRole = guest.linkRole
         pass = guest
       } else {
-        pass = await api.boardToken(this.boardId)
+        pass = await (takeEarlyToken(this.boardId) ?? api.boardToken(this.boardId))
       }
     } catch (error) {
       if (error instanceof ApiError && error.status === 403) return this.setStatus("revoked")

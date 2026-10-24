@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { api, queryKeys } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
+import { rememberSignedIn } from "@/lib/signed-in-hint"
 import { clearAllLocalCopies } from "@/sync/local-copy"
 
 // Settings (DESIGN.md → Dashboard → Settings; M5a ticket 06): Notifications, with the digest
@@ -137,6 +138,7 @@ function DeleteAccountDialog({
       // Nothing of this account stays on the device.
       await clearAllLocalCopies()
       await authClient.signOut().catch(() => {})
+      rememberSignedIn(false)
       // A full load, so no cached data outlives the account.
       window.location.assign("/sign-in?deleted=1")
     },

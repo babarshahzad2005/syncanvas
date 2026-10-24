@@ -8,6 +8,8 @@ export default defineConfig({
   testMatch: "*.perf.ts",
   globalTeardown: "../../e2e/global-teardown.ts",
   timeout: 600_000,
+  // Waits, not targets: a slow step should be measured, not fail the run.
+  expect: { timeout: 30_000 },
   workers: 1,
   reporter: "list",
   use: {

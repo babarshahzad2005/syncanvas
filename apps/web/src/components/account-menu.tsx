@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { authClient, type Session } from "@/lib/auth-client"
+import { rememberSignedIn } from "@/lib/signed-in-hint"
 import { parsePreference, setThemePreference, useThemePreference } from "@/lib/theme"
 import { clearAllLocalCopies } from "@/sync/local-copy"
 
@@ -45,6 +46,7 @@ export function AccountMenu({ user: initialUser }: { user: Session["user"] }) {
 
   async function signOut() {
     await authClient.signOut()
+    rememberSignedIn(false)
     // Saved Boards on this device belong to the person signing out.
     await clearAllLocalCopies()
     await navigate({ to: "/sign-in" })

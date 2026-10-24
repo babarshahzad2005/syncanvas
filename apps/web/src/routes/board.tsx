@@ -73,10 +73,10 @@ const route = getRouteApi("/authed/b/$boardId")
 export function BoardScreen() {
   const { boardId } = route.useParams()
   const { s: linkToken } = route.useSearch()
-  const { session } = route.useRouteContext()
+  const { signedIn } = route.useRouteContext()
   // Opened from a Share Link: signed out, look as a Guest (M3 ticket 04); signed in, join
   // first, then open the Board as a Member (ticket 03).
-  if (linkToken && !session) return <BoardView boardId={boardId} guestLink={linkToken} />
+  if (linkToken && !signedIn) return <BoardView boardId={boardId} guestLink={linkToken} />
   if (linkToken) return <JoinByLink boardId={boardId} token={linkToken} />
   return <BoardView boardId={boardId} />
 }

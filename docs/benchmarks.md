@@ -19,6 +19,8 @@ How Syncanvas measures its performance and load targets (PRD success metrics S3�
 
 ```sh
 pnpm build
+# The build folder gets no dev secrets; without them sign-in fails with 401 (every build wipes it).
+cp apps/worker/.dev.vars apps/web/dist/syncanvas/.dev.vars
 cd apps/web
 # The local Hyperdrive string points at the Neon dev branch (apps/web/.env).
 pnpm exec wrangler dev -c dist/syncanvas/wrangler.json --port 8787 --local
@@ -107,4 +109,36 @@ What it took, measured one step at a time:
 4. **Pen strokes under 48px as plain lines.** 500 stroke outlines alone drew at 38 fps on a bare canvas. With this: 47.8 fps.
 
 Still short of 60 fps with all 5,000 visible on this laptop (Intel HD 620). What's left is mostly rasterizing several thousand shapes per frame.
+
+### The live site, and 08d: opening faster, 2026-10-24
+
+**Live, before the fix** (signed in once in a test browser; the test Board was deleted afterwards):
+
+| | Target | Live |
+|---|---|---|
+| S6 cold open, 1,000 Elements | 2 s | **4.8 s** |
+| S6 warm open, Board visible | 0.3 s | **1.2 s** (3.2 s to online) |
+| S3/S4, 20 Editors at 10 moves/s | p95 < 100 ms, < 1 s behind | p95 1.3 s, 3.4 s behind |
+
+- **S3/S4 can't be judged from this location.** The test machine is about 160 ms from Cloudflare's nearest server (Muscat), and S3 is defined for the same region. Every edit crosses that link twice, and all 20 clients shared one home connection.
+- The first live opening of a new Board took over 5 s to connect (the board room starting cold).
+
+**Where opening spent its time** (a request timeline of the local build, under the same throttling):
+
+1. The session check (`get-session`, 1.4–1.8 s here). Nothing rendered until it finished, not even a Board already saved on the device.
+2. Only then the board token (1.5–4 s).
+3. A second session check, from the account menu.
+
+**The fix:**
+- The device remembers that it was signed in. A Board then shows from its local copy at once, and the session is checked in the background (a definite "no session" still goes to sign-in).
+- The board token is requested at the same time as the session check, not after it.
+
+| Local build, same throttling | Before | After |
+|---|---|---|
+| Warm, Board visible | 2,246 ms | **409 ms** |
+| Cold, editable | 4,524 ms | **3,483 ms** |
+
+- **Warm is close to the target.** What's left is loading the page and its scripts from the browser cache, then reading the local copy.
+- **Cold still misses.** It's the token route's database work plus syncing 1,000 Elements over the throttled link, and locally the database is across the internet.
+- **Not re-measured live after the fix:** that needs another sign-in in the test browser.
 
