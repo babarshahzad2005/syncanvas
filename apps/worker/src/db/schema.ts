@@ -223,6 +223,23 @@ export const shareLinks = pgTable(
   ],
 )
 
+/**
+ * A Board's Embed (M6 ticket 05; GLOSSARY: Embed): a read-only, live view for other sites,
+ * separate from the Share Link. Turning it off deletes the row; turning it on again makes a
+ * new token. The token is kept as-is (like the Share Link's) so the Owner can copy the
+ * snippet again; it only ever grants viewing.
+ */
+export const embeds = pgTable("embeds", {
+  boardId: text("board_id")
+    .primaryKey()
+    .references(() => boards.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  createdBy: text("created_by")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+})
+
 // ---------- Comments (M4; GLOSSARY: Thread) ----------
 
 /**

@@ -1258,3 +1258,58 @@ describe("BoardRoom Versions (M5b ticket 06)", () => {
     viewer.close()
   })
 })
+
+describe("BoardRoom Embed viewers (M6 ticket 05)", () => {
+  async function joinEmbed(boardId: string, userId: string, now?: number) {
+    const client = await TestClient.connect(
+      boardId,
+      await token(boardId, "viewer", { kind: "embed", userId, now }),
+    )
+    await until(() => client.synced || client.closed !== null, `${userId} to sync`)
+    return client
+  }
+
+  it("refuses every update from an Embed viewer", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const embed = await joinEmbed(board, "embed-a")
+    embed.addRect("sneaky")
+    await until(() => embed.closed !== null, "the embed to be closed")
+    expect(embed.closed).toEqual({ code: CLOSE.forbidden, reason: "read-only" })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(owner.rect("sneaky")).toBeUndefined()
+    owner.close()
+  })
+
+  it("closes every Embed viewer when the Embed goes off, refusing old tokens, and leaves Guests", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const before = Date.now() - 2_000
+    const embed = await joinEmbed(board, "embed-a")
+    const guest = await joinGuest(board, "guest-a")
+    await room(board).closeEmbeds()
+    await until(() => embed.closed !== null, "the embed to be closed")
+    expect(embed.closed).toEqual({ code: CLOSE.forbidden, reason: "embed off" })
+    expect(guest.closed).toBeNull()
+    expect(owner.closed).toBeNull()
+
+    const stale = await joinEmbed(board, "embed-b", before)
+    expect(stale.closed).toEqual({ code: CLOSE.forbidden, reason: "removed" })
+    const fresh = await joinEmbed(board, "embed-c", Date.now() + 2_000)
+    expect(fresh.closed).toBeNull()
+    // Turning the Share Link off leaves Embed viewers alone.
+    await room(board).closeGuests()
+    await new Promise((r) => setTimeout(r, 200))
+    expect(fresh.closed).toBeNull()
+    owner.close()
+    fresh.close()
+  })
+
+  it("turns Embed viewers away at the cap, like Guests", async () => {
+    const board = newBoardId() // the room tests run with a cap of 4
+    const members = await Promise.all(["a", "b", "c", "d"].map((id) => joinAs(board, "editor", id)))
+    const late = await joinEmbed(board, "embed-a")
+    expect(late.closed).toEqual({ code: CLOSE.busy, reason: "busy" })
+    for (const m of members) m.close()
+  })
+})

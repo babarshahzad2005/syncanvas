@@ -6,6 +6,7 @@ import type {
   CreateThreadRequest,
   DashboardResponse,
   EditCommentRequest,
+  EmbedState,
   FolderSummary,
   GuestTokenResponse,
   ImageUploadResponse,
@@ -93,6 +94,11 @@ export const api = {
     request<ShareLinkState>(`${board(boardId)}/share-link/regenerate`, { method: "POST" }),
   deleteShareLink: (boardId: string) =>
     request<{ ok: true }>(`${board(boardId)}/share-link`, { method: "DELETE" }),
+  /** M6 ticket 05: turns the Embed on with a new token (the Owner only). */
+  enableEmbed: (boardId: string) =>
+    request<EmbedState>(`${board(boardId)}/embed`, { method: "PUT", body: "{}" }),
+  disableEmbed: (boardId: string) =>
+    request<{ ok: true }>(`${board(boardId)}/embed`, { method: "DELETE" }),
   join: (boardId: string, token: string) =>
     request<JoinResponse>(`${board(boardId)}/join`, {
       method: "POST",

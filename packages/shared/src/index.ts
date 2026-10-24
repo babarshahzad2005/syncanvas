@@ -185,7 +185,26 @@ export type SharingResponse = {
   invitations: PendingInvitation[]
   /** The Share Link, shown to the Owner only (null: off, or not the Owner). */
   link: ShareLinkState | null
+  /** The Embed, shown to the Owner only (null: off, or not the Owner). M6 ticket 05. */
+  embed: EmbedState | null
 }
+
+/** An Embed that's on (M6; GLOSSARY: Embed): its token is in the iframe's address. */
+export type EmbedState = { token: string }
+
+/** Where an Embed's viewer lives. */
+export function embedPath(token: string) {
+  return `/embed/${encodeURIComponent(token)}`
+}
+
+/** The snippet the Owner copies: an iframe of the Embed viewer. */
+export function embedSnippet(origin: string, token: string, title: string) {
+  const escaped = title.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;")
+  return `<iframe src="${origin}${embedPath(token)}" title="${escaped}" width="800" height="500" style="border:0;border-radius:12px" loading="lazy"></iframe>`
+}
+
+/** POST /api/embed/:token: the Embed viewer's read-only pass to the Board. */
+export type EmbedTokenResponse = Omit<BoardTokenResponse, "you">
 
 export type InviteRequest = { email: string; role: InviteRole }
 /** "member": the address had an account and has access now. "invited": a pending Invitation. */

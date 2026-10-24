@@ -191,7 +191,7 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | `/api/boards/:id/invitations` | Create (Owner, or Editor at their own Role or lower; rate-limited), resend, cancel |
 | `/api/boards/:id/share-link` | Get, enable with Role and expiry, regenerate, disable (Owner) |
 | `/api/share/:token` | Redeem a Share Link: Membership for a User, Guest token for an anonymous visitor |
-| `/api/boards/:id/embed` | Enable, revoke (Owner). `/api/embed/:token` issues a viewer token |
+| `/api/boards/:id/embed` | PUT turns it on with a new token, DELETE turns it off (Owner); its state comes with `/sharing` for the Owner. `POST /api/embed/:token/token` issues an Embed board token (`kind: embed`, Viewer), no session |
 | `/api/boards/:id/threads` | List, create, reply, edit, delete, resolve, reopen |
 | `/api/notifications` | List, mark read, mark all read, unread count |
 | `/api/folders`, `/api/favorites` | Personal organization |
@@ -219,7 +219,7 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | `memberships` | `board_id`, `user_id`, `role`, `via: owner\|invitation\|share_link`, PK (`board_id`, `user_id`) |
 | `invitations` | `id`, `board_id`, `email`, `role`, `invited_by`, `expires_at`, `accepted_at` |
 | `share_links` | `board_id` (unique), `token_hash`, `role`, `expires_at` |
-| `embeds` | `board_id` (PK, cascade), `token_hash` (SHA-256), `created_at`, `revoked_at`. Turning the Embed on again replaces the token (M6 ticket 05) |
+| `embeds` | `board_id` (PK, cascade), `token` (unique), `created_by`, `created_at`. Turning it off deletes the row; turning it on again replaces the token (M6 ticket 05). The token is stored as-is, like the Share Link's, so the Owner can copy the snippet again |
 | `folders` | `id`, `user_id`, `name` |
 | `board_placements` | `user_id`, `board_id`, `folder_id?`, `favorite`, `last_opened_at`, PK (`user_id`, `board_id`) |
 | `threads` | `id`, `board_id`, `element_id?`, `x?`, `y?`, `last_x?`, `last_y?`, `status`, `created_by` |
@@ -229,7 +229,7 @@ One `BoardRoom` Durable Object per Board, keyed by `idFromName(boardId)`, using 
 | `images` | `key` (`images/{boardId}/{uuid}`), `board_id` (cascade), `user_id` (set null), `bytes` (for the 50 MB quota), `content_type`, `created_at`. Purge deletes the KV keys listed here |
 | `board_search` | `board_id` (cascade), `body`, `tsv` generated `to_tsvector('english', body)` (GIN index), `updated_at`. Titles are indexed by a generated `boards.title_tsv` (GIN), so a rename is searchable at once |
 
-Share Link and Embed tokens are stored only as SHA-256 hashes. Search uses `websearch_to_tsquery` + `ts_rank` + `ts_headline` for snippets, joined to `memberships` so results only include the user's own Boards.
+Share Link and Embed tokens are 24 random bytes (base64url), stored as-is so the Owner can copy them again; they only ever grant the access the Owner chose. Search uses `websearch_to_tsquery` + `ts_rank` + `ts_headline` for snippets, joined to `memberships` so results only include the user's own Boards.
 
 ---
 

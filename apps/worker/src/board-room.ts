@@ -79,6 +79,8 @@ export const CONNECTION_CAP = 100
 
 /** The `access` row that stands for every Guest: their link was turned off or replaced. */
 const GUESTS = "*guests*"
+/** The `access` row that stands for every Embed viewer: the Embed was turned off or renewed. */
+const EMBEDS = "*embeds*"
 /** The `access` row that stands for everyone: the Board went to Trash (M5a ticket 03). */
 const EVERYONE = "*board*"
 
@@ -421,19 +423,18 @@ export class BoardRoom extends DurableObject<Env> {
     let role: Role = claims.role
     // Sent to Trash after this token was issued (M5a ticket 03): a restore issues new ones.
     if (this.changedSince(EVERYONE, claims.issuedAt)) return refuse(CLOSE.forbidden, "deleted")
-    if (claims.kind !== "embed") {
-      // An access change after this token was issued wins over it (M3 ticket 02). For Guests,
-      // it's their link going off or being replaced (ticket 04).
-      const [change] = this.ctx.storage.sql
-        .exec<{ role: Role | null; changed_at: number }>(
-          "select role, changed_at from access where user_id = ?",
-          claims.kind === "guest" ? GUESTS : claims.userId,
-        )
-        .toArray()
-      if (change && claims.issuedAt <= change.changed_at) {
-        if (change.role === null) return refuse(CLOSE.forbidden, "removed")
-        role = change.role
-      }
+    // An access change after this token was issued wins over it (M3 ticket 02). For Guests,
+    // it's their link going off or being replaced (ticket 04); for Embed viewers, the Embed
+    // going off or being renewed (M6 ticket 05).
+    const [change] = this.ctx.storage.sql
+      .exec<{ role: Role | null; changed_at: number }>(
+        "select role, changed_at from access where user_id = ?",
+        claims.kind === "guest" ? GUESTS : claims.kind === "embed" ? EMBEDS : claims.userId,
+      )
+      .toArray()
+    if (change && claims.issuedAt <= change.changed_at) {
+      if (change.role === null) return refuse(CLOSE.forbidden, "removed")
+      role = change.role
     }
     // The cap (PRD A4): Members always get in; Guests and Embed viewers wait.
     const open = this.ctx.getWebSockets()
@@ -557,16 +558,28 @@ export class BoardRoom extends DurableObject<Env> {
    * once, and Guest tokens issued until now stop working.
    */
   async closeGuests() {
+    this.closeKind("guest", GUESTS, "link off")
+  }
+
+  /**
+   * The Embed was turned off or renewed (M6 ticket 05): every Embed viewer leaves at once,
+   * and Embed tokens issued until now stop working.
+   */
+  async closeEmbeds() {
+    this.closeKind("embed", EMBEDS, "embed off")
+  }
+
+  private closeKind(kind: BoardTokenKind, row: string, reason: string) {
     this.ctx.storage.sql.exec(
       "insert into access (user_id, role, changed_at) values (?, null, ?) on conflict (user_id) do update set role = null, changed_at = excluded.changed_at",
-      GUESTS,
+      row,
       Date.now(),
     )
     for (const ws of this.ctx.getWebSockets()) {
-      if ((ws.deserializeAttachment() as SocketInfo).kind !== "guest") continue
+      if ((ws.deserializeAttachment() as SocketInfo).kind !== kind) continue
       this.removePresence(ws)
       try {
-        ws.close(CLOSE.forbidden, "link off")
+        ws.close(CLOSE.forbidden, reason)
       } catch {
         // Already gone.
       }

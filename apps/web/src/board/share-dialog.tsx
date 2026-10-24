@@ -1,4 +1,6 @@
 import {
+  type EmbedState,
+  embedSnippet,
   INVITE_ROLES,
   type InviteRole,
   LINK_EXPIRY_DAYS,
@@ -121,6 +123,9 @@ function ShareDialogBody({ boardId, title, onLeave }: ShareProps) {
         )}
       </section>
       {state?.canManage && <ShareLinkSection boardId={boardId} link={state.link} />}
+      {state?.canManage && (
+        <EmbedSection boardId={boardId} title={state.board.title} embed={state.embed} />
+      )}
       {state && state.you.role !== "owner" && (
         <LeaveBoard title={state.board.title} onLeave={onLeave} />
       )}
@@ -617,6 +622,85 @@ function ShareLinkSection({ boardId, link }: { boardId: string; link: ShareLinkS
             >
               Regenerate
             </Button>
+          </p>
+        </>
+      )}
+    </section>
+  )
+}
+
+// ---------- Embed (M6 ticket 05) ----------
+
+/** On/off and the iframe snippet with Copy (the Owner only; DESIGN.md → Embed section). */
+function EmbedSection({
+  boardId,
+  title,
+  embed,
+}: {
+  boardId: string
+  title: string
+  embed: EmbedState | null
+}) {
+  const queryClient = useQueryClient()
+  const toggle = useMutation({
+    mutationFn: async (on: boolean) => {
+      if (on) return api.enableEmbed(boardId)
+      await api.disableEmbed(boardId)
+      return null
+    },
+    onSuccess: (next) => {
+      if (!next) toast("Embed turned off")
+      queryClient.setQueryData<SharingResponse>(queryKeys.sharing(boardId), (old) =>
+        old ? { ...old, embed: next } : old,
+      )
+    },
+    onError: (e) => toast(errorMessage(e)),
+  })
+  const snippet = embed ? embedSnippet(location.origin, embed.token, title) : ""
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(snippet)
+      toast("Snippet copied")
+    } catch {
+      toast("Couldn't copy the snippet", { description: "Select it and copy it yourself." })
+    }
+  }
+
+  return (
+    <section aria-labelledby="share-embed" className="flex flex-col gap-3 border-t pt-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex min-w-0 flex-col">
+          <h3 id="share-embed" className="type-body-strong">
+            Embed
+          </h3>
+          <span className="type-caption text-muted-foreground">
+            Show this board live and read-only on another website.
+          </span>
+        </span>
+        <Switch
+          aria-label="Embed"
+          checked={embed !== null}
+          disabled={toggle.isPending}
+          onCheckedChange={(on) => toggle.mutate(on)}
+        />
+      </div>
+      {embed && (
+        <>
+          <div className="flex gap-2">
+            <Input
+              readOnly
+              aria-label="Embed snippet"
+              value={snippet}
+              onFocus={(e) => e.currentTarget.select()}
+              className="type-mono min-w-0 flex-1 text-muted-foreground"
+            />
+            <Button variant="outline" onClick={() => void copy()}>
+              Copy snippet
+            </Button>
+          </div>
+          <p className="type-caption text-muted-foreground">
+            Turning it off stops every embed at once.
           </p>
         </>
       )}

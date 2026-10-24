@@ -21,7 +21,15 @@ import type { ContentfulStatusCode } from "hono/utils/http-status"
 import type { AccessChange } from "./board-room"
 import { findMembership } from "./boards"
 import type { Database } from "./db/client"
-import { boards, invitationEmails, invitations, memberships, shareLinks, user } from "./db/schema"
+import {
+  boards,
+  embeds,
+  invitationEmails,
+  invitations,
+  memberships,
+  shareLinks,
+  user,
+} from "./db/schema"
 import type { SendInvitation } from "./email"
 
 // Sharing (M3; PRD A4): who has access to a Board, Invitations, and their daily limits.
@@ -88,10 +96,18 @@ export async function sharingState(
   const [link] = isOwner
     ? await db.select().from(shareLinks).where(eq(shareLinks.boardId, boardId)).limit(1)
     : []
+  const [embed] = isOwner
+    ? await db
+        .select({ token: embeds.token })
+        .from(embeds)
+        .where(eq(embeds.boardId, boardId))
+        .limit(1)
+    : []
 
   return {
     board: { id: boardId, title: membership.title },
     link: link ? linkState(link) : null,
+    embed: embed ?? null,
     you: { id: caller.id, role: membership.role },
     canInvite,
     canManage: isOwner,
@@ -308,7 +324,7 @@ async function pushToRoom(applyAccess: ApplyAccess, boardId: string, change: Acc
   await tellRoom(() => applyAccess(boardId, change))
 }
 
-async function tellRoom(call: () => Promise<void>) {
+export async function tellRoom(call: () => Promise<void>) {
   try {
     await call()
   } catch (error) {
@@ -383,10 +399,10 @@ export async function removeMember(
 
 // ---------- Share Link (M3 ticket 03) ----------
 
-const NO_LINK = "This link doesn't work anymore. Ask the board's owner for a new one."
+export const NO_LINK = "This link doesn't work anymore. Ask the board's owner for a new one."
 
 /** 24 random bytes, URL-safe: unguessable, and short enough to paste. */
-function newLinkToken() {
+export function newLinkToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(24))
   return btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, "-")

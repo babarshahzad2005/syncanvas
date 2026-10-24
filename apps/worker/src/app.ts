@@ -8,6 +8,8 @@ import {
   type DashboardResponse,
   displayNameOf,
   type EditCommentRequest,
+  type EmbedState,
+  type EmbedTokenResponse,
   type GuestTokenResponse,
   IMAGE_MAX_BYTES,
   IMAGE_TOO_BIG,
@@ -62,6 +64,7 @@ import {
   type SendDigest,
   type SendInvitation,
 } from "./email"
+import { type CloseEmbeds, disableEmbed, enableEmbed, liveEmbed } from "./embeds"
 import { readImage, uploadImage } from "./images"
 import {
   type CloseAll,
@@ -117,6 +120,8 @@ export type Services = {
   applyAccess: ApplyAccess
   /** Disconnects a Board's Guests when its Share Link goes off or changes (M3 ticket 04). */
   closeGuests: CloseGuests
+  /** Disconnects a Board's Embed viewers when its Embed goes off or is renewed (M6). */
+  closeEmbeds: CloseEmbeds
   /** Relays a comment change to everyone on the Board (M4). */
   broadcast: Broadcast
   /** Sends a digest email (M4 ticket 04). */
@@ -154,6 +159,8 @@ export const productionServices: ServicesFactory = (env) => {
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).applyAccess(change)
   const closeGuests: CloseGuests = (boardId) =>
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).closeGuests()
+  const closeEmbeds: CloseEmbeds = (boardId) =>
+    env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).closeEmbeds()
   const broadcast: Broadcast = (boardId, message) =>
     env.BOARD_ROOM.get(env.BOARD_ROOM.idFromName(boardId)).control(message)
   const closeAll: CloseAll = (boardId) =>
@@ -172,6 +179,7 @@ export const productionServices: ServicesFactory = (env) => {
     sendInvitation,
     applyAccess,
     closeGuests,
+    closeEmbeds,
     broadcast,
     sendDigest,
     closeAll,
@@ -205,6 +213,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/dashboard",
     "/search",
     "/guest/*",
+    "/embed/*",
     "/notifications",
     "/notifications/*",
     "/me",
@@ -616,6 +625,46 @@ export function createApp(services: ServicesFactory = productionServices) {
       caller: c.var.user,
     })
     return c.json({ ok: true })
+  })
+
+  // ---------- Embed (M6 ticket 05): the Owner only ----------
+
+  app.put("/boards/:id/embed", async (c) => {
+    const body: EmbedState = await enableEmbed(c.var.services.db, c.var.services.closeEmbeds, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+    })
+    return c.json(body)
+  })
+
+  app.delete("/boards/:id/embed", async (c) => {
+    await disableEmbed(c.var.services.db, c.var.services.closeEmbeds, {
+      boardId: c.req.param("id"),
+      caller: c.var.user,
+    })
+    return c.json({ ok: true })
+  })
+
+  // The Embed viewer's pass: no session (it runs on other sites), just a live Embed token.
+  app.post("/embed/:token/token", async (c) => {
+    const embed = await liveEmbed(c.var.services.db, c.req.param("token"))
+    const { token, expiresAt } = await signBoardToken(
+      {
+        userId: `embed-${crypto.randomUUID()}`,
+        name: "",
+        boardId: embed.boardId,
+        role: "viewer",
+        kind: "embed",
+      },
+      c.env.BOARD_TOKEN_PRIVATE_KEY,
+    )
+    const body: EmbedTokenResponse = {
+      token,
+      expiresAt,
+      role: "viewer",
+      board: { id: embed.boardId, title: embed.title },
+    }
+    return c.json(body)
   })
 
   app.post("/boards/:id/join", async (c) => {

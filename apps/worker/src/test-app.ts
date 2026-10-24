@@ -77,6 +77,8 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
       assets.delete(key)
     },
   }
+  /** Boards whose Embed viewers were closed (M6 ticket 05). */
+  const embedsClosed: string[] = []
   /** Each board room's Versions (M5b ticket 06), and the restores noted. */
   const versionStore = new Map<string, { summary: VersionSummary; state: Uint8Array }[]>()
   const restores: { boardId: string; versionId: number; name: string }[] = []
@@ -98,6 +100,9 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     },
     applyAccess: async (boardId, change) => {
       access.push({ boardId, change })
+    },
+    closeEmbeds: async (boardId) => {
+      embedsClosed.push(boardId)
     },
     closeGuests: async (boardId) => {
       guestsClosed.push(boardId)
@@ -167,6 +172,7 @@ export async function createTestApp(options: { magicLinkExpiresIn?: number } = {
     digests,
     closedAll,
     destroyed,
+    embedsClosed,
     versionStore,
     restores,
     assets,
