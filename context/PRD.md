@@ -288,6 +288,7 @@ Priority: **P0** = required for v1 launch · **P1** = expected in v1, can be cut
 - **Embed viewer** (M6 planning): fitted to the whole Board, pan and zoom, no selection, a small "Syncanvas" badge, light unless `?theme=dark`.
 - **Busy fallback** (M6 planning): a turned-away Guest or Embed viewer sees the Board's latest thumbnail, refreshed every 30 s; without one, the busy message alone.
 - **Measurements** (M6 planning): S3 and S4 run locally against `wrangler dev` plus one short production run; S5 and S6 run as local Playwright scripts; results in `docs/benchmarks.md`. S8 runs in CI with the `full-e2e` label. Cut order if time runs short: PDF, then the busy fallback, then the live load-test run.
+- **After the first measurements** (2026-10-24): fix the board room's per-edit check (it validated the whole Board on every edit), add level-of-detail drawing when zoomed out, and measure S6 on the live site before deciding on open-time work. Results in `docs/benchmarks.md`.
 
 ---
 

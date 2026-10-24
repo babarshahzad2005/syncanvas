@@ -16,7 +16,9 @@
     "test:watch": "vitest",
     "check": "biome check . && pnpm -r typecheck && tsc --noEmit -p e2e && vitest run",
     "e2e": "playwright test",
-    "release": "pnpm build && node -e \"require('fs').rmSync('apps/web/dist/syncanvas/.dev.vars',{force:true})\" && pnpm --filter @syncanvas/web exec wrangler deploy"
+    "release": "pnpm build && node -e \"require('fs').rmSync('apps/web/dist/syncanvas/.dev.vars',{force:true})\" && pnpm --filter @syncanvas/web exec wrangler deploy",
+    "loadtest": "node tools/loadtest/run.mjs",
+    "perf": "playwright test -c tools/perf/playwright.config.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

@@ -380,6 +380,21 @@ importers:
 
   packages/shared: {}
 
+  tools/loadtest:
+    dependencies:
+      jose:
+        specifier: ^6.2.12
+        version: 6.2.12
+      lib0:
+        specifier: ^0.2.119
+        version: 0.2.119
+      y-protocols:
+        specifier: ^1.0.7
+        version: 1.0.7(yjs@13.6.33)
+      yjs:
+        specifier: ^13.6.33
+        version: 13.6.33
+
 packages:
 
   '@babel/code-frame@7.29.7':

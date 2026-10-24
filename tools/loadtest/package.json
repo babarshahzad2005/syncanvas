@@ -1,0 +1,15 @@
+{
+  "name": "@syncanvas/loadtest",
+  "private": true,
+  "type": "module",
+  "description": "S3/S4 load test: N headless Editors on one Board (M6 ticket 08).",
+  "scripts": {
+    "start": "node run.mjs"
+  },
+  "dependencies": {
+    "jose": "^6.2.12",
+    "lib0": "^0.2.119",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.33"
+  }
+}
