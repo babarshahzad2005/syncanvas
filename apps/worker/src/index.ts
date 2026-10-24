@@ -20,6 +20,8 @@ export default {
       const id = env.BOARD_ROOM.idFromName(decodeURIComponent(room[1]))
       return env.BOARD_ROOM.get(id).fetch(request)
     }
+    // /embed/{token} → the Embed viewer page (M6 ticket 06), the one page any site may frame.
+    if (pathname.startsWith("/embed/")) return serveEmbed(request, env)
     // Everything else is served from static assets before the Worker runs.
     return new Response("Not found", { status: 404 })
   },
@@ -42,3 +44,18 @@ export default {
     }
   },
 } satisfies ExportedHandler<Env>
+
+/**
+ * The Embed viewer (`embed.html`) for any `/embed/…` address. Unlike every other page (see
+ * `_headers`), other sites may frame it. It reads nothing but its own token: no cookies.
+ */
+async function serveEmbed(request: Request, env: Env) {
+  // Served as itself: html_handling is "none" (wrangler.jsonc), so there's no redirect that
+  // would take the browser away from /embed/{token}.
+  const page = await env.WEB.fetch(new Request(new URL("/embed.html", request.url), request))
+  const headers = new Headers(page.headers)
+  headers.delete("x-frame-options")
+  headers.set("content-security-policy", "frame-ancestors *")
+  headers.set("referrer-policy", "no-referrer")
+  return new Response(page.body, { status: page.status, headers })
+}

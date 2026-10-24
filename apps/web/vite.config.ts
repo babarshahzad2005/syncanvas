@@ -12,4 +12,18 @@ export default defineConfig({
       "@": resolve(import.meta.dirname, "./src"),
     },
   },
+  // Two pages in the browser build: the app, and the Embed viewer (M6 ticket 06), which
+  // bundles only what it uses. (Not the Worker's build, which has its own entry.)
+  environments: {
+    client: {
+      build: {
+        rollupOptions: {
+          input: {
+            main: resolve(import.meta.dirname, "index.html"),
+            embed: resolve(import.meta.dirname, "embed.html"),
+          },
+        },
+      },
+    },
+  },
 })

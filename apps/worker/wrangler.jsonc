@@ -6,9 +6,14 @@
   "compatibility_flags": ["nodejs_compat"],
   // One Worker serves the app, API, and board rooms (ADR 0004).
   // The Cloudflare Vite plugin in apps/web builds the client into these assets.
+  // /embed/* goes through the Worker too, to serve the Embed viewer with its own headers (M6).
+  // html_handling none: /embed.html is served as itself (no redirect to a pretty /embed, which
+  // the app's own routes would then take). Every other page falls back to the app as before.
   "assets": {
+    "binding": "WEB",
+    "html_handling": "none",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/ws/*"]
+    "run_worker_first": ["/api/*", "/ws/*", "/embed/*"]
   },
   // Postgres (Neon main branch) through Hyperdrive (ADR 0003). Locally, Wrangler connects
   // straight to the dev-branch string in apps/web/.env instead.

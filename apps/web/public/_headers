@@ -1,0 +1,5 @@
+# Every page refuses to be framed by other sites (clickjacking), except the Embed viewer,
+# which the Worker serves at /embed/* with frame-ancestors * (M6 ticket 06).
+/*
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'

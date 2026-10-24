@@ -7,6 +7,7 @@ import type {
   DashboardResponse,
   EditCommentRequest,
   EmbedState,
+  EmbedTokenResponse,
   FolderSummary,
   GuestTokenResponse,
   ImageUploadResponse,
@@ -39,8 +40,8 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
-    ...init,
     credentials: "same-origin",
+    ...init,
     headers: { "content-type": "application/json", ...init.headers },
   })
   if (!res.ok) {
@@ -99,6 +100,12 @@ export const api = {
     request<EmbedState>(`${board(boardId)}/embed`, { method: "PUT", body: "{}" }),
   disableEmbed: (boardId: string) =>
     request<{ ok: true }>(`${board(boardId)}/embed`, { method: "DELETE" }),
+  /** M6 ticket 06: the Embed viewer's pass (no session; cookies stay home). */
+  embedToken: (token: string) =>
+    request<EmbedTokenResponse>(`/api/embed/${encodeURIComponent(token)}/token`, {
+      method: "POST",
+      credentials: "omit",
+    }),
   join: (boardId: string, token: string) =>
     request<JoinResponse>(`${board(boardId)}/join`, {
       method: "POST",

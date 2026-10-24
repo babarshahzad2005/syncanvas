@@ -113,11 +113,18 @@ export class BoardConnection {
   readonly doc: Y.Doc
   /** A Share Link token: connect as a Guest instead of a Member (M3 ticket 04). */
   readonly guestLink: string | null
+  /** An Embed token: connect as an Embed viewer, read-only and unseen (M6 ticket 06). */
+  readonly embedToken: string | null
 
-  constructor(boardId: string, doc: Y.Doc, options: { guestLink?: string } = {}) {
+  constructor(
+    boardId: string,
+    doc: Y.Doc,
+    options: { guestLink?: string; embedToken?: string } = {},
+  ) {
     this.boardId = boardId
     this.doc = doc
     this.guestLink = options.guestLink ?? null
+    this.embedToken = options.embedToken ?? null
     doc.on("update", this.onLocalUpdate)
   }
 
@@ -194,7 +201,10 @@ export class BoardConnection {
     let pass: BoardTokenResponse
     try {
       // A fresh token for every connection attempt, so an expired one is never reused.
-      if (this.guestLink) {
+      if (this.embedToken) {
+        const embed = await api.embedToken(this.embedToken)
+        pass = { ...embed, you: { id: "embed", name: "" } }
+      } else if (this.guestLink) {
         const guest = await api.guestToken(this.boardId, this.guestLink)
         this.linkRole = guest.linkRole
         pass = guest
