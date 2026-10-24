@@ -89,3 +89,22 @@ The room keeps a shadow copy of the Board and validates only the Elements an upd
 - **At 200 and 400 edits/s it still falls behind on this laptop** (10 moves/s: 13 s behind; 20 moves/s: 25 s), on small Boards too, where the check was never the cost. These runs were slower than the baseline's (857 ms at 10 moves/s), with VS Code and Chrome using a lot of the same 2 cores. The room, the 20 test clients, and those apps all share the machine, so these numbers can't show what the room alone can do. The production run in 08d can: there the room has its own machine.
 - **S3 with 20 Editors** was a p95 of 135–150 ms here (old and new alike): a miss, measured on the same busy laptop. With 3 Editors it's 42 ms.
 
+### After 08c: zoomed-out drawing, 2026-10-24
+
+`pnpm perf` S5 in a visible browser window (`--headed`, so the graphics chip is used). Headless runs gave the same numbers before these changes.
+
+| | Before | After |
+|---|---|---|
+| Pan at 100% | 59.9 fps | 60.0 fps, no frame over 20 ms |
+| Zoom around 100% | 54.6 fps | 49.8 fps (p95 frame 33.5 ms; unchanged by these changes, within noise) |
+| Pan with all 5,000 on screen | **6.6 fps** | **47.8 fps**, p95 frame 33.5 ms |
+
+What it took, measured one step at a time:
+
+1. **Text as bars** below 4px on screen: no visible gain on its own (6.6 → 5.6 fps, noise). Text layout was already cached, so the letters themselves weren't the cost.
+2. **Square corners below 1px.** Rounded rectangles turned out to be the main cost. On a bare canvas, 5,000 rounded boxes drew at 9.7 fps against 49 fps square. With this: 15.6 fps.
+3. **The Board screen re-rendered on every frame.** A hook in `routes/board.tsx` subscribed to the frame counter, so React rebuilt the whole screen on every frame of every pan or zoom, at any zoom. With this: 16.9 fps (the production build's React is cheap; the dev server was hit far harder).
+4. **Pen strokes under 48px as plain lines.** 500 stroke outlines alone drew at 38 fps on a bare canvas. With this: 47.8 fps.
+
+Still short of 60 fps with all 5,000 visible on this laptop (Intel HD 620). What's left is mostly rasterizing several thousand shapes per frame.
+

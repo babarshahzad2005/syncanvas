@@ -206,12 +206,14 @@ function useThreadFromLink(
 ) {
   const { thread: wanted } = route.useSearch()
   const navigate = useNavigate()
-  const frame = useCanvasView((s) => s.frame)
+  // Only whether the canvas has drawn yet: the frame count itself would re-render the whole
+  // Board screen on every frame of a pan or zoom (M6 ticket 08c).
+  const drawing = useCanvasView((s) => s.frame > 0)
   // Once per link: leaving the address takes a moment, and every frame in between would
   // otherwise open the card and move the view again.
   const handled = useRef<string | null>(null)
   useEffect(() => {
-    if (!wanted || frame === 0 || handled.current === wanted) return
+    if (!wanted || !drawing || handled.current === wanted) return
     const thread = threads.find((t) => t.id === wanted)
     if (!thread) return
     handled.current = wanted
@@ -219,7 +221,7 @@ function useThreadFromLink(
       .getState()
       .focus(thread.id, anchorPoint(thread.anchor, useCanvasView.getState().boxOf, lastBoxes))
     void navigate({ to: ".", search: (prev) => ({ ...prev, thread: undefined }), replace: true })
-  }, [wanted, frame, threads, lastBoxes, navigate])
+  }, [wanted, drawing, threads, lastBoxes, navigate])
 }
 
 function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string }) {

@@ -85,6 +85,7 @@ function render() {
       showGrid: false,
       images: imageCache.get,
       time: performance.now(),
+      simplify: true,
     })
     if (animating) render()
   })

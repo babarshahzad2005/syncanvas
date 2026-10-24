@@ -407,6 +407,7 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         images: imageCache.get,
         uploads: useUploads.getState().uploads,
         time: performance.now(),
+        simplify: true,
       })
       // Placeholders spin until their image arrives.
       if (animating) render()

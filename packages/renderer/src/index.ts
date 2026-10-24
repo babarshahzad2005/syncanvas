@@ -349,6 +349,11 @@ export type Scene = {
    * are as thick (relative to the Elements) as on screen at 100%, at any picture scale.
    */
   lineZoom?: number
+  /**
+   * Screen only: text too small to read is drawn as bars (DESIGN.md → Canvas → Zoomed out).
+   * Pictures leave it off, so they keep full detail.
+   */
+  simplify?: boolean
 }
 
 /**
@@ -379,9 +384,11 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene): boolean 
   }
   const paint: Paint = { images: scene.images, time: scene.time ?? 0, busy: false }
   const lineZoom = scene.lineZoom ?? camera.zoom
+  // Simplifying: the zoom detail decisions are made at (null: full detail).
+  const detailZoom = scene.simplify ? camera.zoom : null
   for (const e of elements) {
     if (e.id === scene.editing && e.type === "text") continue // the textarea shows it
-    drawElement(ctx, e, byId, theme, lineZoom, e.id === scene.editing, paint)
+    drawElement(ctx, e, byId, theme, lineZoom, e.id === scene.editing, paint, detailZoom)
   }
   for (const upload of scene.uploads ?? []) {
     drawPlaceholder(ctx, upload.position, upload.size, theme, camera.zoom, paint, !upload.failed)
@@ -541,9 +548,69 @@ export function textSize(e: TextElement): Size {
   return { w: e.autoWidth ? layout.width : e.size.w, h: layout.height }
 }
 
-function drawText(ctx: CanvasRenderingContext2D, e: TextElement, color: string) {
+/** Below this on-screen font size (px), text is drawn as bars when simplifying. */
+export const TEXT_BARS_BELOW_PX = 4
+
+/** True when text of `fontSize` (canvas units) is too small to read at `zoom`. */
+export function textAsBars(fontSize: number, zoom: number | null): boolean {
+  return zoom !== null && fontSize * zoom < TEXT_BARS_BELOW_PX
+}
+
+/** True when a corner of `radius` (canvas units) is under 1px on screen, so it's drawn square. */
+export function squareCorners(radius: number, zoom: number | null): boolean {
+  return zoom !== null && radius * zoom < 1
+}
+
+/** A rectangle path, its corners rounded unless they'd be too small to see. */
+function boxPath(
+  ctx: CanvasRenderingContext2D,
+  p: Point,
+  s: Size,
+  radius: number,
+  zoom: number | null,
+) {
+  ctx.beginPath()
+  if (squareCorners(radius, zoom)) ctx.rect(p.x, p.y, s.w, s.h)
+  else ctx.roundRect(p.x, p.y, s.w, s.h, radius)
+}
+
+/**
+ * Text too small to read, as one soft bar per line (DESIGN.md → Canvas → Zoomed out). Lines
+ * whose bottom is past `bottom` are left out, as clipping would.
+ */
+function drawTextBars(
+  ctx: CanvasRenderingContext2D,
+  layout: TextLayout,
+  left: (lineWidth: number) => number,
+  top: number,
+  color: string,
+  bottom = Number.POSITIVE_INFINITY,
+) {
+  ctx.fillStyle = color
+  ctx.globalAlpha = 0.35
+  const h = layout.lineHeight * 0.4
+  for (const [i, line] of layout.lines.entries()) {
+    const y = top + i * layout.lineHeight + (layout.lineHeight - h) / 2
+    if (y + h > bottom) break
+    if (line.width > 0) ctx.fillRect(left(line.width), y, line.width, h)
+  }
+  ctx.globalAlpha = 1
+}
+
+function drawText(
+  ctx: CanvasRenderingContext2D,
+  e: TextElement,
+  color: string,
+  detailZoom: number | null,
+) {
   const layout = textLayoutOf(e)
   const width = e.autoWidth ? layout.width : e.size.w
+  if (textAsBars(TEXT_SIZES[e.fontSize], detailZoom)) {
+    const left = (w: number) =>
+      e.position.x + (e.align === "center" ? (width - w) / 2 : e.align === "right" ? width - w : 0)
+    drawTextBars(ctx, layout, left, e.position.y, color)
+    return
+  }
   ctx.font = textFont(TEXT_SIZES[e.fontSize], e.bold)
   ctx.fillStyle = color
   ctx.textBaseline = "alphabetic"
@@ -612,15 +679,21 @@ function drawSticky(
   e: StickyElement,
   theme: Theme,
   editing: boolean,
+  detailZoom: number | null,
 ) {
   const { layout, fontSize, height } = stickyLayoutOf(e)
   const { x, y } = e.position
   const w = e.size.w
-  ctx.beginPath()
-  ctx.roundRect(x, y, w, height, 4)
+  boxPath(ctx, e.position, { w, h: height }, 4, detailZoom)
   ctx.fillStyle = stickyBackground(e.color, theme)
   ctx.fill()
   if (editing) return // the textarea shows the text
+  if (textAsBars(fontSize, detailZoom)) {
+    const top = y + STICKY_PADDING
+    const bottom = y + height - STICKY_PADDING
+    drawTextBars(ctx, layout, () => x + STICKY_PADDING, top, STICKY_TEXT_COLOR, bottom)
+    return
+  }
   ctx.save()
   ctx.beginPath()
   ctx.rect(x, y + STICKY_PADDING, w, height - STICKY_PADDING * 2)
@@ -651,9 +724,10 @@ function drawElement(
   zoom: number,
   editing: boolean,
   paint: Paint,
+  detailZoom: number | null = null,
 ) {
   if (e.type === "sticky") {
-    drawSticky(ctx, e, theme, editing)
+    drawSticky(ctx, e, theme, editing, detailZoom)
     return
   }
   if (e.type === "image") {
@@ -669,13 +743,14 @@ function drawElement(
   const shades = paletteShades(e.color, theme)
   switch (e.type) {
     case "rect":
-      drawRect(ctx, e.position, e.size, e.fill, shades, zoom)
+      drawRect(ctx, e.position, e.size, e.fill, shades, zoom, detailZoom)
       return
     case "ellipse":
       drawEllipse(ctx, e.position, e.size, e.fill, shades, zoom)
       return
     case "pen":
-      drawStroke(ctx, absolutePoints(e), e.width, shades.stroke, true)
+      if (sketchPen(e, detailZoom)) drawPenSketch(ctx, e, shades.stroke, detailZoom ?? 1)
+      else fillOutline(ctx, penOutline(e), shades.stroke)
       return
     case "arrow":
     case "connector": {
@@ -684,7 +759,7 @@ function drawElement(
       return
     }
     case "text":
-      drawText(ctx, e, shades.stroke)
+      drawText(ctx, e, shades.stroke, detailZoom)
       return
   }
 }
@@ -968,7 +1043,60 @@ function drawStroke(
   color: string,
   complete: boolean,
 ) {
-  const [first, ...rest] = strokeOutline(points, width, complete)
+  fillOutline(ctx, strokeOutline(points, width, complete), color)
+}
+
+/**
+ * Finished strokes' outlines, by Element. Elements are replaced, never changed, when edited,
+ * so a stroke's outline is worked out once instead of on every frame.
+ */
+const penOutlines = new WeakMap<PenElement, number[][]>()
+
+function penOutline(e: PenElement): number[][] {
+  let outline = penOutlines.get(e)
+  if (!outline) {
+    outline = strokeOutline(absolutePoints(e), e.width)
+    penOutlines.set(e, outline)
+  }
+  return outline
+}
+
+/** Below this on-screen size (px, the longer side), a pen stroke is drawn as a simple line. */
+export const PEN_SKETCH_BELOW_PX = 48
+
+/** True when a pen stroke is small enough on screen to draw as a simple line. */
+export function sketchPen(e: PenElement, zoom: number | null): boolean {
+  return zoom !== null && Math.max(e.size.w, e.size.h) * zoom < PEN_SKETCH_BELOW_PX
+}
+
+/**
+ * A small pen stroke as a plain line through its points, skipping any closer than 2px on
+ * screen to the last one kept. Its outline would be the same few pixels at many times the cost.
+ */
+function drawPenSketch(ctx: CanvasRenderingContext2D, e: PenElement, color: string, zoom: number) {
+  const step = 2 / zoom
+  const [first, ...rest] = e.points
+  if (!first) return
+  ctx.beginPath()
+  let [lx, ly] = first
+  ctx.moveTo(e.position.x + lx, e.position.y + ly)
+  for (const [i, [x, y]] of rest.entries()) {
+    if (i < rest.length - 1 && Math.abs(x - lx) < step && Math.abs(y - ly) < step) continue
+    ctx.lineTo(e.position.x + x, e.position.y + y)
+    lx = x
+    ly = y
+  }
+  ctx.lineWidth = PEN_WIDTHS[e.width]
+  ctx.lineCap = "round"
+  ctx.lineJoin = "round"
+  ctx.strokeStyle = color
+  ctx.stroke()
+  ctx.lineCap = "butt"
+  ctx.lineJoin = "miter"
+}
+
+function fillOutline(ctx: CanvasRenderingContext2D, outline: number[][], color: string) {
+  const [first, ...rest] = outline
   if (!first) return
   ctx.beginPath()
   ctx.moveTo(first[0] ?? 0, first[1] ?? 0)
@@ -996,9 +1124,9 @@ function drawRect(
   fill: Fill,
   shades: Shades,
   zoom: number,
+  detailZoom: number | null = null,
 ) {
-  ctx.beginPath()
-  ctx.roundRect(p.x, p.y, s.w, s.h, Math.min(4, s.w / 2, s.h / 2))
+  boxPath(ctx, p, s, Math.min(4, s.w / 2, s.h / 2), detailZoom)
   fillShape(ctx, fill, shades, zoom)
 }
 
