@@ -17,6 +17,7 @@ import {
   foreignImageKeys,
   type Geometry,
   hasBox,
+  indexById,
   isAttachable,
   listElements,
   liveGroups,
@@ -81,6 +82,7 @@ import {
   elementsFromPaste,
   pasteAt,
 } from "./clipboard"
+import { exportPng, exportSvg } from "./export"
 import { UploadOverlay } from "./image-overlay"
 import {
   addImages,
@@ -197,6 +199,8 @@ declare global {
       elements: () => ElementWithId[]
       camera: () => Camera
       image: (key: string) => string | null
+      /** The whole Board exported, as a data URL (S8 export fidelity, M6 ticket 04). */
+      exportFile: (format: "png" | "svg", theme: "light" | "dark") => Promise<string>
     }
     /** Test hook: the Elements of the Version being previewed (M5b ticket 07). */
     __syncanvasPreview?: { elements: () => ElementWithId[] }
@@ -625,6 +629,18 @@ export const BoardCanvas = forwardRef<CanvasHandle, Props>(function BoardCanvas(
         elements: () => listElements(doc),
         camera: () => state.current.camera,
         image: (key) => imageCache.stateOf(key),
+        exportFile: async (format, theme) => {
+          const all = listElements(doc)
+          const blob =
+            format === "svg"
+              ? await exportSvg(all, indexById(all), theme)
+              : (await exportPng(all, indexById(all), theme)).blob
+          return new Promise((resolve) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result as string)
+            reader.readAsDataURL(blob)
+          })
+        },
       }
     }
     return () => {

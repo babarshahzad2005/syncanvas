@@ -31,6 +31,8 @@ declare global {
       camera: () => { x: number; y: number; zoom: number }
       /** How far an image file has got: "ready", "loading", "missing", or null (M5b). */
       image: (key: string) => string | null
+      /** The whole Board exported, as a data URL (M6 ticket 04). */
+      exportFile: (format: "png" | "svg", theme: "light" | "dark") => Promise<string>
     }
     /** The Elements of the Version being previewed (M5b ticket 07). */
     __syncanvasPreview?: { elements: () => { type: string }[] }
