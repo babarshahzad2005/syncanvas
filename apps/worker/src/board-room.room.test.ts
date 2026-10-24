@@ -1054,6 +1054,29 @@ describe("BoardRoom compaction (M5b ticket 01)", () => {
     fresh.close()
   }, 60_000)
 
+  it("keeps counting toward 500 across an eviction (the count lives in memory)", async () => {
+    const board = newBoardId()
+    const waitFor = async (want: (r: { updates: number; parts: number }) => boolean) => {
+      const start = Date.now()
+      let stored = await rows(board)
+      while (!want(stored)) {
+        if (Date.now() - start > 30_000) throw new Error(`timed out: ${JSON.stringify(stored)}`)
+        await tick()
+        stored = await rows(board)
+      }
+    }
+    const first = await joinAs(board, "owner", "ada")
+    for (let i = 0; i < 300; i++) first.addRect(`a${i}`)
+    await waitFor((r) => r.updates === 300)
+    first.close()
+    await evictDurableObject(room(board))
+    // Reloaded, the room counts the 300 it finds; 250 more pass 500 and compact.
+    const second = await joinAs(board, "owner", "ada", Date.now() + 2_000)
+    for (let i = 0; i < 250; i++) second.addRect(`b${i}`)
+    await waitFor((r) => r.parts > 0 && r.updates === 50)
+    second.close()
+  }, 60_000)
+
   it("sets an alarm on the first update, and the alarm compacts", async () => {
     const board = newBoardId()
     const owner = await joinAs(board, "owner", "ada")

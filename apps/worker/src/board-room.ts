@@ -124,6 +124,13 @@ export class BoardRoom extends DurableObject<Env> {
   /** Judges incoming updates against `doc` (ADR 0006). */
   private checker = new UpdateChecker(this.doc)
   /**
+   * Updates stored since the last compaction, and the Elements with Threads, kept in memory
+   * (M6 ticket 08e): reading them from SQLite on every edit used up the free plan's daily
+   * rows-read allowance under load. Counted while loading; kept in step with every write.
+   */
+  private pending = 0
+  private anchors: Set<string> | null = null
+  /**
    * Latest presence per awareness id, stamped, for sending to people who join. Memory only:
    * after a hibernation it starts empty, and the next joiner triggers a query instead.
    */
@@ -158,18 +165,17 @@ export class BoardRoom extends DurableObject<Env> {
       .toArray()
       .map((row) => new Uint8Array(row.data))
     if (parts.length > 0) Y.applyUpdate(this.doc, joinParts(parts))
+    this.pending = 0
     for (const row of this.ctx.storage.sql.exec<{ data: ArrayBuffer }>(
       "select data from updates order by seq",
     )) {
       Y.applyUpdate(this.doc, new Uint8Array(row.data))
+      this.pending++
     }
   }
 
   private pendingUpdates() {
-    const [row] = this.ctx.storage.sql
-      .exec<{ n: number }>("select count(*) as n from updates")
-      .toArray()
-    return row?.n ?? 0
+    return this.pending
   }
 
   // ---------- Compaction (M5b ticket 01) ----------
@@ -198,6 +204,7 @@ export class BoardRoom extends DurableObject<Env> {
         this.saveVersion(parts, now, "auto", null)
       }
     })
+    this.pending = 0
   }
 
   // ---------- Versions (M5b ticket 06) ----------
@@ -501,6 +508,7 @@ export class BoardRoom extends DurableObject<Env> {
 
     // Persist before broadcasting: an update anyone has seen is always in storage.
     this.ctx.storage.sql.exec("insert into updates (data, at) values (?, ?)", update, Date.now())
+    this.pending++
     const anchored = this.anchoredBoxes()
     Y.applyUpdate(this.doc, update)
     this.noteDeletedAnchors(anchored)
@@ -616,6 +624,8 @@ export class BoardRoom extends DurableObject<Env> {
     this.doc.destroy()
     this.doc = new Y.Doc()
     this.checker = new UpdateChecker(this.doc)
+    this.pending = 0
+    this.anchors = null
     this.presence.clear()
     this.presenceWarm = false
     this.createTables()
@@ -657,9 +667,7 @@ export class BoardRoom extends DurableObject<Env> {
   private anchoredBoxes(): Map<string, ElementBox> {
     const boxes = new Map<string, ElementBox>()
     const elements = elementsOf(this.doc)
-    for (const { element_id } of this.ctx.storage.sql.exec<{ element_id: string }>(
-      "select element_id from anchors",
-    )) {
+    for (const element_id of this.anchoredIds()) {
       const fields = elements.get(element_id)
       const e = fields ? readElement(fields) : null
       if (e && "position" in e && "size" in e) {
@@ -667,6 +675,17 @@ export class BoardRoom extends DurableObject<Env> {
       }
     }
     return boxes
+  }
+
+  /** The Elements with Threads: read once, then kept up to date in memory. */
+  private anchoredIds(): Set<string> {
+    this.anchors ??= new Set(
+      this.ctx.storage.sql
+        .exec<{ element_id: string }>("select element_id from anchors")
+        .toArray()
+        .map((row) => row.element_id),
+    )
+    return this.anchors
   }
 
   /** An update deleted Elements with Threads: remember where they were, and tell everyone. */
@@ -713,6 +732,7 @@ export class BoardRoom extends DurableObject<Env> {
         "insert into anchors (element_id) values (?) on conflict do nothing",
         message.thread.anchor.elementId,
       )
+      this.anchoredIds().add(message.thread.anchor.elementId)
     }
     if (message.type === "notify") {
       // Only the notified Users' own Member sockets hear it.

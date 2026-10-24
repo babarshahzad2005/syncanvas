@@ -26,6 +26,8 @@ cd apps/web
 pnpm exec wrangler dev -c dist/syncanvas/wrangler.json --port 8787 --local
 ```
 
+> **Never load-test the live site.** On 2026-10-24 the live runs (08b/08d) used up the Durable Objects free plan's daily rows-read allowance, and every Board on the account showed Offline until the 00:00 UTC reset. The room also read up to 500 rows per edit back then (fixed in M6 ticket 08e). Measure against the local build; if production must be checked, use 3 Editors for under a minute.
+
 **S3/S4: `pnpm loadtest`** (`tools/loadtest/run.mjs`)
 
 - N headless Editors join one Board over the real board-room protocol (y-protocols sync over a WebSocket).
