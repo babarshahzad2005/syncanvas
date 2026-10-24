@@ -14,6 +14,8 @@
 //
 //   node tools/loadtest/run.mjs --editors 20 --seconds 60
 //   node tools/loadtest/run.mjs --url wss://… --token-file token.txt --board <id> --seconds 90
+//
+// --fill N first adds N rectangles (from the first client), so the run measures a big Board.
 
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
@@ -37,6 +39,7 @@ const editors = Number(option("editors", "20"))
 const seconds = Number(option("seconds", "60"))
 const rate = Number(option("rate", "20"))
 const warmupSeconds = Number(option("warmup", "5"))
+const fill = Number(option("fill", "0"))
 const tokenFile = option("token-file", null)
 const boardId = option("board", `loadtest-${Date.now().toString(36)}`)
 
@@ -163,6 +166,31 @@ for (let i = 0; i < editors; i++) {
   clients.push(await connect(i, sharedToken ?? (await localToken(`loadtest-editor-${i}`))))
 }
 console.log(`All ${editors} connected and synced.`)
+
+if (fill > 0) {
+  // In batches, so no single message gets near the WebSocket size limit.
+  const [first] = clients
+  for (let done = 0; done < fill; done += 500) {
+    first.doc.transact(() => {
+      const elements = first.doc.getMap("elements")
+      for (let i = done; i < Math.min(fill, done + 500); i++) {
+        const rect = new Y.Map()
+        rect.set("type", "rect")
+        rect.set("position", { x: (i % 100) * 60, y: Math.floor(i / 100) * 60 })
+        rect.set("size", { w: 40, h: 40 })
+        rect.set("z", "a0")
+        rect.set("color", "blue")
+        rect.set("fill", "light")
+        elements.set(`fill-${i}`, rect)
+      }
+    })
+  }
+  const total = fill + editors
+  while (clients.some((c) => c.doc.getMap("elements").size < total)) {
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  console.log(`Board filled: ${total} Elements.`)
+}
 
 const timers = clients.map((client) =>
   setInterval(() => {

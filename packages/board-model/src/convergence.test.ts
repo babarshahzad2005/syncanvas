@@ -18,7 +18,6 @@ import {
   applyTextChange,
   arrowGeometry,
   type ConnectorEnd,
-  checkUpdate,
   copyPayload,
   createUndoManager,
   deleteElements,
@@ -50,6 +49,7 @@ import {
   setSize,
   setTextStyle,
   textOf,
+  UpdateChecker,
   ungroupElements,
   validateBoardDoc,
 } from "./index"
@@ -57,7 +57,7 @@ import {
 // Convergence suite (spec: S1/S2). Many in-memory clients edit one Board through the
 // board-model API while a simulated network delays, interleaves, and drops their messages and
 // takes them offline. A simulated server applies the board room's real acceptance rules
-// (`checkUpdate`). After everything is delivered, every client must hold the same Board, and
+// (`UpdateChecker`). After everything is delivered, every client must hold the same Board, and
 // nothing the server accepted may be missing anywhere.
 //
 // The network is modelled the way WebSockets behave: each client↔server link is FIFO, and
@@ -124,6 +124,7 @@ class SimClient {
 
 class SimServer {
   readonly doc = new Y.Doc()
+  private readonly checker = new UpdateChecker(this.doc)
   readonly accepted: Uint8Array[] = []
   readonly refusals: string[] = []
   readonly clients: SimClient[]
@@ -164,7 +165,7 @@ class SimServer {
   }
 
   private receiveUpdate(client: SimClient, update: Uint8Array) {
-    const verdict = checkUpdate(this.doc, update, canEdit(client.role))
+    const verdict = this.checker.check(update, canEdit(client.role))
     if (verdict === "unchanged" || verdict === "incomplete") return
     if (verdict !== "accepted") {
       // Say which Element broke and how, so a failure is readable without a debugger.

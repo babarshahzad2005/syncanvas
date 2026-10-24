@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers"
-import { boardText, checkUpdate, elementsOf, readElement } from "@syncanvas/board-model"
+import { boardText, elementsOf, readElement, UpdateChecker } from "@syncanvas/board-model"
 import {
   type AccessNotice,
   type ControlMessage,
@@ -121,6 +121,8 @@ function syncMessage(write: (encoder: encoding.Encoder) => void) {
 
 export class BoardRoom extends DurableObject<Env> {
   private doc = new Y.Doc()
+  /** Judges incoming updates against `doc` (ADR 0006). */
+  private checker = new UpdateChecker(this.doc)
   /**
    * Latest presence per awareness id, stamped, for sending to people who join. Memory only:
    * after a hibernation it starts empty, and the next joiner triggers a query instead.
@@ -485,7 +487,7 @@ export class BoardRoom extends DurableObject<Env> {
 
   private receiveUpdate(ws: WebSocket, update: Uint8Array) {
     const info = ws.deserializeAttachment() as SocketInfo
-    switch (checkUpdate(this.doc, update, info.kind === "member" && canEdit(info.role))) {
+    switch (this.checker.check(update, info.kind === "member" && canEdit(info.role))) {
       case "unchanged":
       case "incomplete":
         return
@@ -610,8 +612,10 @@ export class BoardRoom extends DurableObject<Env> {
     this.closeEveryone()
     await this.ctx.storage.deleteAlarm()
     await this.ctx.storage.deleteAll()
+    this.checker.dispose()
     this.doc.destroy()
     this.doc = new Y.Doc()
+    this.checker = new UpdateChecker(this.doc)
     this.presence.clear()
     this.presenceWarm = false
     this.createTables()

@@ -355,9 +355,10 @@ export function readElement(fields: Y.Map<unknown>): Element | null {
 // ---------- Validating a whole Board ----------
 
 /**
- * Checks a whole Board document. The board room runs this on a scratch copy before accepting
- * an update, so invalid content never reaches storage or other clients. Returns a list of
- * problems; empty means valid. `elementCap` is overridable for tests only.
+ * Checks a whole Board document. The board room applies the same rules to each incoming
+ * update, limited to what it changes (`UpdateChecker`), so invalid content never reaches
+ * storage or other clients. Returns a list of problems; empty means valid. `elementCap` is
+ * overridable for tests only.
  */
 export function validateBoardDoc(doc: Y.Doc, options: { elementCap?: number } = {}): string[] {
   const problems: string[] = []

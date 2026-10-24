@@ -30,7 +30,8 @@ pnpm exec wrangler dev -c dist/syncanvas/wrangler.json --port 8787 --local
 - Each moves its own rectangle about 20 times a second, the rate a drag sends at, stamping the send time into the position.
 - Every other client records the time from send to receipt. All clients run on one machine, so one clock times both ends.
 - Locally it signs its own board tokens with the dev key.
-- Options: `--url`, `--editors`, `--rate` (moves per second per Editor), `--seconds`, and `--token-file` and `--board` for another server.
+- Options: `--url`, `--editors`, `--rate` (moves per second per Editor), `--seconds`, `--fill` (first add that many rectangles, to measure a big Board), and `--token-file` and `--board` for another server.
+- **Restart the server between runs.** A run that falls behind leaves a backlog the room is still working through when the next one starts, which skews that one too.
 
 **S5/S6: `pnpm perf`** (`tools/perf/board.perf.ts`; never in CI)
 
@@ -60,6 +61,31 @@ pnpm exec wrangler dev -c dist/syncanvas/wrangler.json --port 8787 --local
 - **S4.** The board room was the bottleneck: one CPU core saturated, while the test clients used about 60% of another.
   - Every incoming edit is checked by copying the whole Board into a scratch document and validating every Element (`checkUpdate` in `packages/board-model/src/acceptance.ts`).
   - Measured alone, that check costs 1.2 ms per edit on a 20-Element Board, 18 ms on 1,000 Elements, and 115 ms on 5,000. Its cost grows with the Board, not the edit.
-  - Fixed in M6 ticket 08b.
+  - Fixed in M6 ticket 08b (below).
 - **S5, zoomed out.** Every Element is drawn in full detail, text included, even when it's a few pixels tall. Level-of-detail drawing follows in M6 ticket 08c.
 - **S6.** These local runs overstate the server side: the local Worker reaches the Neon dev database across the internet for every API call, which the deployed Worker, next to its database through Hyperdrive, doesn't. The app also downloads its main bundle and checks the session before drawing even the local copy. The deployed site is measured next, and M6 ticket 08d follows if it still misses.
+
+### After 08b: each edit checked by what it changes, 2026-10-24
+
+The room keeps a shadow copy of the Board and validates only the Elements an update touches (`UpdateChecker` in `packages/board-model/src/acceptance.ts`).
+
+**The check alone,** per move, including the room applying it:
+
+| Board | Before | After |
+|---|---|---|
+| 20 Elements | 2.0 ms | 0.09 ms |
+| 1,000 Elements | 18 ms | 0.06 ms |
+| 5,000 Elements | 122 ms | 0.10 ms |
+
+**`pnpm loadtest`, 20 Editors at 5 moves/s each (100 edits/s),** with a fresh server for each run, old and new code back to back:
+
+| Board | Before 08b | After 08b |
+|---|---|---|
+| About 20 Elements | p95 132 ms, worst 0.3 s behind | p95 137 ms, worst 0.6 s behind |
+| 1,000 Elements | p95 27 s, **worst 28 s behind** (two runs) | p95 135–149 ms, worst 0.3–0.5 s behind (two runs) |
+| 5,000 Elements | (not run; worse than 1,000) | p95 151 ms, worst 0.3 s behind |
+
+- **S4 now holds on big Boards at 100 edits/s.** Board size no longer matters.
+- **At 200 and 400 edits/s it still falls behind on this laptop** (10 moves/s: 13 s behind; 20 moves/s: 25 s), on small Boards too, where the check was never the cost. These runs were slower than the baseline's (857 ms at 10 moves/s), with VS Code and Chrome using a lot of the same 2 cores. The room, the 20 test clients, and those apps all share the machine, so these numbers can't show what the room alone can do. The production run in 08d can: there the room has its own machine.
+- **S3 with 20 Editors** was a p95 of 135–150 ms here (old and new alike): a miss, measured on the same busy laptop. With 3 Editors it's 42 ms.
+
