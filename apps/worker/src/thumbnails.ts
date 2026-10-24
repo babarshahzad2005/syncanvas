@@ -5,6 +5,7 @@ import {
   type ThumbnailResponse,
 } from "@syncanvas/shared"
 import { and, eq, isNull, lt, sql } from "drizzle-orm"
+import type { VerifiedBoardToken } from "./board-token"
 import { findMembership } from "./boards"
 import type { Database } from "./db/client"
 import { boards, kvWrites } from "./db/schema"
@@ -154,16 +155,39 @@ export async function forget(store: AssetStore, key: string) {
 }
 
 /**
+ * Who's reading a Board's file: a Member by their session, or anyone holding a board token
+ * (Guests and Embed viewers; M6 ticket 07 uses it for the busy picture).
+ */
+export type AssetReader =
+  | { kind: "member"; userId: string }
+  | { kind: "token"; claims: VerifiedBoardToken | null }
+
+/** Refuses a reader who can't open the Board (a token for another Board, or for one in Trash). */
+export async function readerOrRefuse(db: Database, boardId: string, reader: AssetReader) {
+  if (reader.kind === "member") {
+    if (!(await findMembership(db, boardId, reader.userId))) throw refuse(403, { error: NO_ACCESS })
+    return
+  }
+  if (!reader.claims || reader.claims.boardId !== boardId) throw refuse(403, { error: NO_ACCESS })
+  // Tokens live 5 minutes; a Board sent to Trash meanwhile is closed to them at once.
+  const [board] = await db
+    .select({ id: boards.id })
+    .from(boards)
+    .where(and(eq(boards.id, boardId), isNull(boards.deletedAt)))
+    .limit(1)
+  if (!board) throw refuse(403, { error: NO_ACCESS })
+}
+
+/**
  * A Board's current thumbnail, for anyone who can open it. `fresh` says whether the asked-for
  * version is the current one (only then may the browser keep it for good).
  */
 export async function readThumbnail(
   db: Database,
   store: AssetStore,
-  input: { boardId: string; caller: Caller; version: string | undefined },
+  input: { boardId: string; reader: AssetReader; version: string | undefined },
 ) {
-  const membership = await findMembership(db, input.boardId, input.caller.id)
-  if (!membership) throw refuse(403, { error: NO_ACCESS })
+  await readerOrRefuse(db, input.boardId, input.reader)
   const [board] = await db
     .select({ thumbnailKey: boards.thumbnailKey })
     .from(boards)

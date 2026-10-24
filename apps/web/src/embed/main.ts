@@ -15,6 +15,7 @@ import {
 import * as Y from "yjs"
 import { imageCache } from "@/board/image-cache"
 import { ApiError, api } from "@/lib/api"
+import { BUSY_PICTURE_REFRESH_MS, fetchBoardPicture } from "@/lib/busy-picture"
 import { BoardConnection } from "@/sync/board-connection"
 
 // The Embed viewer (M6 ticket 06; DESIGN.md → Embed viewer, PRD A8): a Board shown live and
@@ -33,6 +34,8 @@ if (theme === "dark") document.documentElement.classList.add("dark")
 const canvas = document.getElementById("board") as HTMLCanvasElement
 const message = document.getElementById("message") as HTMLParagraphElement
 const badge = document.getElementById("badge") as HTMLAnchorElement
+const picture = document.getElementById("picture") as HTMLImageElement
+const caption = document.getElementById("caption") as HTMLParagraphElement
 badge.href = location.origin
 
 function show(text: string | null) {
@@ -185,6 +188,44 @@ canvas.addEventListener(
   { passive: false },
 )
 
+// ---------- Busy (M6 ticket 07) ----------
+
+let busyTimer: ReturnType<typeof setInterval> | null = null
+
+/** A full Board turned this viewer away: its last picture, refreshed while waiting. */
+async function showBusy(connection: BoardConnection) {
+  const load = async () => {
+    const url = connection.token
+      ? await fetchBoardPicture(connection.boardId, connection.token)
+      : null
+    if (connection.status !== "busy") {
+      if (url) URL.revokeObjectURL(url)
+      return
+    }
+    if (url) {
+      if (picture.src) URL.revokeObjectURL(picture.src)
+      picture.src = url
+      picture.hidden = false
+      caption.hidden = false
+      show(null)
+      canvas.style.visibility = "hidden"
+    } else if (picture.hidden) {
+      show("This board is busy right now. Retrying…")
+    }
+  }
+  if (!busyTimer) busyTimer = setInterval(() => void load(), BUSY_PICTURE_REFRESH_MS)
+  await load()
+}
+
+function hideBusy() {
+  if (busyTimer) clearInterval(busyTimer)
+  busyTimer = null
+  if (picture.src) URL.revokeObjectURL(picture.src)
+  picture.removeAttribute("src")
+  picture.hidden = true
+  caption.hidden = true
+}
+
 // ---------- The live Board ----------
 
 async function start() {
@@ -232,10 +273,12 @@ async function start() {
   connection.subscribe(() => {
     if (connection.status === "revoked") {
       connection.stop()
+      hideBusy()
       show(GONE)
     } else if (connection.status === "busy") {
-      show("This board is busy right now. Retrying…")
+      void showBusy(connection)
     } else if (connection.status === "online") {
+      hideBusy()
       show(null)
     }
   })

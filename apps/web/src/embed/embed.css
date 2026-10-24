@@ -59,6 +59,38 @@ body {
   display: none;
 }
 
+/* The busy fallback (M6 ticket 07): the Board's last picture, with a small caption. */
+#picture {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--background);
+}
+
+#caption {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  margin: 0;
+  height: 28px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  border-radius: 9999px;
+  background: var(--surface);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 16px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+#picture[hidden],
+#caption[hidden] {
+  display: none;
+}
+
 #badge {
   position: absolute;
   right: 12px;

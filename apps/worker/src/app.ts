@@ -32,7 +32,7 @@ import {
   type VersionsResponse,
 } from "@syncanvas/shared"
 import { eq } from "drizzle-orm"
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import { createMiddleware } from "hono/factory"
 import { deleteAccount } from "./account"
 import {
@@ -108,7 +108,13 @@ import {
   reply,
   setThreadStatus,
 } from "./threads"
-import { type AssetStore, kvAssetStore, readThumbnail, uploadThumbnail } from "./thumbnails"
+import {
+  type AssetReader,
+  type AssetStore,
+  kvAssetStore,
+  readThumbnail,
+  uploadThumbnail,
+} from "./thumbnails"
 import { listVersions, noteRestore, type VersionsRoom, versionState } from "./versions"
 
 /** What a request needs from the outside world. Tests swap these for in-memory versions. */
@@ -245,8 +251,7 @@ export function createApp(services: ServicesFactory = productionServices) {
     "/me/*",
     "/folders",
     "/folders/*",
-    // Images take a board token instead, for Guests (below).
-    "/assets/thumbs/*",
+    // /assets/* reads take a session or a board token (Guests, Embed viewers): checked below.
   ]) {
     app.use(path, requireUser)
   }
@@ -402,17 +407,22 @@ export function createApp(services: ServicesFactory = productionServices) {
     return c.json(body)
   })
 
+  // Members (the dashboard) by session; Guests and Embed viewers by board token, for the
+  // picture they see while a full Board turns them away (M6 ticket 07).
   app.get("/assets/thumbs/:boardId", async (c) => {
+    const reader = await assetReader(c)
+    if (!reader) return c.json({ error: "You need to sign in." }, 401)
     const thumb = await readThumbnail(c.var.services.db, c.var.services.assets, {
       boardId: c.req.param("boardId"),
-      caller: c.var.user,
+      reader,
       version: c.req.query("v"),
     })
     return new Response(thumb.bytes, {
       headers: {
         "content-type": thumb.contentType,
         "x-content-type-options": "nosniff",
-        // Private: only Members may see it. A new upload gets a new ?v=, so this never goes stale.
+        // Private: only those who can open the Board see it. A new upload gets a new ?v=, so
+        // this never goes stale.
         "cache-control": thumb.fresh ? "private, max-age=31536000, immutable" : "private, no-cache",
       },
     })
@@ -472,19 +482,8 @@ export function createApp(services: ServicesFactory = productionServices) {
 
   // A Member's session, or a board token as a Bearer (Guests have no session).
   app.get("/assets/images/:boardId/:id", async (c) => {
-    const authorization = c.req.header("authorization")
-    let reader: Parameters<typeof readImage>[2]["reader"]
-    if (authorization) {
-      const bearer = authorization.replace(/^Bearer\s+/i, "")
-      reader = {
-        kind: "token",
-        claims: await verifyBoardToken(bearer, c.env.BOARD_TOKEN_PUBLIC_KEY),
-      }
-    } else {
-      const session = await c.var.services.auth.api.getSession({ headers: c.req.raw.headers })
-      if (!session) return c.json({ error: "You need to sign in." }, 401)
-      reader = { kind: "member", userId: session.user.id }
-    }
+    const reader = await assetReader(c)
+    if (!reader) return c.json({ error: "You need to sign in." }, 401)
     const image = await readImage(c.var.services.db, c.var.services.assets, {
       boardId: c.req.param("boardId"),
       id: c.req.param("id"),
@@ -893,6 +892,20 @@ export function createApp(services: ServicesFactory = productionServices) {
   })
 
   return app
+}
+
+/**
+ * Who's reading a Board's file: a board token sent as a Bearer, else the session. Null when
+ * there's neither.
+ */
+async function assetReader(c: Context<AppEnv>): Promise<AssetReader | null> {
+  const authorization = c.req.header("authorization")
+  if (authorization) {
+    const bearer = authorization.replace(/^Bearer\s+/i, "")
+    return { kind: "token", claims: await verifyBoardToken(bearer, c.env.BOARD_TOKEN_PUBLIC_KEY) }
+  }
+  const session = await c.var.services.auth.api.getSession({ headers: c.req.raw.headers })
+  return session ? { kind: "member", userId: session.user.id } : null
 }
 
 /** The small page an unsubscribe link shows; `action` adds the confirm button. */

@@ -181,6 +181,46 @@ describe("Reading a thumbnail", () => {
     expect((await t.request(thumbnailUrl, { cookie: viewer })).status).toBe(403)
   })
 
+  it("serves Guests and Embed viewers by their board token, for the busy picture (M6)", async () => {
+    const board = await create(ada)
+    const other = await create(ada)
+    await upload(ada, board)
+    const read = (token: string) =>
+      t.request(`/api/assets/thumbs/${board}`, { headers: { authorization: `Bearer ${token}` } })
+    const link = await json<{ token: string }>(
+      await t.request(`/api/boards/${board}/share-link`, {
+        method: "PUT",
+        body: "{}",
+        cookie: ada,
+      }),
+    )
+    const guest = await json<{ token: string }>(
+      await t.request(`/api/guest/boards/${board}/token`, {
+        method: "POST",
+        body: JSON.stringify({ token: link.token }),
+      }),
+    )
+    const res = await read(guest.token)
+    expect(res.status).toBe(200)
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(webp())
+    const embed = await json<{ token: string }>(
+      await t.request(`/api/boards/${board}/embed`, { method: "PUT", body: "{}", cookie: ada }),
+    )
+    const pass = await json<{ token: string }>(
+      await t.request(`/api/embed/${embed.token}/token`, { method: "POST", body: "{}" }),
+    )
+    expect((await read(pass.token)).status).toBe(200)
+    // Another Board's token, or a forged one, gets nothing.
+    const otherEmbed = await json<{ token: string }>(
+      await t.request(`/api/boards/${other}/embed`, { method: "PUT", body: "{}", cookie: ada }),
+    )
+    const otherPass = await json<{ token: string }>(
+      await t.request(`/api/embed/${otherEmbed.token}/token`, { method: "POST", body: "{}" }),
+    )
+    expect((await read(otherPass.token)).status).toBe(403)
+    expect((await read("forged")).status).toBe(403)
+  })
+
   it("goes from KV when the Board is deleted for good", async () => {
     const board = await create(ada)
     await upload(ada, board)

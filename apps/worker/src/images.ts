@@ -9,13 +9,18 @@ import {
   type ImageType,
   type ImageUploadResponse,
 } from "@syncanvas/shared"
-import { and, eq, isNull, sql } from "drizzle-orm"
-import type { VerifiedBoardToken } from "./board-token"
-import { findMembership } from "./boards"
+import { eq, sql } from "drizzle-orm"
 import type { Database } from "./db/client"
-import { boards, images } from "./db/schema"
-import { type Caller, memberOrRefuse, NO_ACCESS, refuse } from "./sharing"
-import { type AssetStore, forget, KV_WRITES_FOR_IMAGES, takeKvWrite } from "./thumbnails"
+import { images } from "./db/schema"
+import { type Caller, memberOrRefuse, refuse } from "./sharing"
+import {
+  type AssetReader,
+  type AssetStore,
+  forget,
+  KV_WRITES_FOR_IMAGES,
+  readerOrRefuse,
+  takeKvWrite,
+} from "./thumbnails"
 
 // Images on Boards (M5b ticket 02; FLOWS "Upload an image", ADR 0007): Editors upload them
 // through the Worker into KV, and anyone who can open the Board reads them from our origin.
@@ -177,24 +182,11 @@ export async function readImage(
   input: {
     boardId: string
     id: string
-    reader:
-      | { kind: "member"; userId: string }
-      | { kind: "token"; claims: VerifiedBoardToken | null }
+    reader: AssetReader
   },
 ) {
   const { boardId, reader } = input
-  if (reader.kind === "member") {
-    if (!(await findMembership(db, boardId, reader.userId))) throw refuse(403, { error: NO_ACCESS })
-  } else {
-    if (!reader.claims || reader.claims.boardId !== boardId) throw refuse(403, { error: NO_ACCESS })
-    // Tokens live 5 minutes; a Board sent to Trash meanwhile is closed to them at once.
-    const [board] = await db
-      .select({ id: boards.id })
-      .from(boards)
-      .where(and(eq(boards.id, boardId), isNull(boards.deletedAt)))
-      .limit(1)
-    if (!board) throw refuse(403, { error: NO_ACCESS })
-  }
+  await readerOrRefuse(db, boardId, reader)
   const found = UUID.test(input.id) ? await store.get(`images/${boardId}/${input.id}`) : null
   if (!found) throw refuse(404, { error: "That image isn't available yet." })
   return found

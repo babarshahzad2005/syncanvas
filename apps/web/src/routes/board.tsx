@@ -58,6 +58,7 @@ import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ApiError, api, queryKeys } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
+import { BUSY_PICTURE_REFRESH_MS, fetchBoardPicture } from "@/lib/busy-picture"
 import { toastOnNextPage } from "@/lib/next-page-toast"
 import { thumbnailDue, uploadThumbnail } from "@/lib/thumbnail"
 import { cn } from "@/lib/utils"
@@ -304,7 +305,7 @@ function BoardView({ boardId, guestLink }: { boardId: string; guestLink?: string
   }
 
   if (removedLive || leaving.current) return null
-  if (status === "busy") return <Busy />
+  if (status === "busy") return <Busy connection={connection} />
   if (deleted && guestLink) return <BoardDeleted title={board?.title} />
   if (status === "revoked" && guestLink) return <LinkGone />
   if (status === "revoked" && lostWork && doc) {
@@ -733,9 +734,41 @@ function LinkGone() {
 }
 
 /** The Board is at its connection cap; the connection tries again every 30 s by itself. */
-function Busy() {
+/**
+ * A Guest turned away by a full Board (M3; PRD A4). With a picture of the Board when it has
+ * one (M6 ticket 07), fetched again every 30 s while waiting.
+ */
+function Busy({ connection }: { connection: BoardConnection | null }) {
+  const [picture, setPicture] = useState<string | null>(null)
+  useEffect(() => {
+    if (!connection?.token) return
+    const { boardId } = connection
+    let current: string | null = null
+    let stopped = false
+    const load = async () => {
+      const token = connection.token
+      const next = token ? await fetchBoardPicture(boardId, token) : null
+      if (stopped) {
+        if (next) URL.revokeObjectURL(next)
+        return
+      }
+      if (next) {
+        if (current) URL.revokeObjectURL(current)
+        current = next
+        setPicture(next)
+      }
+    }
+    void load()
+    const timer = setInterval(() => void load(), BUSY_PICTURE_REFRESH_MS)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+      if (current) URL.revokeObjectURL(current)
+    }
+  }, [connection])
   return (
     <Notice
+      picture={picture}
       title="This board is busy right now"
       body="It has as many visitors as it can take. We'll try again every 30 seconds, so you can leave this page open."
       action={
@@ -821,13 +854,32 @@ function LostAccess({
 }
 
 /** A full-page message with a lock (no access, a dead Share Link). */
-function Notice({ title, body, action }: { title: string; body: string; action: ReactNode }) {
+function Notice({
+  title,
+  body,
+  action,
+  picture = null,
+}: {
+  title: string
+  body: string
+  action: ReactNode
+  /** A picture of the Board, in place of the lock (the busy page, M6 ticket 07). */
+  picture?: string | null
+}) {
   return (
     <main className="flex min-h-svh items-center justify-center px-4">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
-        <span className="flex size-10 items-center justify-center rounded-full bg-muted">
-          <Lock className="size-5 text-muted-foreground" />
-        </span>
+        {picture ? (
+          <img
+            src={picture}
+            alt="The board, as it was last saved"
+            className="aspect-[16/10] w-full rounded-lg border object-cover"
+          />
+        ) : (
+          <span className="flex size-10 items-center justify-center rounded-full bg-muted">
+            <Lock className="size-5 text-muted-foreground" />
+          </span>
+        )}
         <div className="flex flex-col gap-1">
           <h1 className="type-title">{title}</h1>
           <p className="text-muted-foreground">{body}</p>
