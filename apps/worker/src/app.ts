@@ -270,6 +270,14 @@ export function createApp(services: ServicesFactory = productionServices) {
     const room = c.env.BOARD_ROOM.get(c.env.BOARD_ROOM.idFromName(c.req.param("boardId")))
     return c.json(await room.compactNow())
   })
+  // End-to-end tests fill a Board without opening 100 connections (M6 ticket 09).
+  app.post("/dev/cap/:boardId", async (c) => {
+    if (!devInboxEnabled(c.env)) return c.notFound()
+    const { cap } = (await c.req.json()) as { cap: number | null }
+    const room = c.env.BOARD_ROOM.get(c.env.BOARD_ROOM.idFromName(c.req.param("boardId")))
+    await room.setTestCap(typeof cap === "number" && cap > 0 ? cap : null)
+    return c.json({ ok: true })
+  })
   app.on(["GET", "POST"], "/auth/*", (c) => c.var.services.auth.handler(c.req.raw))
 
   // Search (M5b ticket 05): your own Boards by title or text.

@@ -130,6 +130,8 @@ export class BoardRoom extends DurableObject<Env> {
    */
   private pending = 0
   private anchors: Set<string> | null = null
+  /** A connection cap set by an end-to-end test through the dev-only route (M6 ticket 09). */
+  private testCap: number | null = null
   /**
    * Latest presence per awareness id, stamped, for sending to people who join. Memory only:
    * after a hibernation it starts empty, and the next joiner triggers a query instead.
@@ -655,7 +657,13 @@ export class BoardRoom extends DurableObject<Env> {
     return Number.isFinite(configured) && configured > 0 ? configured : STATE_PART_BYTES
   }
 
+  /** For the dev-only hook: this room's cap until it's unloaded (null: back to normal). */
+  async setTestCap(cap: number | null) {
+    this.testCap = cap
+  }
+
   private connectionCap() {
+    if (this.testCap !== null) return this.testCap
     // Tests set a small cap through the environment; production uses the PRD's 100.
     const configured = Number((this.env as { CONNECTION_CAP?: string }).CONNECTION_CAP)
     return Number.isFinite(configured) && configured > 0 ? configured : CONNECTION_CAP

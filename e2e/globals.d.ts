@@ -34,6 +34,12 @@ declare global {
       /** The whole Board exported, as a data URL (M6 ticket 04). */
       exportFile: (format: "png" | "svg", theme: "light" | "dark") => Promise<string>
     }
+    /** The Embed viewer's hooks (M6 ticket 06). */
+    __syncanvasEmbed?: {
+      elements: () => { type: string }[]
+      camera: () => { x: number; y: number; zoom: number }
+      status: () => string
+    }
     /** The Elements of the Version being previewed (M5b ticket 07). */
     __syncanvasPreview?: { elements: () => { type: string }[] }
   }

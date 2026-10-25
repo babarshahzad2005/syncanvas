@@ -474,8 +474,10 @@ function BoardSurface({
   }
 
   const canvas = useRef<CanvasHandle>(null)
-  useTemplateFromLink(doc, origin, editable && online && undoManager !== null, canvas)
+  // Listening for changes first: a template can fill the Board in the same commit as editing
+  // becomes possible, and that fill must count as a change (M6 ticket 09).
   useThumbnailOnLeave(boardId, doc, editable)
+  useTemplateFromLink(doc, origin, editable && online && undoManager !== null, canvas)
   if (!undoManager) return null
   if (preview && previewUndo) {
     return (
