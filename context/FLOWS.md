@@ -260,6 +260,7 @@ Why it matters: without step 2, someone whose access was removed could keep edit
 1. After a set number of updates or minutes, the Board room merges stored updates into one compacted state and deletes the old rows.
 2. Some compacted states are kept as Versions: one per hour of activity for the last 30 days, then thinned to one per day, kept for a year.
 3. The Board room extracts the text of its text Elements and sticky notes and, when it changed, writes it to the search index in Postgres itself (through Hyperdrive). Board text becomes searchable within about 5 minutes; titles at once.
+4. On the same timed run, if anything was edited since the last one, the Board room writes the newest edit's time as the Board's last-edited time in Postgres (never earlier than what's there; renames set it at once). The dashboard's "Edited …" is right to within about 5 minutes, for one database write per active Board every 5 minutes at most.
 
 ### Thumbnails
 

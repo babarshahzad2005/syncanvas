@@ -7,13 +7,14 @@ import {
   type ElementBox,
   type Role,
 } from "@syncanvas/shared"
+import { and, eq, lt } from "drizzle-orm"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 import { type BoardTokenKind, verifyBoardToken } from "./board-token"
 import { createDb } from "./db/client"
-import { boardSearch } from "./db/schema"
+import { boardSearch, boards } from "./db/schema"
 import {
   decodePresence,
   MESSAGE_AWARENESS,
@@ -73,6 +74,8 @@ export type VersionSummary = { id: number; at: number; kind: "auto" | "restore";
  * Hyperdrive. Room tests swap it on the instance (`runInDurableObject`).
  */
 export type SearchWriter = (boardId: string, body: string) => Promise<void>
+/** Records when a Board was last edited, for the dashboard's "Edited …" (Postgres in production). */
+export type EditedWriter = (boardId: string, at: Date) => Promise<void>
 
 /** Live connections per Board (PRD A4). Members always get in; others wait past this. */
 export const CONNECTION_CAP = 100
@@ -140,6 +143,8 @@ export class BoardRoom extends DurableObject<Env> {
   private presenceWarm = false
   /** Where indexing writes; see SearchWriter. */
   searchWriter: SearchWriter = (boardId, body) => this.writeSearch(boardId, body)
+  /** Where the last edit's time goes; see EditedWriter. */
+  editedWriter: EditedWriter = (boardId, at) => this.writeEdited(boardId, at)
   /** The time Versions are stamped and thinned with. Room tests move it. */
   clock: () => number = () => Date.now()
 
@@ -311,10 +316,39 @@ export class BoardRoom extends DurableObject<Env> {
    * runs at most once every 5 minutes.
    */
   async alarm() {
+    // Read before compaction clears the stored updates.
+    const lastEdit = this.lastEditAt()
     // A restore that changed nothing still gets its Version.
     if (this.pendingUpdates() > 0 || this.meta("restored_by") !== null) this.compact()
     this.thinVersions()
     await this.index()
+    if (lastEdit) await this.noteEdited(lastEdit)
+  }
+
+  /** When the newest update stored since the last compaction arrived, if there is one. */
+  private lastEditAt(): Date | null {
+    if (this.pendingUpdates() === 0) return null
+    const [row] = this.ctx.storage.sql
+      .exec<{ at: number | null }>("select max(at) as at from updates")
+      .toArray()
+    return row?.at ? new Date(row.at) : null
+  }
+
+  /**
+   * The dashboard's "Edited …" (FLOWS §5): written here, at most once per alarm (5 minutes),
+   * rather than on every edit. A failure waits for the next edit's alarm.
+   */
+  private async noteEdited(at: Date) {
+    const boardId = this.meta("board_id")
+    if (!boardId) return
+    try {
+      await this.editedWriter(boardId, at)
+    } catch (error) {
+      console.error(
+        `Couldn't note the edit time of board ${boardId}:`,
+        error instanceof Error ? error.message : error,
+      )
+    }
   }
 
   // ---------- Search indexing (M5b ticket 04) ----------
@@ -342,6 +376,20 @@ export class BoardRoom extends DurableObject<Env> {
   }
 
   /** The production SearchWriter: one short connection per write, closed afterwards. */
+  private async writeEdited(boardId: string, at: Date) {
+    if ((this.env as { EDITED_TIME?: string }).EDITED_TIME === "off") return
+    const { db, close } = createDb(this.env.HYPERDRIVE.connectionString)
+    try {
+      // Never earlier than what's there (a rename after the edit, say).
+      await db
+        .update(boards)
+        .set({ updatedAt: at })
+        .where(and(eq(boards.id, boardId), lt(boards.updatedAt, at)))
+    } finally {
+      await close()
+    }
+  }
+
   private async writeSearch(boardId: string, body: string) {
     if ((this.env as { SEARCH_INDEX?: string }).SEARCH_INDEX === "off") return
     const { db, close } = createDb(this.env.HYPERDRIVE.connectionString)

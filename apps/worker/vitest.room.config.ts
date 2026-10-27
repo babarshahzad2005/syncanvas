@@ -27,6 +27,7 @@ export default defineProject({
           STATE_PART_BYTES: "512",
           // No Postgres here: tests that check indexing swap in their own writer.
           SEARCH_INDEX: "off",
+          EDITED_TIME: "off",
         },
       },
     }),

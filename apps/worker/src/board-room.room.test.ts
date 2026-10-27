@@ -1103,6 +1103,34 @@ describe("BoardRoom compaction (M5b ticket 01)", () => {
   })
 })
 
+describe("BoardRoom last edited time", () => {
+  it("notes the newest edit's time on the alarm, and nothing when nothing changed", async () => {
+    const board = newBoardId()
+    const owner = await joinAs(board, "owner", "ada")
+    const writes: { boardId: string; at: Date }[] = []
+    await runInDurableObject(room(board), (instance: BoardRoom) => {
+      instance.editedWriter = async (boardId, at) => {
+        writes.push({ boardId, at })
+      }
+    })
+    const before = Date.now()
+    addRect(owner.doc, { position: { x: 0, y: 0 }, size: { w: 10, h: 10 } }, "test")
+    const viewer = await joinAs(board, "viewer", "lin")
+    await until(() => elementsOf(viewer.doc).size === 1, "the edit")
+
+    await room(board).compactNow()
+    expect(writes).toHaveLength(1)
+    expect(writes[0]?.boardId).toBe(board)
+    expect(writes[0]?.at.getTime()).toBeGreaterThanOrEqual(before)
+    expect(writes[0]?.at.getTime()).toBeLessThanOrEqual(Date.now())
+    // An alarm with no edits since says nothing.
+    await room(board).compactNow()
+    expect(writes).toHaveLength(1)
+    owner.close()
+    viewer.close()
+  })
+})
+
 describe("BoardRoom search indexing (M5b ticket 04)", () => {
   /** Swaps in a writer that records each write, or fails while `state.failing` is set. */
   async function captureWrites(board: string) {
