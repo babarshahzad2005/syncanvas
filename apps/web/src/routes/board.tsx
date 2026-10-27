@@ -60,7 +60,7 @@ import { ApiError, api, queryKeys } from "@/lib/api"
 import { authClient } from "@/lib/auth-client"
 import { BUSY_PICTURE_REFRESH_MS, fetchBoardPicture } from "@/lib/busy-picture"
 import { toastOnNextPage } from "@/lib/next-page-toast"
-import { thumbnailDue, uploadThumbnail } from "@/lib/thumbnail"
+import { sendThumbnail } from "@/lib/thumbnail"
 import { cn } from "@/lib/utils"
 import { FollowFrame } from "@/presence/follow-frame"
 import { PresencePill } from "@/presence/presence-pill"
@@ -173,11 +173,11 @@ function useThumbnailOnLeave(boardId: string, doc: Y.Doc, editable: boolean) {
       if (tr.local && tr.changed.size > 0) changed = true
     }
     const leave = (closing: boolean) => {
-      if (!changed || !thumbnailDue(boardId)) return
+      if (!changed) return
       changed = false
-      // Read now: the doc may be gone by the time the picture is made.
+      // Read now: the doc may be gone by the time the picture is made (or sent, if it waits).
       const elements = listElements(doc)
-      void uploadThumbnail(boardId, elements, indexById(elements), closing).then((stored) => {
+      void sendThumbnail(boardId, elements, closing).then((stored) => {
         if (stored) void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })
         // Try again on the next leave.
         else changed = true

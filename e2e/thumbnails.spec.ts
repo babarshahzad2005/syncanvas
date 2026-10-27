@@ -13,12 +13,18 @@ function uploadsFrom(page: Page) {
   return sent
 }
 
-/** The tile's picture has loaded from our thumbnail URL. */
+/**
+ * The tile's picture has loaded from our thumbnail URL. The upload, then the dashboard's
+ * refresh, can take longer than the default 5 s on a busy machine (it once failed right after
+ * the long exit specs).
+ */
 async function expectThumbnail(page: Page, boardId: string) {
   const img = page.locator(`a[href="/b/${boardId}"] img`)
-  await expect(img).toHaveAttribute("src", new RegExp(`^/api/assets/thumbs/${boardId}\\?v=`))
+  await expect(img).toHaveAttribute("src", new RegExp(`^/api/assets/thumbs/${boardId}\\?v=`), {
+    timeout: 20_000,
+  })
   await expect
-    .poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth))
+    .poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth), { timeout: 20_000 })
     .toBeGreaterThan(0)
 }
 

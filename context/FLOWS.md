@@ -264,7 +264,7 @@ Why it matters: without step 2, someone whose access was removed could keep edit
 
 ### Thumbnails
 
-1. When an Editor leaves a Board after making changes, the client renders a small image of it and uploads it through the API to KV. To stay within KV's 1,000 free writes per day, a Board's thumbnail is written at most once every 10 minutes.
+1. When an Editor leaves a Board after making changes, the client renders a small image of it and uploads it through the API to KV. To stay within KV's 1,000 free writes per day, a Board's thumbnail is written at most once every 10 minutes. A picture that comes too soon isn't dropped: it waits in the tab and is sent once allowed (a newer one replaces it), so leaving a Board twice in a few minutes still ends with the latest picture. Closing the tab first loses it until the next edit.
 2. Boards created from a template start with the template's prebuilt thumbnail.
 3. Trade-off: the server never renders anything, but thumbnails only refresh when an Editor leaves the Board.
 

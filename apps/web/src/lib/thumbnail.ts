@@ -1,4 +1,4 @@
-import type { ElementWithId } from "@syncanvas/board-model"
+import { type ElementWithId, indexById } from "@syncanvas/board-model"
 import { boundsOf, type Camera, drawScene } from "@syncanvas/renderer"
 import { THUMBNAIL_EVERY_MS, THUMBNAIL_MAX_BYTES } from "@syncanvas/shared"
 import { imageCache } from "@/board/images"
@@ -59,32 +59,95 @@ export function renderThumbnail(
   return new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.8))
 }
 
-/** When this tab last uploaded (or was told it's too soon) per Board, to skip doomed requests. */
-const lastUpload = new Map<string, number>()
+/** How an upload went: stored, refused as too soon (another tab or device just sent one), or failed. */
+export type UploadOutcome = "stored" | "too-soon" | "failed"
 
-export function thumbnailDue(boardId: string, now = Date.now()) {
-  return now - (lastUpload.get(boardId) ?? 0) >= THUMBNAIL_EVERY_MS
-}
-
-/**
- * Renders and uploads; resolves true once it's stored. Failures are silent (the dashboard keeps
- * the old picture). `closing`: the tab may be going away, so the request must outlive it.
- */
-export async function uploadThumbnail(
+type Upload = (
   boardId: string,
   elements: readonly ElementWithId[],
-  byId: ReadonlyMap<string, ElementWithId>,
   closing: boolean,
-): Promise<boolean> {
+) => Promise<UploadOutcome>
+
+/** A little past the server's window, so a waiting picture never arrives a moment too early. */
+const SLACK_MS = 2_000
+
+/**
+ * Sends each Board's picture at most once per `THUMBNAIL_EVERY_MS` (the server's rule, for the
+ * free plan's KV writes). One that comes too soon isn't dropped: it waits in this tab and goes
+ * once allowed, so leaving a Board twice in a few minutes still ends with the latest picture.
+ * A newer picture of the same Board replaces a waiting one. Closing the tab loses it, and the
+ * next edit catches up.
+ */
+export function createThumbnailQueue(upload: Upload, clock: () => number = Date.now) {
+  /** When this tab last sent (or was told "too soon") per Board. */
+  const last = new Map<string, number>()
+  const waiting = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; done: (stored: boolean) => void }
+  >()
+
+  const dueAt = (boardId: string) => (last.get(boardId) ?? -Infinity) + THUMBNAIL_EVERY_MS
+
+  function send(
+    boardId: string,
+    elements: readonly ElementWithId[],
+    closing: boolean,
+  ): Promise<boolean> {
+    const earlier = waiting.get(boardId)
+    if (earlier) {
+      clearTimeout(earlier.timer)
+      waiting.delete(boardId)
+      earlier.done(false) // replaced by this newer picture
+    }
+    const wait = dueAt(boardId) - clock()
+    if (wait <= 0) return sendNow(boardId, elements, closing)
+    return new Promise((done) => {
+      const timer = setTimeout(() => {
+        waiting.delete(boardId)
+        void sendNow(boardId, elements, false).then(done)
+      }, wait + SLACK_MS)
+      waiting.set(boardId, { timer, done })
+    })
+  }
+
+  async function sendNow(boardId: string, elements: readonly ElementWithId[], closing: boolean) {
+    const outcome = await upload(boardId, elements, closing)
+    if (outcome === "failed") return false
+    last.set(boardId, clock())
+    // Someone else's picture just went: this one waits its turn.
+    return outcome === "stored" ? true : send(boardId, elements, false)
+  }
+
+  return { send }
+}
+
+async function uploadOnce(
+  boardId: string,
+  elements: readonly ElementWithId[],
+  closing: boolean,
+): Promise<UploadOutcome> {
   try {
-    const blob = await renderThumbnail(elements, byId)
-    if (!blob || blob.size > THUMBNAIL_MAX_BYTES) return false
+    const blob = await renderThumbnail(elements, indexById(elements))
+    if (!blob || blob.size > THUMBNAIL_MAX_BYTES) return "failed"
     // Browsers only let a request outlive the page if its body is under 64 KB.
     await api.uploadThumbnail(boardId, blob, closing && blob.size < 60_000)
-    lastUpload.set(boardId, Date.now())
-    return true
+    return "stored"
   } catch (error) {
-    if (error instanceof ApiError && error.status === 429) lastUpload.set(boardId, Date.now())
-    return false
+    return error instanceof ApiError && error.status === 429 ? "too-soon" : "failed"
   }
+}
+
+const queue = createThumbnailQueue(uploadOnce)
+
+/**
+ * Renders and uploads this Board's picture now, or once it's allowed (see createThumbnailQueue);
+ * resolves true once it's stored. Failures are silent (the dashboard keeps the old picture).
+ * `closing`: the tab may be going away, so the request must outlive it.
+ */
+export function sendThumbnail(
+  boardId: string,
+  elements: readonly ElementWithId[],
+  closing: boolean,
+): Promise<boolean> {
+  return queue.send(boardId, elements, closing)
 }
