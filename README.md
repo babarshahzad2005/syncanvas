@@ -101,3 +101,7 @@ e2e/              Playwright browser tests
 tools/            load test and performance measurements
 context/, docs/   product requirements, flows, design system, decisions, benchmarks
 ```
+
+## License
+
+[MIT](LICENSE)
