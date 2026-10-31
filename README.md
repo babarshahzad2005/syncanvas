@@ -1,5 +1,7 @@
 # Syncanvas
 
+[![CI](https://github.com/babarshahzad2005/syncanvas/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/babarshahzad2005/syncanvas/actions/workflows/ci.yml)
+
 A real-time collaborative whiteboard. Sketch, write, and comment on one shared Board with your team: edits appear for everyone within milliseconds, keep working offline, and merge cleanly when you reconnect, and the server decides who may change what.
 
 **Live:** https://syncanvas.babarshahzad2005.workers.dev · **Engineering write-up:** [`docs/write-up.md`](docs/write-up.md)
